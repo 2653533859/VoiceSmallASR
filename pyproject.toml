@@ -1,0 +1,56 @@
+[project]
+name = "voice-small-asr"
+version = "0.1.0"
+description = "本地离线的多语种（中/英/粤/日/韩）流式语音识别，带时间戳与字幕导出"
+readme = "README.md"
+# 下限是 3.11.4 而非 3.11.0：models.py 解压模型时用了 tarfile 的
+# ``filter="data"``（PEP 706），该参数在 3.11 系列中直到 3.11.4 才被回补。
+requires-python = ">=3.11.4,<3.13"
+keywords = ["asr", "speech-recognition", "sensevoice", "sherpa-onnx", "subtitle", "cantonese"]
+dependencies = [
+    "numpy>=1.26.0",
+    # sherpa-onnx 在 PyPI 索引元数据里没有声明 sherpa-onnx-core，
+    # 必须显式列出、且两者版本严格一致：缺了 core 包时扩展模块会退回加载
+    # 系统的 C:\Windows\System32\onnxruntime.dll（较旧），
+    # 触发 "requested API version [27] is not available" 并直接段错误。
+    "sherpa-onnx==1.13.5",
+    "sherpa-onnx-core==1.13.5",
+    "soundfile>=0.12.1",
+]
+
+[project.scripts]
+vsasr = "voice_small_asr.cli:main"
+
+[project.optional-dependencies]
+mic = [
+    "sounddevice>=0.4.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_small_asr"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+# README 里的示例代码用手工对齐的行尾注释，交给 formatter 会明显变难读
+exclude = ["*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
