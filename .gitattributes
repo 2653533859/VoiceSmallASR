@@ -1,0 +1,21 @@
+# 所有文本文件统一以 LF 存储与检出：
+# Windows 上 core.autocrlf 会把工作区转成 CRLF，若不固定 eol，
+# Linux/macOS 协作者拉取后会看到整文件 diff。
+* text=auto eol=lf
+
+# 二进制资源：禁用换行转换，也不做文本 diff
+*.wav  binary
+*.mp3  binary
+*.m4a  binary
+*.flac binary
+*.ogg  binary
+*.onnx binary
+*.pt   binary
+*.pth  binary
+*.bin  binary
+*.gguf binary
+*.safetensors binary
+*.tar.bz2 binary
+
+# 锁文件由 uv 生成，合并冲突时不做逐行合并
+uv.lock linguist-generated=true
