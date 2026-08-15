@@ -14,13 +14,15 @@
 - M4 的应用内翻译工作流已完成：文件转写页从安全存储读取 DeepL API Key，显示批量进度，成功后回写译文，失败时保留原结果；译文会显示在列表并进入后续导出/视频叠加链路。
 - M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数和 DeepL API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
-- 当前下一步是用真实网络完成英/日视频翻译验收，补 Android/Windows 的构建与运行验证，并推进 M7 打包分发。
+- M7 macOS 无签名打包首期已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；签名发布、Android/Windows 构建仍待具备对应环境/证书。
+- 当前下一步是用真实网络完成英/日视频翻译验收，补 Android/Windows 的构建与运行验证，并继续推进签名发布与 M7 分发。
 
 ## 已验证结果
 
 - Python：`pytest` 105 项通过，`ruff check .` 通过。
 - Flutter：`flutter analyze` 通过，149 项单测通过。
 - macOS：无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 因本机没有开发证书而无法完成签名。
+- M7 打包：已生成 `dist/macos/VoiceSmallASR.app`（通用二进制，约 161 MB）和 `VoiceSmallASR-unsigned.dmg`（约 64 MB），并用 `hdiutil imageinfo` 验证为 UDZO 镜像。
 - 播放器：`media_kit 1.2.6` + `media_kit_video 2.0.1` + `media_kit_libs_video 1.0.7` 已接入；macOS 无签名编译通过，插件当前由 CocoaPods 集成。
 - M3 测试覆盖：播放器状态/生命周期、字幕时间边界、视频页加载/叠加/点击跳转；7 项集成测试包含真实 `en.mp4` 播放、跳转、抽音轨和识别。
 - M4 测试覆盖：6 项翻译抽象/批量流程测试、4 项双语导出测试、6 项 DeepL provider 测试。

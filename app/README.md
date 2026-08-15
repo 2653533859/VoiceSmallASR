@@ -28,6 +28,9 @@ flutter pub get
 flutter analyze     # 验收标准：No issues found
 flutter test        # 149 项，不依赖模型与设备
 
+# macOS 无签名 Release .app/.dmg（从仓库根目录执行；发布签名仍需证书）
+FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
+
 # 端到端验收（真模型 + 真引擎 + 真原生解码，需 macOS；素材放法见上一级 DEVELOPMENT_PLAN §7）
 flutter test integration_test/e2e_test.dart -d macos
 ```

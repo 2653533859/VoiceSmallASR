@@ -328,8 +328,8 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 - [ ] Android APK / AAB（可在本机构建）
 - [ ] Windows exe + 安装包（需 VS 工具链）
-- [ ] **macOS `.app`/`.dmg` 必须在 Mac 上构建** —— Apple 的签名与打包工具链只存在于 macOS；当前 macOS 机器已具备构建条件
-- [ ] 模型不打进安装包（240 MB），首次运行下载
+- [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；带开发者证书的签名发布包仍待配置
+- [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查生成的 macOS `.app` 不含模型文件
 
 ## 5. 决策记录与待决策事项
 
@@ -594,6 +594,9 @@ ffmpeg -y -f lavfi -i color=c=black:s=640x360:r=30:d=8 \
   -shortest "$W/en.mp4"
 
 flutter test integration_test/e2e_test.dart -d macos   # 7 项应全绿（含真实 en.mp4 播放验收）
+
+# 生成不含模型、未签名的 macOS Release .app 与 .dmg（需要 Xcode；发布签名仍需证书）
+FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
 ```
 
 **别设 `PUB_HOSTED_URL`**：pub.dev 可直连，而指向镜像会让 `flutter pub get` 把

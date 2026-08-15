@@ -50,6 +50,7 @@ flutter test                   # 149 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
 flutter build macos --debug     # 需开发证书；无签名编译可用 xcodebuild CODE_SIGNING_ALLOWED=NO 验证
 flutter run -d macos           # 需开发证书；本机当前只验证无签名编译
+FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh  # 生成无签名 .app/.dmg
 
 # 端到端验收：真模型 + 真引擎 + 真原生解码 + 实时识别 + 真实视频播放，7 项（素材要先放进沙盒容器，见 DEVELOPMENT_PLAN §7）
 flutter test integration_test/e2e_test.dart -d macos
