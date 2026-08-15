@@ -43,6 +43,12 @@ using MethodResultValue = flutter::MethodResult<flutter::EncodableValue>;
 
 constexpr char kChannelName[] = "vsasr/audio_decoder";
 constexpr UINT32 kTargetSampleRate = 16000;
+// Media Foundation 的流选择常量来自带符号枚举，而 Source Reader API
+// 参数类型是 DWORD。显式转换避免 MSVC /WX 把 C4245 当成构建错误。
+constexpr DWORD kAllStreams =
+    static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS);
+constexpr DWORD kFirstAudioStream =
+    static_cast<DWORD>(MF_SOURCE_READER_FIRST_AUDIO_STREAM);
 constexpr wchar_t kMarshalWindowClass[] = L"VsasrAudioDecoderMarshal";
 constexpr UINT kMsgDecodeDone = WM_APP + 0x51;
 
@@ -146,14 +152,13 @@ bool ConfigureOutput(IMFSourceReader* reader, bool as_float,
     }
   }
   return SUCCEEDED(reader->SetCurrentMediaType(
-      MF_SOURCE_READER_FIRST_AUDIO_STREAM, nullptr, type.Get()));
+      kFirstAudioStream, nullptr, type.Get()));
 }
 
 // 读回真实生效的格式：SetCurrentMediaType 成功也不保证采样率如愿。
 bool QueryOutput(IMFSourceReader* reader, OutputInfo* info) {
   ComPtr<IMFMediaType> type;
-  if (FAILED(reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM,
-                                         &type))) {
+  if (FAILED(reader->GetCurrentMediaType(kFirstAudioStream, &type))) {
     return false;
   }
   GUID subtype = GUID_NULL;
@@ -200,9 +205,8 @@ std::vector<uint8_t> Decode(const std::string& path, std::string* error) {
     return {};
   }
   // 视频容器里可能有画面与字幕轨，只留第一条音轨。
-  reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
-  if (FAILED(reader->SetStreamSelection(MF_SOURCE_READER_FIRST_AUDIO_STREAM,
-                                        TRUE))) {
+  reader->SetStreamSelection(kAllStreams, FALSE);
+  if (FAILED(reader->SetStreamSelection(kFirstAudioStream, TRUE))) {
     *error = "文件里没有音轨";
     return {};
   }
@@ -226,8 +230,7 @@ std::vector<uint8_t> Decode(const std::string& path, std::string* error) {
   for (;;) {
     DWORD flags = 0;
     ComPtr<IMFSample> sample;
-    if (FAILED(reader->ReadSample(MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0,
-                                  nullptr, &flags, nullptr,
+    if (FAILED(reader->ReadSample(kFirstAudioStream, 0, nullptr, &flags, nullptr,
                                   sample.GetAddressOf()))) {
       *error = "读取解码结果失败";
       return {};
