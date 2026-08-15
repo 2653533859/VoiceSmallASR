@@ -32,6 +32,10 @@ flutter test        # 149 项，不依赖模型与设备
 flutter build apk --release
 flutter build appbundle --release
 
+# 真实 DeepL 英/日视频验收（密钥文件必须放在仓库外；不会进入默认测试集）
+flutter test integration_test/deepl_acceptance_test.dart -d macos \
+  --dart-define-from-file=/path/to/voicesmallasr-deepl.env
+
 # macOS 无签名 Release .app/.dmg（从仓库根目录执行；发布签名仍需证书）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
 

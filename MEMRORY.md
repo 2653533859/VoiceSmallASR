@@ -17,6 +17,7 @@
 - M7 macOS 无签名打包首期已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；带证书的签名发布仍待配置。
 - M7 Android 构建验证已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，release 使用 debug signing，仅代表可构建。
 - Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；模拟器使用软件渲染，真机性能仍未验证。
+- M4 真实验收入口已准备：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材，`app/integration_test/deepl_acceptance_test.dart` 使用仓库外的 `--dart-define-from-file` 密钥文件验证真实 DeepL、双语 SRT 和视频字幕叠加；本机尚无有效 DeepL API Key，因此尚未执行网络验收。
 - 当前下一步是用真实网络完成英/日视频翻译验收，补 Android 真机性能验证、Windows 构建验证，并继续推进签名发布与 M7 分发。
 
 ## 已验证结果

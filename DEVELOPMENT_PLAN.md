@@ -312,6 +312,8 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 双语字幕导出：SRT/VTT/TXT 输出原文+译文双行，JSON 保留 `Segment.translation`；已有导出链路并通过 4 项回归测试
 - [x] 应用内翻译工作流：从安全存储读取 DeepL API Key，在文件转写页发起翻译、显示进度并回写结果；失败不写入半成品
 - [ ] 验收：英/日视频生成中英双语 SRT，导出的文件在播放器里两行都正常显示
+      已准备独立手工入口 `app/integration_test/deepl_acceptance_test.dart` 和
+      `scripts/prepare_translation_acceptance_media.sh`；仍需有效 DeepL API Key 才能执行真实网络验收
 
 ### M5 · 字幕校对编辑　✅ 首期已完成（2026-08-16）
 
@@ -598,6 +600,13 @@ ffmpeg -y -f lavfi -i color=c=black:s=640x360:r=30:d=8 \
   -shortest "$W/en.mp4"
 
 flutter test integration_test/e2e_test.dart -d macos   # 7 项应全绿（含真实 en.mp4 播放验收）
+
+# M4 真实 DeepL 英/日视频验收（不会进入默认测试集，密钥文件放在仓库外）
+WAVS="$SUP/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs"
+bash scripts/prepare_translation_acceptance_media.sh "$WAVS" "$WAVS"
+# 外部 env 文件示例：DEEPL_API_KEY=...；可选 DEEPL_API_BASE_URL=https://api-free.deepl.com
+flutter test integration_test/deepl_acceptance_test.dart -d macos \
+  --dart-define-from-file=/path/to/voicesmallasr-deepl.env
 
 # 生成不含模型、未签名的 macOS Release .app 与 .dmg（需要 Xcode；发布签名仍需证书）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
