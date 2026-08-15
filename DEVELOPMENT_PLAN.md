@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android 模拟器端到端 7 项）。真实翻译验收、Android 真机性能、Windows 完整模型 e2e 和用户桌面运行仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027）。真实翻译验收、Android 真机性能、Windows 完整模型 e2e 和用户桌面运行仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -301,7 +301,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
       按 100 ms 一块喂进实时会话 —— 四句全部定稿（英文那段被 VAD 切成两句）、
       `index` 从 0 连续递增、时间戳不重叠不倒序，过程中有局部结果上屏。
       麦克风那一路本身没法自动化（要真人说话），但它之后的链路与该测试完全相同
-- [x] **Android 模拟器功能闭环** —— API 35 ARM64 模拟器通过 7 项端到端测试：模型目录、WAV、Kotlin 原生 m4a 解码、识别、视频播放/跳转/抽音轨、实时识别
+- [x] **Android 模拟器功能闭环** —— API 35 ARM64 模拟器通过 7 项端到端测试：模型目录、WAV、Kotlin 原生 m4a 解码、识别、视频播放/跳转/抽音轨、实时识别；2026-08-16 重跑 7/7，通过粤语识别 RTF `0.027`
 - [ ] **Android 真机不掉帧 —— 未验证**（模拟器使用软件渲染，不能替代中低端真机性能测试）
 - [x] **Windows CI 桌面 smoke** —— run `31914757787` 在 Windows runner 上通过真实 AAC 原生解码、media_kit MP4 打开/读取时长/播放；未加载 ASR 模型，因此完整识别 e2e 仍待验证
 
