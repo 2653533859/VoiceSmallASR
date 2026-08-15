@@ -1,0 +1,267 @@
+/// 应用设置页：识别参数与 DeepL API Key。
+library;
+
+import 'package:flutter/material.dart';
+import 'package:vsasr_app/src/asr/asr_config.dart';
+import 'package:vsasr_app/src/settings/app_settings.dart';
+import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+
+/// 设置页。普通配置保存到偏好存储，API Key 始终交给安全存储。
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key, required this.controller, required this.repository});
+
+  final TranscribeController controller;
+  final AppSettingsRepository repository;
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late String _language;
+  late bool _useItn;
+  late int _numThreads;
+  late double _partialInterval;
+  late double _vadThreshold;
+  late double _minSilenceDuration;
+  late final TextEditingController _apiKey;
+
+  bool _loading = true;
+  bool _saving = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    final AsrConfig config = widget.controller.config;
+    _language = config.language;
+    _useItn = config.useItn;
+    _numThreads = config.numThreads.clamp(1, 16).toInt();
+    _partialInterval = config.partialInterval.clamp(0.0, 3.0).toDouble();
+    _vadThreshold = config.vad.threshold.clamp(0.1, 0.9).toDouble();
+    _minSilenceDuration = config.vad.minSilenceDuration.clamp(0.1, 1.5).toDouble();
+    _apiKey = TextEditingController();
+    _loadApiKey();
+  }
+
+  Future<void> _loadApiKey() async {
+    try {
+      final String? key = await widget.repository.translationSecrets.readDeepLApiKey();
+      if (!mounted) return;
+      _apiKey.text = key ?? '';
+      setState(() => _loading = false);
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _errorText = '读取翻译配置失败：$error';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _apiKey.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_loading || _saving) return;
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    final AsrConfig current = widget.controller.config;
+    final AsrConfig next = current.copyWith(
+      language: _language,
+      useItn: _useItn,
+      numThreads: _numThreads,
+      partialInterval: _partialInterval,
+      vad: current.vad.copyWith(
+        threshold: _vadThreshold,
+        minSilenceDuration: _minSilenceDuration,
+      ),
+    );
+    try {
+      await widget.repository.saveConfig(next);
+      final String key = _apiKey.text.trim();
+      if (key.isEmpty) {
+        await widget.repository.translationSecrets.deleteDeepLApiKey();
+      } else {
+        await widget.repository.translationSecrets.saveDeepLApiKey(key);
+      }
+      await widget.controller.applyConfig(next);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorText = '保存设置失败：$error';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool disabled = _loading || _saving;
+    return Scaffold(
+      appBar: AppBar(title: const Text('设置')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+              children: <Widget>[
+                Text('识别设置', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const Key('settingsLanguage'),
+                  initialValue: _language,
+                  decoration: const InputDecoration(labelText: '识别语言'),
+                  onChanged: disabled ? null : (String? value) {
+                    if (value != null) setState(() => _language = value);
+                  },
+                  items: <DropdownMenuItem<String>>[
+                    for (final String code in kLanguages)
+                      DropdownMenuItem<String>(
+                        value: code,
+                        child: Text(kLanguageLabels[code] ?? code),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<int>(
+                  key: const Key('settingsThreads'),
+                  initialValue: _numThreads,
+                  decoration: const InputDecoration(labelText: '识别线程数'),
+                  onChanged: disabled ? null : (int? value) {
+                    if (value != null) setState(() => _numThreads = value);
+                  },
+                  items: <DropdownMenuItem<int>>[
+                    for (final int value in <int>[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+                      DropdownMenuItem<int>(value: value, child: Text('$value')),
+                  ],
+                ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('启用标点与数字规范化'),
+                  subtitle: const Text('输出字幕时保留标点和阿拉伯数字'),
+                  value: _useItn,
+                  onChanged: disabled ? null : (bool value) => setState(() => _useItn = value),
+                ),
+                Text('翻译', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                TextField(
+                  key: const Key('deepLApiKey'),
+                  controller: _apiKey,
+                  enabled: !disabled,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    labelText: 'DeepL API Key',
+                    hintText: '留空可清除已保存的 Key',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text('API Key 只保存到系统安全存储，不写入普通设置文件。'),
+                const Divider(height: 24),
+                Text('实时识别', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                _ValueSlider(
+                  label: '临时结果间隔',
+                  valueText: _partialInterval == 0 ? '关闭' : '${_partialInterval.toStringAsFixed(1)} 秒',
+                  value: _partialInterval,
+                  min: 0,
+                  max: 3,
+                  divisions: 12,
+                  enabled: !disabled,
+                  onChanged: (double value) => setState(() => _partialInterval = value),
+                ),
+                const SizedBox(height: 8),
+                _ValueSlider(
+                  label: 'VAD 断句灵敏度',
+                  valueText: _vadThreshold.toStringAsFixed(2),
+                  value: _vadThreshold,
+                  min: 0.1,
+                  max: 0.9,
+                  divisions: 16,
+                  enabled: !disabled,
+                  onChanged: (double value) => setState(() => _vadThreshold = value),
+                ),
+                _ValueSlider(
+                  label: '句末静音时长',
+                  valueText: '${_minSilenceDuration.toStringAsFixed(2)} 秒',
+                  value: _minSilenceDuration,
+                  min: 0.1,
+                  max: 1.5,
+                  divisions: 28,
+                  enabled: !disabled,
+                  onChanged: (double value) => setState(() => _minSilenceDuration = value),
+                ),
+                if (_errorText != null) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text(_errorText!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ],
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: disabled ? null : _save,
+                  icon: _saving
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: Text(_saving ? '保存中…' : '保存设置'),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _ValueSlider extends StatelessWidget {
+  const _ValueSlider({
+    required this.label,
+    required this.valueText,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String valueText;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(child: Text(label)),
+            Text(valueText, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+        Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: valueText,
+          onChanged: enabled ? onChanged : null,
+        ),
+      ],
+    );
+  }
+}

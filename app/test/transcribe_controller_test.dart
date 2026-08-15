@@ -168,6 +168,37 @@ void main() {
     await c.shutdown();
   });
 
+  test('修改线程数等非语言配置也会重启转写器并使用新配置', () async {
+    final List<AsrConfig> launched = <AsrConfig>[];
+    final List<FakeTranscriber> workers = <FakeTranscriber>[];
+    final TranscribeController c = TranscribeController(
+      decoder: FakeDecoder(),
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async {
+        launched.add(config);
+        final FakeTranscriber worker = FakeTranscriber(language: config.language);
+        workers.add(worker);
+        return worker;
+      },
+    );
+
+    await c.transcribeFile('/tmp/a.wav');
+    await c.applyConfig(c.config.copyWith(numThreads: 8, partialInterval: 1.2));
+
+    expect(c.config.numThreads, 8);
+    expect(c.config.partialInterval, 1.2);
+    expect(workers.single.disposed, isTrue);
+
+    await c.transcribeFile('/tmp/a.wav');
+    expect(launched.map((AsrConfig config) => config.numThreads), <int>[2, 8]);
+    expect(launched.map((AsrConfig config) => config.partialInterval), <double>[0.6, 1.2]);
+    await c.shutdown();
+  });
+
   // 回归：切语言时旧 isolate 还在关，新的就抢先加载了 —— 两份 240 MB 模型
   // 同时躺在内存里，手机上直接爆。prepare() 必须先等旧的关完。
   test('切语言：旧转写器关完之前不会加载新模型', () async {

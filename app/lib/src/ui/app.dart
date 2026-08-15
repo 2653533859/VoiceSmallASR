@@ -2,6 +2,8 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:vsasr_app/src/asr/asr_config.dart';
+import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
@@ -9,17 +11,20 @@ import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 顶层 Widget。[controller] / [live] 只在测试里显式传入。
 class VsasrApp extends StatefulWidget {
-  const VsasrApp({super.key, this.controller, this.live});
+  const VsasrApp({super.key, this.controller, this.live, this.initialConfig, this.settings});
 
   final TranscribeController? controller;
   final LiveController? live;
+  final AsrConfig? initialConfig;
+  final AppSettingsRepository? settings;
 
   @override
   State<VsasrApp> createState() => _VsasrAppState();
 }
 
 class _VsasrAppState extends State<VsasrApp> {
-  late final TranscribeController _controller = widget.controller ?? TranscribeController();
+  late final TranscribeController _controller =
+      widget.controller ?? TranscribeController(config: widget.initialConfig);
   late final bool _ownsController = widget.controller == null;
 
   /// 实时字幕借用同一个识别 worker：模型 240 MB，不能加载两份。
@@ -51,7 +56,12 @@ class _VsasrAppState extends State<VsasrApp> {
         useMaterial3: true,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: HomePage(controller: _controller, live: _live, video: _video),
+      home: HomePage(
+        controller: _controller,
+        live: _live,
+        video: _video,
+        settings: widget.settings,
+      ),
     );
   }
 }

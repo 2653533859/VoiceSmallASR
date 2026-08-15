@@ -95,6 +95,9 @@ class TranscribeController extends ChangeNotifier {
   /// 识别语言（`auto`/`zh`/`en`/`ja`/`ko`/`yue`）。
   String get language => _config.language;
 
+  /// 当前完整识别配置，设置页用它初始化表单。
+  AsrConfig get config => _config;
+
   /// 有任务在跑时界面应禁用按钮。
   bool get busy => _stage != JobStage.idle;
 
@@ -177,10 +180,14 @@ class TranscribeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 改识别语言。已加载的 isolate 会被重启（语言是建识别器时定死的）。
-  Future<void> setLanguage(String language) async {
-    if (language == _config.language || busy) return;
-    _config = _config.copyWith(language: language);
+  /// 应用完整识别配置。
+  ///
+  /// 识别器创建时会固定语言、线程数、ITN 与 VAD 参数，因此已有 worker
+  /// 必须安全关闭，下一次识别/录音再按新配置加载。正在做文件任务时不改配置，
+  /// 避免一条音频前后使用两套模型参数。
+  Future<void> applyConfig(AsrConfig config) async {
+    if (busy || _sameConfig(_config, config)) return;
+    _config = config;
     notifyListeners();
     final Transcriber? old = _worker;
     if (old == null) return;
@@ -194,6 +201,9 @@ class TranscribeController extends ChangeNotifier {
       if (identical(_closing, closing)) _closing = null;
     }
   }
+
+  /// 改识别语言。已加载的 isolate 会被重启（语言在建识别器时定死）。
+  Future<void> setLanguage(String language) => applyConfig(_config.copyWith(language: language));
 
   /// 解码并识别一个文件。这是主流程的入口。
   Future<void> transcribeFile(String path) async {
@@ -262,6 +272,20 @@ class TranscribeController extends ChangeNotifier {
     final String raw = error is StateError ? error.message : '$error';
     // isolate 边界上异常被压成字符串，Dart 会带上 "Bad state: " 前缀。
     return raw.replaceFirst(RegExp(r'^(Bad state: |Exception: )+'), '');
+  }
+
+  bool _sameConfig(AsrConfig a, AsrConfig b) {
+    final VadConfig av = a.vad;
+    final VadConfig bv = b.vad;
+    return a.language == b.language &&
+        a.useItn == b.useItn &&
+        a.numThreads == b.numThreads &&
+        a.partialInterval == b.partialInterval &&
+        av.threshold == bv.threshold &&
+        av.minSilenceDuration == bv.minSilenceDuration &&
+        av.minSpeechDuration == bv.minSpeechDuration &&
+        av.maxSpeechDuration == bv.maxSpeechDuration &&
+        av.windowSize == bv.windowSize;
   }
 
   /// 关闭识别 isolate。`dispose()` 不能 await，测试与显式收尾用这个。

@@ -39,6 +39,7 @@ dependencies:
   path_provider: ^2.1.6
   http: ^1.6.0
   flutter_secure_storage: ^10.3.1
+  shared_preferences: ^2.5.5
   archive: ^4.0.9
   path: ^1.9.1
   # 麦克风采集。运行时授权用它自带的 hasPermission()，因此不需要 permission_handler。

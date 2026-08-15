@@ -11,6 +11,8 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
+import 'package:vsasr_app/src/settings/app_settings.dart';
+import 'package:vsasr_app/src/settings/settings_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
@@ -30,6 +32,7 @@ class HomePage extends StatefulWidget {
     this.video,
     this.pickFile,
     this.saveFile,
+    this.settings,
   });
 
   final TranscribeController controller;
@@ -43,6 +46,9 @@ class HomePage extends StatefulWidget {
   /// 文件选择与保存。测试注入替身，默认走 `file_picker`。
   final PickFile? pickFile;
   final SaveFile? saveFile;
+
+  /// 设置存储。测试注入替身；生产环境由顶层应用复用同一个仓库。
+  final AppSettingsRepository? settings;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -136,6 +142,17 @@ class _HomePageState extends State<HomePage> {
     return _export(render: live.renderResult, baseName: 'live');
   }
 
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => SettingsPage(
+          controller: widget.controller,
+          repository: widget.settings ?? AppSettingsRepository(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final LiveController? live = widget.live;
@@ -167,6 +184,11 @@ class _HomePageState extends State<HomePage> {
             title: const Text('VoiceSmallASR'),
             actions: <Widget>[
               _LanguagePicker(controller: c, enabled: !(live?.busy ?? false)),
+              IconButton(
+                tooltip: '设置',
+                onPressed: c.busy || (live?.busy ?? false) ? null : _openSettings,
+                icon: const Icon(Icons.settings_outlined),
+              ),
               const SizedBox(width: 12),
             ],
           ),

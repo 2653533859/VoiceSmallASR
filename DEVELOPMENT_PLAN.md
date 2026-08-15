@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成**：文件转写、实时字幕、视频播放与字幕联动（126 项单测 + 7 项端到端）。API Key 安全存储基础已完成，设置页接入、真实翻译验收和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页已完成首期配置**：文件转写、实时字幕、视频播放与字幕联动（132 项单测 + 7 项端到端）。真实翻译验收、模型管理和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,10 +83,10 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2、M3 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成：`flutter analyze` 无告警，`flutter test` 126 项 + 端到端 7 项）
+### Flutter 端（M1、M2、M3 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页首期配置已完成：`flutter analyze` 无告警，`flutter test` 132 项 + 端到端 7 项）
 
 - 三端工程骨架（windows / macos / android）
-- 116 个依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包与 `media_kit` 视频播放栈
+- 129 个锁定依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包、`media_kit` 视频播放栈和设置持久化插件
 - Gradle 国内镜像（阿里云 Maven + 腾讯云 Gradle 发行版）
 - 六个引擎文件移植完成，Python 端修过的 bug 一并带过来：
   - 空格 token 不能丢（否则英文字幕拼成 `with50`）
@@ -153,7 +153,7 @@ VoiceSmallASR/
 
 - **视频播放与字幕联动（M3，2026-08-16）**：
   - 采用 `media_kit` + `media_kit_video` + `media_kit_libs_video`，统一覆盖 Android、macOS、Windows；
-    macOS 插件当前不支持 Swift Package Manager，已由 CocoaPods 集成并通过 `flutter build macos --debug`
+    macOS 插件当前不支持 Swift Package Manager，已由 CocoaPods 集成并完成 macOS 编译验证
   - 新增视频播放页：打开视频、播放/暂停、拖动进度、显示当前识别字幕；视频转写复用 M1 的原生抽音轨路径
   - 字幕列表跟随播放位置高亮，点击任一字幕跳转到对应时间；播放器后端可注入替身，便于无原生库单测
   - 代码审查补上异步收尾生命周期保护，以及无扩展名路径的安全判断；新增 4 项播放器/视频页测试
@@ -163,7 +163,7 @@ VoiceSmallASR/
   - 新增服务商无关的 `TranslationProvider` 契约，HTTP 协议、认证和重试策略留给具体 provider
   - 新增 `translateResult()`：只发送非空字幕段，校验返回数量后按原位置写入 `Segment.translation`，不改变时间轴
   - 新增 4 项单测覆盖自动语言、空段保留、返回数量不一致和空目标语言
-  - 具体在线翻译服务商仍待决策，不在此阶段绑定 API Key 或计费方案
+  - 具体在线翻译服务商随后确定为 DeepL，接口层仍不绑定具体计费方案
 
 - **双语字幕导出（M4，2026-08-16）**：
   - `subtitles.dart` 已接通 `Segment.translation`，SRT/VTT/TXT 输出原文与译文双行，JSON 保留结构化译文
@@ -178,7 +178,7 @@ VoiceSmallASR/
 - **API Key 安全存储基础（M6 第一项，2026-08-16）**：
   - 接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，通过平台安全存储保存 DeepL API Key，不写入代码或普通配置
   - 固定 provider-specific 存储键，写入前去空白、拒绝空值，支持读取和删除；新增 3 项无网络测试
-  - macOS Debug/Release entitlements 已加入 Keychain Sharing；设置页接入和重启后保留的完整验收仍待完成
+  - macOS Debug/Release entitlements 已加入 Keychain Sharing；设置页可保存 API Key 和识别配置，启动时恢复配置，新增 5 项设置页/持久化测试
 
 ### 环境
 
@@ -214,7 +214,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **126 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **132 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 还需要开发证书。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ⚠️ 签名待配置 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -298,11 +298,11 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 ### M6 · 设置页与模型管理
 
-- [ ] 语言、线程数、VAD 断句灵敏度、临时结果间隔
+- [x] 语言、线程数、VAD 断句灵敏度、临时结果间隔；设置保存到 `shared_preferences`
 - [ ] 模型下载/删除/占用空间、离线模式开关
 - [x] API Key 安全存储基础：`flutter_secure_storage` 适配器、固定存储键、非空校验、读取/删除和 macOS Keychain entitlements
-- [ ] 设置页接入翻译 provider 配置（API key 不落明文）
-- [ ] 验收：改设置后立即生效，重启后保留
+- [x] 设置页接入 DeepL provider 配置（API key 不落明文）
+- [x] 验收：保存后立即应用并重启启动时恢复；控制器重启和持久化分别有测试覆盖
 
 ### M7 · 打包分发
 
@@ -339,7 +339,7 @@ Dart 侧的契约统一为一个方法：给文件路径，返回 16 kHz float32
 已定方向：可插拔 provider 接口，首期使用 DeepL。实现遵循
 [DeepL Translate Text 官方接口](https://developers.deepl.com/api-reference/translate/request-translation)，
 默认使用免费套餐 endpoint，也支持传入付费套餐 endpoint；未来仍可用同一 `TranslationProvider` 接入腾讯、百度或其他 provider。
-API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，设置页配置仍属于 M6；真实 API Key 和真实网络验收不写入自动化测试。
+API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，设置页配置已接入 M6；普通设置使用 [`shared_preferences`](https://pub.dev/packages/shared_preferences) 持久化。真实 API Key 和真实网络验收不写入自动化测试。
 
 ### 待决策 3 · 状态管理与项目文件格式（影响 M5）
 
@@ -543,7 +543,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 126 项应全绿（不需要模型、不需要设备）
+flutter test                   # 132 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"
