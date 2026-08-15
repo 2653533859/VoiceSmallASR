@@ -3,6 +3,9 @@ library;
 
 import 'package:vsasr_app/src/asr/segment.dart';
 
+/// 翻译进度回调：已完成的文本数 / 总文本数。
+typedef TranslationProgress = void Function(int done, int total);
+
 /// 在线或离线翻译服务商的最小契约。
 ///
 /// [texts] 与返回值必须一一对应且顺序一致。服务商的 HTTP 协议、认证方式
@@ -23,10 +26,23 @@ Future<TranscriptionResult> translateResult(
   TranscriptionResult result,
   TranslationProvider provider, {
   required String to,
+  int batchSize = 20,
+  int maxRetries = 2,
+  Duration retryDelay = const Duration(milliseconds: 250),
+  TranslationProgress? onProgress,
 }) async {
   final String target = to.trim();
   if (target.isEmpty) {
     throw ArgumentError.value(to, 'to', '目标语言不能为空');
+  }
+  if (batchSize < 1) {
+    throw ArgumentError.value(batchSize, 'batchSize', '必须 >= 1');
+  }
+  if (maxRetries < 0) {
+    throw ArgumentError.value(maxRetries, 'maxRetries', '不能为负');
+  }
+  if (retryDelay.isNegative) {
+    throw ArgumentError.value(retryDelay, 'retryDelay', '不能为负');
   }
 
   final List<int> positions = <int>[];
@@ -37,18 +53,28 @@ Future<TranscriptionResult> translateResult(
     positions.add(index);
     texts.add(text);
   }
-  if (texts.isEmpty) return result;
+  if (texts.isEmpty) {
+    onProgress?.call(0, 0);
+    return result;
+  }
 
   final String source = result.language.trim();
-  final List<String> translated = await provider.translate(
-    texts,
-    from: source.isEmpty || source == 'auto' ? null : source,
-    to: target,
-  );
-  if (translated.length != texts.length) {
-    throw StateError(
-      '翻译服务返回 ${translated.length} 条结果，需要 ${texts.length} 条，无法安全对应字幕',
+  final String? from = source.isEmpty || source == 'auto' ? null : source;
+  final List<String> translated = <String>[];
+  onProgress?.call(0, texts.length);
+  for (int start = 0; start < texts.length; start += batchSize) {
+    final int end = (start + batchSize).clamp(0, texts.length);
+    final List<String> batch = texts.sublist(start, end);
+    final List<String> translatedBatch = await _translateBatch(
+      provider,
+      batch,
+      from: from,
+      to: target,
+      maxRetries: maxRetries,
+      retryDelay: retryDelay,
     );
+    translated.addAll(translatedBatch);
+    onProgress?.call(translated.length, texts.length);
   }
 
   final List<Segment> segments = List<Segment>.of(result.segments);
@@ -57,4 +83,33 @@ Future<TranscriptionResult> translateResult(
     segments[position] = segments[position].copyWith(translation: translated[index].trim());
   }
   return result.copyWith(segments: segments);
+}
+
+Future<List<String>> _translateBatch(
+  TranslationProvider provider,
+  List<String> texts, {
+  required String? from,
+  required String to,
+  required int maxRetries,
+  required Duration retryDelay,
+}) async {
+  Object? lastError;
+  StackTrace? lastStack;
+  for (int attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      final List<String> translated = await provider.translate(texts, from: from, to: to);
+      if (translated.length != texts.length) {
+        throw StateError(
+          '翻译服务返回 ${translated.length} 条结果，需要 ${texts.length} 条，无法安全对应字幕',
+        );
+      }
+      return translated;
+    } on Object catch (error, stack) {
+      lastError = error;
+      lastStack = stack;
+      if (attempt == maxRetries) break;
+      if (retryDelay > Duration.zero) await Future<void>.delayed(retryDelay);
+    }
+  }
+  Error.throwWithStackTrace(lastError!, lastStack!);
 }

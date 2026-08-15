@@ -52,9 +52,69 @@ void main() {
     );
 
     await expectLater(
-      translateResult(source, provider, to: 'zh'),
+      translateResult(source, provider, to: 'zh', maxRetries: 0),
       throwsA(isA<StateError>()),
     );
+  });
+
+  test('按批次翻译并报告累计进度', () async {
+    final _FakeProvider provider = _FakeProvider();
+    final List<List<int>> progress = <List<int>>[];
+    const TranscriptionResult source = TranscriptionResult(
+      language: 'en',
+      segments: <Segment>[
+        Segment(text: 'one', start: 0.0, end: 1.0),
+        Segment(text: 'two', start: 1.0, end: 2.0),
+        Segment(text: 'three', start: 2.0, end: 3.0),
+      ],
+    );
+
+    final TranscriptionResult translated = await translateResult(
+      source,
+      provider,
+      to: 'zh',
+      batchSize: 2,
+      maxRetries: 0,
+      onProgress: (int done, int total) => progress.add(<int>[done, total]),
+    );
+
+    expect(provider.batches, <List<String>>[
+      <String>['one', 'two'],
+      <String>['three'],
+    ]);
+    expect(progress, <List<int>>[
+      <int>[0, 3],
+      <int>[2, 3],
+      <int>[3, 3],
+    ]);
+    expect(translated.segments.map((Segment s) => s.translation), <String?>[
+      '译文：one',
+      '译文：two',
+      '译文：three',
+    ]);
+  });
+
+  test('临时服务商失败时按 maxRetries 重试，成功后才报告进度', () async {
+    final _FakeProvider provider = _FakeProvider(failuresBeforeSuccess: 2);
+    final List<List<int>> progress = <List<int>>[];
+    const TranscriptionResult source = TranscriptionResult(
+      segments: <Segment>[Segment(text: 'hello', start: 0.0, end: 1.0)],
+    );
+
+    await translateResult(
+      source,
+      provider,
+      to: 'zh',
+      maxRetries: 2,
+      retryDelay: Duration.zero,
+      onProgress: (int done, int total) => progress.add(<int>[done, total]),
+    );
+
+    expect(provider.calls, 3);
+    expect(progress, <List<int>>[
+      <int>[0, 1],
+      <int>[1, 1],
+    ]);
   });
 
   test('目标语言为空时在调用服务商前报错', () async {
@@ -75,11 +135,13 @@ void main() {
 }
 
 class _FakeProvider implements TranslationProvider {
-  _FakeProvider({this.resultCount});
+  _FakeProvider({this.resultCount, this.failuresBeforeSuccess = 0});
 
   final int? resultCount;
+  int failuresBeforeSuccess;
   int calls = 0;
   List<String> texts = <String>[];
+  List<List<String>> batches = <List<String>>[];
   String? from;
   String? to;
 
@@ -91,8 +153,13 @@ class _FakeProvider implements TranslationProvider {
   }) async {
     calls++;
     texts = List<String>.of(values);
+    batches.add(List<String>.of(values));
     this.from = from;
     this.to = to;
+    if (failuresBeforeSuccess > 0) {
+      failuresBeforeSuccess--;
+      throw StateError('临时翻译失败');
+    }
     final int count = resultCount ?? values.length;
     return values.take(count).map((String value) => '译文：$value').toList();
   }

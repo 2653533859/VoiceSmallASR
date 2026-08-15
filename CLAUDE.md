@@ -12,7 +12,7 @@ SenseVoice-Small（int8 ONNX）+ silero-vad，纯 CPU，模型仅首次运行联
 | 端 | 位置 | 状态 |
 | --- | --- | --- |
 | Python 库 + CLI | `src/voice_small_asr/` | 已完成，105 项测试 |
-| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3 已完成，M4 翻译基础抽象已完成**：文件转写、实时字幕、视频播放与字幕联动（111 项 `flutter test` + 7 项 `integration_test`）。macOS 真实 mp4 已验收，Android/Windows 与在线翻译服务商仍待验证/决策 |
+| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3 已完成，M4 翻译基础与批量流程已完成**：文件转写、实时字幕、视频播放与字幕联动（113 项 `flutter test` + 7 项 `integration_test`）。macOS 真实 mp4 已验收，Android/Windows 与在线翻译服务商仍待验证/决策 |
 
 两端固定 sherpa-onnx **1.13.5**，因此识别结果应逐字一致 —— **Python 端是 Flutter 端的对照基准**。
 阶段计划（M0–M7）、待决策事项与踩坑记录在 `DEVELOPMENT_PLAN.md`，动 Flutter 端前先读。
@@ -46,7 +46,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"   # 本机 Flutter 3.47.0 装�
 
 cd app && flutter pub get
 flutter analyze                # 验收标准：No issues found
-flutter test                   # 111 项，不需要模型也不需要设备
+flutter test                   # 113 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
 flutter build macos --debug     # 可用（Xcode 26.6 + CocoaPods 1.17.0 已装）
 flutter run -d macos           # 可用
