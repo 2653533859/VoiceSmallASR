@@ -15,7 +15,7 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 | 麦克风采集（`lib/src/audio/microphone.dart`） | ✅ `record` 取 16 kHz 单声道 PCM16 → float32 |
 | 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道 |
 | 字幕导出（`lib/src/subtitles/`） | ✅ 含双语字幕 |
-| 界面（`lib/src/ui/`） | ✅ M1、M2 完成，M3 播放器子项已实现：文件转写、实时字幕、视频播放、字幕联动 |
+| 界面（`lib/src/ui/`） | ✅ M1、M2、M3 完成：文件转写、实时字幕、视频播放、字幕联动 |
 
 ## 开发
 

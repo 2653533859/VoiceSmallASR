@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2 已完成，M3 播放器子项已实现**：文件转写、实时字幕、视频播放与字幕联动（107 项单测 + 6 项端到端）。macOS 播放器构建已验收，真实 mp4 播放与 Android/Windows 原生代码仍待验证 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成**：文件转写、实时字幕、视频播放与字幕联动（107 项单测 + 7 项端到端）。macOS 真实 mp4 播放已验收，Android/Windows 原生代码仍待验证 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,7 +83,7 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2 完成，M3 播放器子项已实现：`flutter analyze` 无告警，`flutter test` 107 项 + 端到端 6 项）
+### Flutter 端（M1、M2、M3 完成：`flutter analyze` 无告警，`flutter test` 107 项 + 端到端 7 项）
 
 - 三端工程骨架（windows / macos / android）
 - 116 个依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包与 `media_kit` 视频播放栈
@@ -123,7 +123,7 @@ VoiceSmallASR/
   - 导出走 `file_picker` 12 的 `saveFile`（它自己落盘，顺带处理 Android SAF 与 macOS 沙盒授权），
     格式对话框列 SRT/VTT/JSON/TXT，文件名默认跟着音频名
   - 14 项测试：7 项状态机 + 7 项 widget（含「没有结果时导出按钮禁用」「解码失败展示原文案」）
-- **端到端验收**（`integration_test/e2e_test.dart`，6 项，在 macOS 上跑真模型真引擎）：
+- **端到端验收**（`integration_test/e2e_test.dart`，7 项，在 macOS 上跑真模型真引擎）：
   `flutter test integration_test/e2e_test.dart -d macos`。结果与 Python 端**逐字一致**：
   `呢几个字都表达唔到，我想讲嘅意思。`，RTF ≈ 0.06；`yue.m4a` 走 macOS 原生解码后
   识别结果同样一致 —— Swift 那份解码器至此才算真跑通
@@ -151,12 +151,13 @@ VoiceSmallASR/
   - 顺带修掉一个内存隐患：切语言时旧 isolate 还在关，新的就抢先加载了，
     两份模型同时驻留；`prepare()` 现在先等旧的关完
 
-- **视频播放与字幕联动（M3 第一项，2026-08-16）**：
+- **视频播放与字幕联动（M3，2026-08-16）**：
   - 采用 `media_kit` + `media_kit_video` + `media_kit_libs_video`，统一覆盖 Android、macOS、Windows；
     macOS 插件当前不支持 Swift Package Manager，已由 CocoaPods 集成并通过 `flutter build macos --debug`
   - 新增视频播放页：打开视频、播放/暂停、拖动进度、显示当前识别字幕；视频转写复用 M1 的原生抽音轨路径
   - 字幕列表跟随播放位置高亮，点击任一字幕跳转到对应时间；播放器后端可注入替身，便于无原生库单测
   - 代码审查补上异步收尾生命周期保护，以及无扩展名路径的安全判断；新增 4 项播放器/视频页测试
+  - 生成模型自带英文语音的 `en.mp4`，在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验
 
 ### 环境
 
@@ -234,7 +235,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 模型首次下载页：进度、失败重试、多源 fallback 提示
 - [x] **验收通过**：同一个 `test_wavs/yue.wav` 在 Flutter 端与 Python 端输出**逐字一致** ——
       两端都是 `呢几个字都表达唔到，我想讲嘅意思。`，解码同为 82368 个采样。
-      验收自动化在 `integration_test/e2e_test.dart`（真模型、真引擎、真原生解码，6 项）
+      验收自动化在 `integration_test/e2e_test.dart`（真模型、真引擎、真原生解码，7 项）
 
 ### M2 · 麦克风实时字幕　✅ 已完成（2026-08-15）
 
@@ -252,12 +253,12 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
       麦克风那一路本身没法自动化（要真人说话），但它之后的链路与该测试完全相同
 - [ ] **Android 真机不掉帧 —— 未验证**（本机无 Android SDK，见 §3 环境）
 
-### M3 · 视频播放 + 字幕叠加（播放器子项已实现，真实视频验收待完成）
+### M3 · 视频播放 + 字幕叠加　✅ 已完成（2026-08-16）
 
 - [x] 播放器：采用 `media_kit`，已接入 Android/macOS/Windows 依赖与统一控制器
 - [x] 从视频抽音轨 → 识别 → 字幕轨：复用 M1 的平台原生解码并在视频页加载识别结果
 - [x] 播放进度与字幕高亮联动，点字幕跳转
-- [ ] 验收：一段带外语对白的 mp4，播放时字幕跟得上、点击可跳转
+- [x] 验收：模型自带英文语音生成的 `en.mp4` 在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验
 
 ### M4 · 翻译（识别语言 → 中文）
 
@@ -531,11 +532,15 @@ flutter run -d <android-id>    # 需真机或模拟器
 # 所以先把模型拷进去（Python 端已下过就直接复用）：
 SUP="$HOME/Library/Containers/com.voicesmallasr.vsasrApp/Data/Library/Application Support/com.voicesmallasr.vsasrApp/models"
 mkdir -p "$SUP" && cp -Rc "$HOME/.cache/voice-small-asr/models/." "$SUP/"
-# 顺带造一个压缩格式的素材，用来验原生解码：
+# 顺带造压缩格式与视频素材，用来验原生解码和播放器：
 W="$SUP/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs"
 ffmpeg -y -i "$W/yue.wav" -c:a aac -b:a 128k "$W/yue.m4a"
+# 造一个带画面的英文 mp4，用来验播放器、跳转和字幕时间轴：
+ffmpeg -y -f lavfi -i color=c=black:s=640x360:r=30:d=8 \
+  -i "$W/en.wav" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
+  -shortest "$W/en.mp4"
 
-flutter test integration_test/e2e_test.dart -d macos   # 5 项应全绿
+flutter test integration_test/e2e_test.dart -d macos   # 7 项应全绿（含真实 en.mp4 播放验收）
 ```
 
 **别设 `PUB_HOSTED_URL`**：pub.dev 可直连，而指向镜像会让 `flutter pub get` 把

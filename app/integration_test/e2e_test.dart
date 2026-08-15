@@ -9,14 +9,16 @@
 /// ```
 /// 依赖模型已在应用私有目录里；缺模型时整组自动跳过。
 /// 沙盒应用只能读自己的容器，因此素材要放在模型目录内的 `test_wavs/`
-/// （模型压缩包自带该目录，`yue.m4a` 由外部用 ffmpeg 生成后放进去）。
+/// （模型压缩包自带该目录，`yue.m4a` 与 `en.mp4` 由外部用 ffmpeg 生成后放进去）。
 library;
 
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
@@ -24,6 +26,8 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/video/video_playback_controller.dart';
+import 'package:vsasr_app/src/video/video_timeline.dart';
 
 /// Python 端在本机跑出的基准（见 DEVELOPMENT_PLAN.md §1）。
 const String kYueBaseline = '呢几个字都表达唔到，我想讲嘅意思。';
@@ -33,6 +37,7 @@ const int kYueSamples = 82368;
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   late ModelPaths paths;
   late String wavs;
@@ -122,6 +127,60 @@ void main() {
     expect(result.text, allOf(contains('呢'), contains('唔'), contains('嘅')));
   });
 
+  testWidgets('真实 mp4：播放器读取、跳转与视频音轨识别都可用', (WidgetTester tester) async {
+    final String path = p.join(wavs, 'en.mp4');
+    if (!paths.exists || !File(path).existsSync()) {
+      markTestSkipped('模型或 mp4 缺失：按 DEVELOPMENT_PLAN.md §7 生成 en.mp4');
+      return;
+    }
+
+    // 同一个 mp4 同时走播放器与 M1 的视频抽音轨路径，避免只测到其中一条链路。
+    final Float32List samples = await const PlatformAudioDecoder().decodeFile(path);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      config: AsrConfig(language: 'en'),
+      allowDownload: false,
+    );
+    addTearDown(worker.dispose);
+    final TranscriptionResult result = await worker.transcribe(samples);
+    expect(result.text, allOf(contains('tribal chieftain'), contains('gold')));
+
+    final VideoPlaybackController player = VideoPlaybackController();
+    addTearDown(player.dispose);
+    // media_kit 的 VideoController 要等 Flutter 首帧完成初始化；集成测试也要真实挂载 Video。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: player.buildVideo()),
+      ),
+    );
+    await tester.pump();
+    await player.open(path);
+    await _waitUntil(
+      () => player.duration > const Duration(seconds: 1),
+      reason: 'media_kit 没有从真实 mp4 读到视频时长',
+    );
+    expect(player.duration, greaterThan(const Duration(seconds: 4)));
+
+    final Segment segment = result.segments.firstWhere((Segment value) => value.text.trim().isNotEmpty);
+    final Duration cuePosition = Duration(
+      microseconds: (((segment.start + segment.end) / 2) * Duration.microsecondsPerSecond).round(),
+    );
+    expect(activeSegment(result.segments, cuePosition)?.text, segment.text);
+
+    await player.seek(cuePosition);
+    await _waitUntil(
+      () => (player.position.inMicroseconds - cuePosition.inMicroseconds).abs() <
+          const Duration(milliseconds: 250).inMicroseconds,
+      reason: '播放器跳转后位置没有落在字幕时间范围附近',
+    );
+
+    await player.playOrPause();
+    await _waitUntil(
+      () => player.position > cuePosition,
+      reason: '真实 mp4 没有开始播放',
+    );
+    await player.playOrPause();
+  });
+
   // M2 验收：麦克风那一路没法自动化（要真人说话），但麦克风之后的整条链路
   // 与这里完全相同 —— 100 ms 一块的 16 kHz float32 喂进实时会话。
   // 用三段素材拼出「说三句话」，验证三句都定稿且时间戳连续。
@@ -196,4 +255,18 @@ Float32List _concat(List<Float32List> parts) {
     offset += part.length;
   }
   return out;
+}
+
+Future<void> _waitUntil(
+  bool Function() condition, {
+  required String reason,
+  Duration timeout = const Duration(seconds: 20),
+}) async {
+  final Stopwatch watch = Stopwatch()..start();
+  while (!condition()) {
+    if (watch.elapsed >= timeout) {
+      fail(reason);
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
 }
