@@ -1,0 +1,233 @@
+/// 模型下载与本地缓存管理。对应 Python 端 `voice_small_asr/models.py`。
+///
+/// 首次运行需联网下载，之后完全离线。三端的存放位置都取
+/// [getApplicationSupportDirectory]，Android 上位于应用私有目录，
+/// 卸载即清理，不需要存储权限。
+library;
+
+import 'dart:io';
+import 'dart:isolate';
+
+import 'package:archive/archive_io.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
+/// SenseVoice-Small int8：中/英/粤/日/韩，开启 ITN 时带标点。
+///
+/// 固定用 2024-07-17 版而非 2025-09-09：后者不支持标点，无法用于字幕。
+const String kAsrModelName = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17';
+
+/// 识别模型压缩包（约 155 MB，解压后 240 MB）。
+const String kAsrArchiveName = '$kAsrModelName.tar.bz2';
+
+/// silero-vad 单文件模型（约 630 KB）。
+const String kVadModelName = 'silero_vad.onnx';
+
+/// 下载源。国内直连 github.com 常超时（flutter doctor 已报错），
+/// 因此按顺序尝试多个源，任一成功即可。
+const List<String> kModelBaseUrls = <String>[
+  'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models',
+  'https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models',
+  'https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models',
+];
+
+/// 下载/解压进度回调。[total] 为 0 表示总量未知。
+typedef ModelProgress = void Function(String stage, int done, int total);
+
+/// 已就绪的模型文件路径。
+class ModelPaths {
+  const ModelPaths({
+    required this.root,
+    required this.asrModel,
+    required this.tokens,
+    required this.vadModel,
+  });
+
+  /// 模型根目录。
+  final String root;
+
+  /// SenseVoice int8 onnx。
+  final String asrModel;
+
+  /// tokens.txt。
+  final String tokens;
+
+  /// silero_vad.onnx。
+  final String vadModel;
+
+  bool get exists =>
+      File(asrModel).existsSync() && File(tokens).existsSync() && File(vadModel).existsSync();
+}
+
+/// 模型管理器：解析路径、检查就绪、按需下载。
+class ModelManager {
+  ModelManager({this.baseUrls = kModelBaseUrls});
+
+  final List<String> baseUrls;
+
+  String? _cachedRoot;
+
+  /// 模型根目录，首次调用时解析并缓存。
+  Future<String> resolveRoot() async {
+    final String? cached = _cachedRoot;
+    if (cached != null) return cached;
+    final Directory support = await getApplicationSupportDirectory();
+    final String root = p.join(support.path, 'models');
+    _cachedRoot = root;
+    return root;
+  }
+
+  /// 推导模型文件应在的路径，不检查是否存在。
+  Future<ModelPaths> resolvePaths() async {
+    final String root = await resolveRoot();
+    final String asrDir = p.join(root, kAsrModelName);
+    return ModelPaths(
+      root: root,
+      asrModel: p.join(asrDir, 'model.int8.onnx'),
+      tokens: p.join(asrDir, 'tokens.txt'),
+      vadModel: p.join(root, kVadModelName),
+    );
+  }
+
+  /// 模型是否已完整存在于本地。
+  Future<bool> isReady() async => (await resolvePaths()).exists;
+
+  /// 已占用的磁盘空间（字节），用于设置页展示。
+  Future<int> usedBytes() async {
+    final Directory dir = Directory(await resolveRoot());
+    if (!dir.existsSync()) return 0;
+    int total = 0;
+    await for (final FileSystemEntity entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is File) total += await entity.length();
+    }
+    return total;
+  }
+
+  /// 删除本地模型，供设置页「清理模型」使用。
+  Future<void> deleteAll() async {
+    final Directory dir = Directory(await resolveRoot());
+    if (dir.existsSync()) await dir.delete(recursive: true);
+  }
+
+  /// 依次尝试各下载源，任一成功即返回；全部失败则抛出最后一个错误。
+  Future<void> _downloadWithFallback(
+    String fileName,
+    File dest,
+    ModelProgress? progress,
+  ) async {
+    Object? lastError;
+    for (int i = 0; i < baseUrls.length; i++) {
+      final String url = '${baseUrls[i]}/$fileName';
+      try {
+        await _download(url, dest, fileName, i + 1, baseUrls.length, progress);
+        return;
+      } catch (error) {
+        lastError = error;
+        progress?.call('源 ${i + 1} 失败，换下一个镜像…', 0, 0);
+      }
+    }
+    throw Exception('$fileName 下载失败（已尝试 ${baseUrls.length} 个源）：$lastError');
+  }
+
+  Future<void> _download(
+    String url,
+    File dest,
+    String label,
+    int sourceIndex,
+    int sourceCount,
+    ModelProgress? progress,
+  ) async {
+    await dest.parent.create(recursive: true);
+    final File tmp = File('${dest.path}.part');
+    if (tmp.existsSync()) await tmp.delete();
+
+    final http.Client client = http.Client();
+    try {
+      final http.StreamedResponse response = await client.send(http.Request('GET', Uri.parse(url)));
+      if (response.statusCode != 200) {
+        throw HttpException('HTTP ${response.statusCode}', uri: Uri.parse(url));
+      }
+      final int total = response.contentLength ?? 0;
+      int done = 0;
+      final IOSink sink = tmp.openWrite();
+      final String stage = '下载 $label（源 $sourceIndex/$sourceCount）';
+      try {
+        await response.stream.forEach((List<int> chunk) {
+          sink.add(chunk);
+          done += chunk.length;
+          progress?.call(stage, done, total);
+        });
+      } finally {
+        await sink.close();
+      }
+      // 连接中途断开时 stream 会正常结束而不报错，必须比对长度，
+      // 否则截断的文件会被当成有效缓存，之后永远不再重新下载。
+      if (total > 0 && done != total) {
+        throw Exception('$label 下载不完整：收到 $done 字节，应为 $total 字节');
+      }
+      await tmp.rename(dest.path);
+    } catch (_) {
+      if (tmp.existsSync()) await tmp.delete();
+      rethrow;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 确保模型就绪并返回路径；缺失时按需下载。
+  ///
+  /// [allowDownload] 为 false 时缺模型直接抛错，用于「离线部署」场景。
+  Future<ModelPaths> ensure({
+    bool allowDownload = true,
+    ModelProgress? progress,
+  }) async {
+    final ModelPaths paths = await resolvePaths();
+    if (paths.exists) return paths;
+    if (!allowDownload) {
+      throw StateError('模型不完整且已禁止下载。请把模型放到 ${paths.root}');
+    }
+
+    final Directory root = Directory(paths.root);
+    await root.create(recursive: true);
+
+    // 识别模型：压缩包下载 + 解压
+    if (!File(paths.asrModel).existsSync() || !File(paths.tokens).existsSync()) {
+      final File archive = File(p.join(paths.root, '_archives', kAsrArchiveName));
+      if (!archive.existsSync()) {
+        await _downloadWithFallback(kAsrArchiveName, archive, progress);
+      }
+      progress?.call('解压识别模型…', 0, 0);
+      try {
+        // 240 MB 的模型解压必须放到 isolate 里做流式落盘，
+        // 否则会阻塞 UI 线程，且一次性读进内存在手机上容易 OOM。
+        final String archivePath = archive.path;
+        final String target = paths.root;
+        await Isolate.run<void>(() => extractFileToDisk(archivePath, target));
+      } catch (error) {
+        // 坏压缩包必须删掉，否则上面的 existsSync() 会一直复用它，
+        // 之后每次运行都以同样的方式失败。
+        if (archive.existsSync()) await archive.delete();
+        throw Exception('解压识别模型失败：$error');
+      }
+      if (archive.existsSync()) await archive.delete();
+      final Directory archiveDir = archive.parent;
+      if (archiveDir.existsSync() && archiveDir.listSync().isEmpty) {
+        await archiveDir.delete();
+      }
+    }
+
+    // VAD：单文件，直接下载
+    final File vad = File(paths.vadModel);
+    if (!vad.existsSync()) {
+      await _downloadWithFallback(kVadModelName, vad, progress);
+    }
+
+    final ModelPaths result = await resolvePaths();
+    if (!result.exists) {
+      throw StateError('模型准备失败，请检查 ${result.root} 的内容与磁盘空间');
+    }
+    progress?.call('模型就绪', 1, 1);
+    return result;
+  }
+}
