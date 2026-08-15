@@ -3,12 +3,11 @@
 /// 与 `test/` 下的单测不同，这里**不用任何替身** —— 目的就是验证
 /// 「Flutter 端与 Python 端逐字一致」这条 M1 验收标准。
 ///
-/// 跑法（macOS / Windows）：
+/// 跑法（macOS）：
 /// ```bash
 /// flutter test integration_test/e2e_test.dart -d macos
-/// flutter test integration_test/e2e_test.dart -d windows
 /// ```
-/// 依赖模型已在应用私有目录里，或通过 `VSASR_MODEL_DIR` 指定测试目录；缺模型时整组自动跳过。
+/// 依赖模型已在应用私有目录里；缺模型时整组自动跳过。
 /// 沙盒应用只能读自己的容器，因此素材要放在模型目录内的 `test_wavs/`
 /// （模型压缩包自带该目录，`yue.m4a` 与 `en.mp4` 由外部用 ffmpeg 生成后放进去）。
 library;

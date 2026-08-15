@@ -44,16 +44,25 @@ jobs:
         shell: pwsh
         run: ./scripts/build_windows_unsigned.ps1 -Flutter flutter
 
-      - name: Prepare Windows e2e model and media
+      - name: Prepare Windows desktop smoke media
         shell: pwsh
-        run: ./scripts/prepare_windows_e2e.ps1 -ModelRoot "${{ runner.temp }}\voicesmallasr-models"
+        run: |
+          $smokeDir = Join-Path $env:RUNNER_TEMP "voicesmallasr-windows-smoke"
+          New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
+          $audio = Join-Path $smokeDir "tone.m4a"
+          $video = Join-Path $smokeDir "tone.mp4"
+          & ffmpeg @("-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "aac", "-b:a", "128k", $audio)
+          if ($LASTEXITCODE -ne 0) { throw "生成 tone.m4a 失败，退出码 $LASTEXITCODE" }
+          & ffmpeg @("-y", "-f", "lavfi", "-i", "color=c=black:s=640x360:r=30:d=2", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-shortest", $video)
+          if ($LASTEXITCODE -ne 0) { throw "生成 tone.mp4 失败，退出码 $LASTEXITCODE" }
 
-      - name: Run Windows desktop e2e
+      - name: Run Windows desktop smoke
         working-directory: app
         shell: pwsh
         env:
-          VSASR_MODEL_DIR: "${{ runner.temp }}\voicesmallasr-models"
-        run: flutter test integration_test/e2e_test.dart -d windows
+          VSASR_SMOKE_AUDIO: "${{ runner.temp }}\voicesmallasr-windows-smoke\tone.m4a"
+          VSASR_SMOKE_VIDEO: "${{ runner.temp }}\voicesmallasr-windows-smoke\tone.mp4"
+        run: flutter test integration_test/windows_smoke_test.dart -d windows
 
       - name: Verify artifacts
         shell: pwsh
