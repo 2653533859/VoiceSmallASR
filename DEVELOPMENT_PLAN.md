@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成**：文件转写、实时字幕、视频播放与字幕联动（107 项单测 + 7 项端到端）。macOS 真实 mp4 播放已验收，Android/Windows 原生代码仍待验证 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础抽象已完成**：文件转写、实时字幕、视频播放与字幕联动（111 项单测 + 7 项端到端）。macOS 真实 mp4 播放已验收，Android/Windows 原生代码和具体在线翻译服务商仍待验证/决策 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,7 +83,7 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2、M3 完成：`flutter analyze` 无告警，`flutter test` 107 项 + 端到端 7 项）
+### Flutter 端（M1、M2、M3 完成，M4 基础抽象已完成：`flutter analyze` 无告警，`flutter test` 111 项 + 端到端 7 项）
 
 - 三端工程骨架（windows / macos / android）
 - 116 个依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包与 `media_kit` 视频播放栈
@@ -159,6 +159,12 @@ VoiceSmallASR/
   - 代码审查补上异步收尾生命周期保护，以及无扩展名路径的安全判断；新增 4 项播放器/视频页测试
   - 生成模型自带英文语音的 `en.mp4`，在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验
 
+- **翻译基础抽象（M4 第一项，2026-08-16）**：
+  - 新增服务商无关的 `TranslationProvider` 契约，HTTP 协议、认证和重试策略留给具体 provider
+  - 新增 `translateResult()`：只发送非空字幕段，校验返回数量后按原位置写入 `Segment.translation`，不改变时间轴
+  - 新增 4 项单测覆盖自动语言、空段保留、返回数量不一致和空目标语言
+  - 具体在线翻译服务商仍待决策，不在此阶段绑定 API Key 或计费方案
+
 ### 环境
 
 两台机器，代码同一份：
@@ -193,7 +199,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **107 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **111 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。`flutter build macos --debug` 已通过，Swift 原生解码已编译。踩到一个必修的坑：pub 会抹掉 `SherpaOnnxC.framework` 的符号链接导致 codesign 失败，见 §6 | ✅ 完成 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -260,9 +266,9 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 播放进度与字幕高亮联动，点字幕跳转
 - [x] 验收：模型自带英文语音生成的 `en.mp4` 在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验
 
-### M4 · 翻译（识别语言 → 中文）
+### M4 · 翻译（识别语言 → 中文；基础抽象已完成）
 
-- [ ] `TranslationProvider` 抽象：`Future<List<String>> translate(List<String> texts, {String? from, String to})`
+- [x] `TranslationProvider` 抽象：`Future<List<String>> translate(List<String> texts, {String? from, required String to})`；`translateResult()` 已将等长译文安全写入 `Segment.translation`
 - [ ] 在线 provider 实现（首期，见 §5 待决策 2）
 - [ ] 批量翻译 + 失败重试 + 进度回报；结果写入 `Segment.translation`
 - [ ] 双语字幕导出（`subtitles.dart` 已支持，接上即可）
@@ -312,7 +318,7 @@ Dart 侧的契约统一为一个方法：给文件路径，返回 16 kHz float32
 且它**从未支持 Windows**（只有 Android / iOS / macOS），与三端目标直接冲突。体积从来不是它的主要问题。
 社区 fork（如 `ffmpeg-kit-extended`）虽声称覆盖 Windows，但同属个人维护，弃养风险与原包同构，故不采用。
 
-### 待决策 2 · 在线翻译服务商（阻塞 M4）
+### 待决策 2 · 在线翻译服务商（阻塞 M4 在线 provider）
 
 已定方向：可插拔 provider 接口，首期在线。还需定具体服务商 —— DeepL（质量最好、有免费额度）、腾讯/百度（国内延迟低、需实名）、或 OpenAI/Claude 类 LLM（可带上下文，字幕连贯性更好）。选择影响 API key 管理与计费方式。
 
@@ -514,7 +520,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 107 项应全绿（不需要模型、不需要设备）
+flutter test                   # 111 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"
