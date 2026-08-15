@@ -13,6 +13,7 @@ const String _vadThresholdKey = 'settings.vad.threshold';
 const String _minSilenceDurationKey = 'settings.vad.min_silence_duration';
 const String _minSpeechDurationKey = 'settings.vad.min_speech_duration';
 const String _maxSpeechDurationKey = 'settings.vad.max_speech_duration';
+const String _offlineModeKey = 'settings.model.offline_mode';
 
 /// 可替换的普通设置存储，便于在没有平台 channel 的单测里验证持久化逻辑。
 abstract interface class PreferenceStore {
@@ -138,6 +139,11 @@ class AppSettingsRepository {
     await _preferences.writeDouble(_minSpeechDurationKey, config.vad.minSpeechDuration);
     await _preferences.writeDouble(_maxSpeechDurationKey, config.vad.maxSpeechDuration);
   }
+
+  /// 读取离线模式。离线模式只影响自动准备模型，不影响设置页的显式下载按钮。
+  Future<bool> loadOfflineMode() async => await _preferences.readBool(_offlineModeKey) ?? false;
+
+  Future<void> saveOfflineMode(bool enabled) => _preferences.writeBool(_offlineModeKey, enabled);
 }
 
 bool _validInt(int? value, {required int min, required int max}) =>

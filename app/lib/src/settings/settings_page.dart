@@ -20,6 +20,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late String _language;
   late bool _useItn;
+  late bool _offlineMode;
   late int _numThreads;
   late double _partialInterval;
   late double _vadThreshold;
@@ -36,12 +37,18 @@ class _SettingsPageState extends State<SettingsPage> {
     final AsrConfig config = widget.controller.config;
     _language = config.language;
     _useItn = config.useItn;
+    _offlineMode = widget.controller.offlineMode;
     _numThreads = config.numThreads.clamp(1, 16).toInt();
     _partialInterval = config.partialInterval.clamp(0.0, 3.0).toDouble();
     _vadThreshold = config.vad.threshold.clamp(0.1, 0.9).toDouble();
     _minSilenceDuration = config.vad.minSilenceDuration.clamp(0.1, 1.5).toDouble();
     _apiKey = TextEditingController();
+    widget.controller.addListener(_onControllerChanged);
     _loadApiKey();
+  }
+
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadApiKey() async {
@@ -61,6 +68,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
     _apiKey.dispose();
     super.dispose();
   }
@@ -84,6 +92,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     try {
       await widget.repository.saveConfig(next);
+      await widget.repository.saveOfflineMode(_offlineMode);
       final String key = _apiKey.text.trim();
       if (key.isEmpty) {
         await widget.repository.translationSecrets.deleteDeepLApiKey();
@@ -91,6 +100,7 @@ class _SettingsPageState extends State<SettingsPage> {
         await widget.repository.translationSecrets.saveDeepLApiKey(key);
       }
       await widget.controller.applyConfig(next);
+      widget.controller.setOfflineMode(_offlineMode);
       if (!mounted) return;
       Navigator.of(context).pop();
     } on Object catch (error) {
@@ -102,9 +112,30 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _deleteModel() async {
+    if (_saving || widget.controller.busy || !widget.controller.modelReady) return;
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('删除本地模型？'),
+        content: Text(
+          '将删除约 ${_formatBytes(widget.controller.modelBytes)} 的模型文件。下次识别前需要重新下载。',
+        ),
+        actions: <Widget>[
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) await widget.controller.deleteModel();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bool disabled = _loading || _saving;
+    final bool disabled = _loading || _saving || widget.controller.busy;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: _loading
@@ -200,6 +231,49 @@ class _SettingsPageState extends State<SettingsPage> {
                   enabled: !disabled,
                   onChanged: (double value) => setState(() => _minSilenceDuration = value),
                 ),
+                const Divider(height: 24),
+                Text('模型', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  widget.controller.modelReady
+                      ? '模型已就绪，占用 ${_formatBytes(widget.controller.modelBytes)}'
+                      : '模型尚未下载',
+                ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('离线模式'),
+                  subtitle: const Text('自动准备模型时不联网；设置页仍可手动下载'),
+                  value: _offlineMode,
+                  onChanged: disabled ? null : (bool value) => setState(() => _offlineMode = value),
+                ),
+                if (widget.controller.busy) ...<Widget>[
+                  LinearProgressIndicator(value: widget.controller.progress),
+                  if (widget.controller.statusText.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(widget.controller.statusText),
+                    ),
+                ],
+                Row(
+                  children: <Widget>[
+                    if (!widget.controller.modelReady)
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: disabled ? null : widget.controller.downloadModel,
+                          icon: const Icon(Icons.download),
+                          label: const Text('下载模型'),
+                        ),
+                      ),
+                    if (widget.controller.modelReady)
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: disabled ? null : _deleteModel,
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('删除模型'),
+                        ),
+                      ),
+                  ],
+                ),
                 if (_errorText != null) ...<Widget>[
                   const SizedBox(height: 12),
                   Text(_errorText!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -219,6 +293,11 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
     );
   }
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 class _ValueSlider extends StatelessWidget {

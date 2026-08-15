@@ -9,10 +9,18 @@ Future<void> main() async {
   MediaKit.ensureInitialized();
   final AppSettingsRepository settings = AppSettingsRepository();
   AsrConfig config = AsrConfig();
+  bool offlineMode = false;
   try {
     config = await settings.loadConfig(fallback: config);
+    offlineMode = await settings.loadOfflineMode();
   } on Object {
     // 偏好存储不可用时仍以默认配置启动，设置页会继续提供重试机会。
   }
-  runApp(VsasrApp(initialConfig: config, settings: settings));
+  runApp(
+    VsasrApp(
+      initialConfig: config,
+      initialOfflineMode: offlineMode,
+      settings: settings,
+    ),
+  );
 }

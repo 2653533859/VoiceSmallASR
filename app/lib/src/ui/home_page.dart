@@ -273,7 +273,8 @@ class _ModelSetupView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool working = controller.stage == JobStage.preparingModel;
+    final bool working = controller.stage == JobStage.preparingModel ||
+        controller.stage == JobStage.managingModel;
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
@@ -304,7 +305,7 @@ class _ModelSetupView extends StatelessWidget {
                 Text(controller.statusText, textAlign: TextAlign.center),
               ] else
                 FilledButton.icon(
-                  onPressed: controller.prepare,
+                  onPressed: controller.downloadModel,
                   icon: const Icon(Icons.download),
                   label: Text(controller.errorText == null ? '下载模型' : '重试'),
                 ),

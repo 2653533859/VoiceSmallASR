@@ -32,6 +32,9 @@ enum JobStage {
 
   /// 正在识别。
   transcribing,
+
+  /// 正在删除或刷新模型缓存。
+  managingModel,
 }
 
 /// 主界面状态。
@@ -41,9 +44,13 @@ class TranscribeController extends ChangeNotifier {
     ModelManager? models,
     this.launch = launchWorkerIsolate,
     AsrConfig? config,
+    bool offlineMode = false,
   }) : _decoder = decoder ?? const PlatformAudioDecoder(),
        _models = models ?? ModelManager(),
-       _config = config ?? AsrConfig();
+       _config = config ?? AsrConfig(),
+       _offlineMode = false {
+    _offlineMode = offlineMode;
+  }
 
   final AudioDecoder _decoder;
   final ModelManager _models;
@@ -52,6 +59,7 @@ class TranscribeController extends ChangeNotifier {
   final TranscriberLauncher launch;
 
   AsrConfig _config;
+  bool _offlineMode;
   Transcriber? _worker;
 
   /// 正在关闭的旧 worker（切语言时）。新的必须等它关完再起，
@@ -61,6 +69,7 @@ class TranscribeController extends ChangeNotifier {
 
   JobStage _stage = JobStage.idle;
   bool _modelReady = false;
+  int _modelBytes = 0;
   String _statusText = '';
   double? _progress;
   String? _errorText;
@@ -73,6 +82,12 @@ class TranscribeController extends ChangeNotifier {
 
   /// 模型是否已在本地就绪。
   bool get modelReady => _modelReady;
+
+  /// 模型目录当前占用的磁盘空间。
+  int get modelBytes => _modelBytes;
+
+  /// 是否禁止自动联网下载模型。
+  bool get offlineMode => _offlineMode;
 
   /// 面向用户的一行状态说明（下载进度、识别进度等）。
   String get statusText => _statusText;
@@ -109,16 +124,19 @@ class TranscribeController extends ChangeNotifier {
     super.notifyListeners();
   }
 
-    /// 检查模型是否就绪。启动时调一次。
+  /// 检查模型是否就绪。启动时调一次。
   Future<void> refreshModel() async {
     _stage = JobStage.checkingModel;
     _errorText = null;
     notifyListeners();
     try {
       _modelReady = await _models.isReady();
+      _modelBytes = 0;
       _statusText = _modelReady ? '模型就绪' : '首次使用需要下载模型';
+      if (_modelReady) unawaited(_updateModelBytes());
     } on Object catch (error) {
       _modelReady = false;
+      _modelBytes = 0;
       _errorText = '检查模型失败：$error';
     } finally {
       _stage = JobStage.idle;
@@ -129,7 +147,7 @@ class TranscribeController extends ChangeNotifier {
   /// 准备模型与识别 isolate：缺模型就下载，然后把模型加载进 isolate。
   ///
   /// 重复调用是安全的（已就绪时直接返回）。
-  Future<void> prepare({bool allowDownload = true}) async {
+  Future<void> prepare({bool? allowDownload}) async {
     if (_worker != null || busy) return;
     _stage = JobStage.preparingModel;
     _errorText = null;
@@ -142,7 +160,7 @@ class TranscribeController extends ChangeNotifier {
       await _closing;
       final Transcriber worker = await launch(
         config: _config,
-        allowDownload: allowDownload,
+        allowDownload: allowDownload ?? !_offlineMode,
         onModelProgress: _onModelProgress,
       );
       // 模型下载/加载要几十秒，这期间界面可能已经被销毁。此时 dispose()
@@ -154,6 +172,7 @@ class TranscribeController extends ChangeNotifier {
       }
       _worker = worker;
       _modelReady = true;
+      unawaited(_updateModelBytes());
       _statusText = '模型就绪';
       _progress = null;
     } on Object catch (error) {
@@ -175,9 +194,56 @@ class TranscribeController extends ChangeNotifier {
     return _worker;
   }
 
-  void _onModelProgress(String stage, int done, int total) {    _statusText = stage;
+  /// 设置页的显式下载操作，即使开启离线模式也允许用户主动触发。
+  Future<void> downloadModel() => prepare(allowDownload: true);
+
+  /// 切换自动下载策略。已加载的模型继续可用，下一次自动准备时生效。
+  void setOfflineMode(bool enabled) {
+    if (_offlineMode == enabled || busy) return;
+    _offlineMode = enabled;
+    notifyListeners();
+  }
+
+  /// 关闭已加载 worker 后删除模型缓存。
+  Future<void> deleteModel() async {
+    if (busy) return;
+    _stage = JobStage.managingModel;
+    _errorText = null;
+    _statusText = '正在删除模型…';
+    notifyListeners();
+    try {
+      await _closing;
+      final Transcriber? worker = _worker;
+      _worker = null;
+      await worker?.dispose();
+      await _models.deleteAll();
+      _modelReady = false;
+      _modelBytes = 0;
+      _statusText = '模型已删除';
+    } on Object catch (error) {
+      _errorText = _humanize(error);
+      _statusText = '删除模型失败';
+    } finally {
+      _stage = JobStage.idle;
+      notifyListeners();
+    }
+  }
+
+  void _onModelProgress(String stage, int done, int total) {
+    _statusText = stage;
     _progress = total > 0 ? done / total : null;
     notifyListeners();
+  }
+
+  Future<void> _updateModelBytes() async {
+    try {
+      final int bytes = await _models.usedBytes();
+      if (_disposed || !_modelReady) return;
+      _modelBytes = bytes;
+      notifyListeners();
+    } on Object {
+      // 占用空间只是展示信息，统计失败不应让已就绪的模型变成不可用。
+    }
   }
 
   /// 应用完整识别配置。

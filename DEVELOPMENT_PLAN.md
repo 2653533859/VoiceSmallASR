@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页已完成首期配置**：文件转写、实时字幕、视频播放与字幕联动（132 项单测 + 7 项端到端）。真实翻译验收、模型管理和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理已完成首期实现**：文件转写、实时字幕、视频播放与字幕联动（136 项单测 + 7 项端到端）。真实翻译验收、字幕编辑和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,7 +83,7 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2、M3 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页首期配置已完成：`flutter analyze` 无告警，`flutter test` 132 项 + 端到端 7 项）
+### Flutter 端（M1、M2、M3 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，`flutter test` 136 项 + 端到端 7 项）
 
 - 三端工程骨架（windows / macos / android）
 - 129 个锁定依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包、`media_kit` 视频播放栈和设置持久化插件
@@ -180,6 +180,12 @@ VoiceSmallASR/
   - 固定 provider-specific 存储键，写入前去空白、拒绝空值，支持读取和删除；新增 3 项无网络测试
   - macOS Debug/Release entitlements 已加入 Keychain Sharing；设置页可保存 API Key 和识别配置，启动时恢复配置，新增 5 项设置页/持久化测试
 
+- **模型管理与离线模式（M6 第二项，2026-08-16）**：
+  - 设置页显示模型就绪状态与磁盘占用，支持显式下载、确认后删除本地模型；删除前等待旧 worker 完全释放，避免模型文件仍被占用
+  - 离线模式持久化到 `shared_preferences`，自动准备模型时禁止联网；设置页的显式下载仍可用
+  - 模型占用统计在后台刷新，不阻塞首页从下载页切换到识别界面；统计失败不影响已就绪模型
+  - 新增 4 项离线/模型生命周期测试，覆盖自动下载策略、占用空间、删除清理和配置变更并发边界
+
 ### 环境
 
 两台机器，代码同一份：
@@ -214,7 +220,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **132 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **136 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 还需要开发证书。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ⚠️ 签名待配置 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -299,7 +305,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 ### M6 · 设置页与模型管理
 
 - [x] 语言、线程数、VAD 断句灵敏度、临时结果间隔；设置保存到 `shared_preferences`
-- [ ] 模型下载/删除/占用空间、离线模式开关
+- [x] 模型下载/删除/占用空间、离线模式开关
 - [x] API Key 安全存储基础：`flutter_secure_storage` 适配器、固定存储键、非空校验、读取/删除和 macOS Keychain entitlements
 - [x] 设置页接入 DeepL provider 配置（API key 不落明文）
 - [x] 验收：保存后立即应用并重启启动时恢复；控制器重启和持久化分别有测试覆盖
@@ -543,7 +549,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 132 项应全绿（不需要模型、不需要设备）
+flutter test                   # 136 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"

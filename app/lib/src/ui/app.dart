@@ -11,11 +11,19 @@ import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 顶层 Widget。[controller] / [live] 只在测试里显式传入。
 class VsasrApp extends StatefulWidget {
-  const VsasrApp({super.key, this.controller, this.live, this.initialConfig, this.settings});
+  const VsasrApp({
+    super.key,
+    this.controller,
+    this.live,
+    this.initialConfig,
+    this.initialOfflineMode = false,
+    this.settings,
+  });
 
   final TranscribeController? controller;
   final LiveController? live;
   final AsrConfig? initialConfig;
+  final bool initialOfflineMode;
   final AppSettingsRepository? settings;
 
   @override
@@ -24,7 +32,11 @@ class VsasrApp extends StatefulWidget {
 
 class _VsasrAppState extends State<VsasrApp> {
   late final TranscribeController _controller =
-      widget.controller ?? TranscribeController(config: widget.initialConfig);
+      widget.controller ??
+      TranscribeController(
+        config: widget.initialConfig,
+        offlineMode: widget.initialOfflineMode,
+      );
   late final bool _ownsController = widget.controller == null;
 
   /// 实时字幕借用同一个识别 worker：模型 240 MB，不能加载两份。

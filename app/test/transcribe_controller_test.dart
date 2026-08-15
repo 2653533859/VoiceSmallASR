@@ -22,7 +22,9 @@ void main() {
   late Directory workspace;
 
   setUp(() => workspace = Directory.systemTemp.createTempSync('vsasr_ctrl_test'));
-  tearDown(() => workspace.deleteSync(recursive: true));
+  tearDown(() {
+    if (workspace.existsSync()) workspace.deleteSync(recursive: true);
+  });
 
   ModelManager models() => ModelManager(root: workspace.path);
 
@@ -199,6 +201,80 @@ void main() {
     await c.shutdown();
   });
 
+  test('离线模式阻止自动准备下载，但显式下载仍可用', () async {
+    final List<bool> allowDownloads = <bool>[];
+    final TranscribeController c = TranscribeController(
+      models: models(),
+      offlineMode: true,
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async {
+        allowDownloads.add(allowDownload);
+        return FakeTranscriber();
+      },
+    );
+
+    await c.prepare();
+    await c.shutdown();
+    await c.downloadModel();
+
+    expect(allowDownloads, <bool>[false, true]);
+    await c.shutdown();
+  });
+
+  test('删除模型前关闭 worker，并清空模型状态和占用空间', () async {
+    writeFakeModel(workspace.path);
+    final FakeTranscriber worker = FakeTranscriber();
+    final TranscribeController c = TranscribeController(
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => worker,
+    );
+
+    await c.prepare(allowDownload: false);
+    await pumpEventQueue();
+    expect(c.modelReady, isTrue);
+    expect(c.modelBytes, greaterThan(0));
+
+    await c.deleteModel();
+
+    expect(worker.disposed, isTrue);
+    expect(c.modelReady, isFalse);
+    expect(c.modelBytes, 0);
+    expect(await models().isReady(), isFalse);
+    await c.shutdown();
+  });
+
+  test('删除模型会等待配置变更中的旧 worker 完成关闭', () async {
+    writeFakeModel(workspace.path);
+    final Completer<void> disposeGate = Completer<void>();
+    final _BlockingTranscriber worker = _BlockingTranscriber(disposeGate);
+    final TranscribeController c = TranscribeController(
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => worker,
+    );
+
+    await c.prepare(allowDownload: false);
+    final Future<void> applying = c.applyConfig(c.config.copyWith(numThreads: 8));
+    await Future<void>.delayed(Duration.zero);
+    final Future<void> deleting = c.deleteModel();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(await models().isReady(), isTrue);
+    disposeGate.complete();
+    await Future.wait(<Future<void>>[applying, deleting]);
+    expect(await models().isReady(), isFalse);
+  });
+
   // 回归：切语言时旧 isolate 还在关，新的就抢先加载了 —— 两份 240 MB 模型
   // 同时躺在内存里，手机上直接爆。prepare() 必须先等旧的关完。
   test('切语言：旧转写器关完之前不会加载新模型', () async {
@@ -279,6 +355,18 @@ void main() {
 
     expect(arrived.disposed, isTrue);
   });
+}
+
+class _BlockingTranscriber extends FakeTranscriber {
+  _BlockingTranscriber(this._disposeGate);
+
+  final Completer<void> _disposeGate;
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+    await _disposeGate.future;
+  }
 }
 
 /// 关得很慢的转写器：用来卡住切语言时的收尾。

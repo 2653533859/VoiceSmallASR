@@ -28,8 +28,11 @@ void main() {
     await tester.tap(find.text('日文').last);
     final Finder apiKeyField = find.byKey(const Key('deepLApiKey')).first;
     await tester.enterText(apiKeyField, '  saved-key  ');
-    await tester.drag(find.byType(ListView).first, const Offset(0, -400));
-    await tester.pumpAndSettle();
+    for (int i = 0; i < 3; i++) {
+      await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+      await tester.pump();
+    }
+    await tester.tap(find.text('离线模式'));
     await tester.tap(find.text('保存设置'));
     await tester.pumpAndSettle();
 
@@ -37,6 +40,8 @@ void main() {
     expect(await repository.loadConfig(), isA<AsrConfig>());
     expect((await repository.loadConfig()).language, 'ja');
     expect(secrets.values[kDeepLApiKeyStorageKey], 'saved-key');
+    expect(controller.offlineMode, isTrue);
+    expect(await repository.loadOfflineMode(), isTrue);
   });
 
   testWidgets('设置页打开时恢复已保存的 API Key，但不显示明文', (WidgetTester tester) async {

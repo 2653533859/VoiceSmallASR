@@ -66,6 +66,15 @@ void main() {
     expect(preferences.strings.values, isNot(contains('key')));
     expect(secrets.values[kDeepLApiKeyStorageKey], 'key');
   });
+
+  test('离线模式可以持久化', () async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final AppSettingsRepository repository = AppSettingsRepository(preferences: preferences);
+
+    expect(await repository.loadOfflineMode(), isFalse);
+    await repository.saveOfflineMode(true);
+    expect(await repository.loadOfflineMode(), isTrue);
+  });
 }
 
 class _FakePreferenceStore implements PreferenceStore {
