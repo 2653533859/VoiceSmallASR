@@ -234,11 +234,32 @@ VoiceSmallASR/
 │   ├── segments.py       Word / Segment / TranscriptionResult
 │   ├── subtitles.py      SRT / VTT / JSON / TXT 导出
 │   └── cli.py            命令行
+├── app/                  Flutter 三端客户端（Windows / macOS / Android）
 ├── examples/             可运行集成示例
 ├── tests/                单元测试 + 端到端集成测试
 ├── data/samples/         示例音频（不入库）
-└── models/               预留的本地模型目录（不入库）
+├── models/               预留的本地模型目录（不入库）
+└── DEVELOPMENT_PLAN.md   后续开发计划与踩坑记录
 ```
+
+## 图形界面（Flutter 三端）
+
+`app/` 是同一套能力的图形界面，覆盖 Windows / macOS / Android，用 pub.dev 上的
+[`sherpa_onnx`](https://pub.dev/packages/sherpa_onnx) 包，与 Python 端**同版本（1.13.5）、同模型**，
+因此识别结果一致，Python 端可作为对照基准。
+
+当前进度：引擎层已移植完成（`flutter analyze` 无告警），UI 尚未开始。
+计划的功能包括文件转写、麦克风实时字幕、视频播放与字幕叠加、
+识别语言并翻译成中文、字幕校对编辑、设置与模型管理。
+
+```bash
+cd app
+flutter pub get
+flutter analyze
+flutter run -d windows      # 需开启 Windows 开发者模式 + Visual Studio C++ 工具链
+```
+
+阶段划分、待决策事项、平台限制与踩坑记录见 [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)。
 
 ## 已知限制与取舍
 
