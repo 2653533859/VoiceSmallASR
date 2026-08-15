@@ -12,7 +12,7 @@ SenseVoice-Small（int8 ONNX）+ silero-vad，纯 CPU，模型仅首次运行联
 | 端 | 位置 | 状态 |
 | --- | --- | --- |
 | Python 库 + CLI | `src/voice_small_asr/` | 已完成，105 项测试 |
-| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证**：文件转写、实时字幕、视频播放、字幕联动与字幕校对编辑（149 项 `flutter test` + Android API 35 模拟器端到端 7 项）。macOS/Android 模拟器真实 mp4 已验收，Android 真机性能、Windows 真桌面运行与真实翻译验收仍待验证 |
+| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证（Windows CI 同时检查运行时 DLL 与模型排除）**：文件转写、实时字幕、视频播放、字幕联动与字幕校对编辑（149 项 `flutter test` + Android API 35 模拟器端到端 7 项）。macOS/Android 模拟器真实 mp4 已验收，Android 真机性能、Windows 真桌面运行与真实翻译验收仍待验证 |
 
 两端固定 sherpa-onnx **1.13.5**，因此识别结果应逐字一致 —— **Python 端是 Flutter 端的对照基准**。
 阶段计划（M0–M7）、待决策事项与踩坑记录在 `DEVELOPMENT_PLAN.md`，动 Flutter 端前先读。
