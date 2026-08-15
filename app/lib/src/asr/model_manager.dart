@@ -86,7 +86,10 @@ class ModelManager {
     final String? cached = _cachedRoot;
     if (cached != null) return cached;
     final Directory support = await getApplicationSupportDirectory();
-    final String root = p.join(support.path, 'models');
+    final String? environmentRoot = Platform.environment['VSASR_MODEL_DIR']?.trim();
+    final String root = environmentRoot == null || environmentRoot.isEmpty
+        ? p.join(support.path, 'models')
+        : environmentRoot;
     _cachedRoot = root;
     return root;
   }

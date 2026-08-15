@@ -36,9 +36,24 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress --yes
 
+      - name: Install FFmpeg for desktop e2e
+        shell: pwsh
+        run: choco install ffmpeg --no-progress --yes
+
       - name: Build Windows Release and installer
         shell: pwsh
         run: ./scripts/build_windows_unsigned.ps1 -Flutter flutter
+
+      - name: Prepare Windows e2e model and media
+        shell: pwsh
+        run: ./scripts/prepare_windows_e2e.ps1 -ModelRoot "${{ runner.temp }}\voicesmallasr-models"
+
+      - name: Run Windows desktop e2e
+        working-directory: app
+        shell: pwsh
+        env:
+          VSASR_MODEL_DIR: "${{ runner.temp }}\voicesmallasr-models"
+        run: flutter test integration_test/e2e_test.dart -d windows
 
       - name: Verify artifacts
         shell: pwsh
