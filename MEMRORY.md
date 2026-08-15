@@ -10,16 +10,17 @@
 - M4 的第一项已完成：加入服务商无关的 `TranslationProvider` 和 `translateResult()`，可在校验返回数量后把译文安全写入 `Segment.translation`。
 - M4 的批量流程已完成：`translateResult()` 支持分批、失败重试、延迟和累计进度回报，全部批次成功后才写回译文。
 - M4 的双语字幕导出已完成：SRT/VTT/TXT 输出原文与译文双行，JSON 保留结构化译文；带译文的长段不切分以保持时间边界一致。
-- 当前下一步是确定在线翻译服务商并实现 provider，同时补 Android/Windows 的构建与运行验证。
+- M4 的首期在线 provider 已完成：`DeepLTranslationProvider` 使用官方 v2 接口，支持 API 错误脱敏、自动/显式源语言和 128 KiB 请求体拆分。
+- 当前下一步是把 API Key 接入安全设置、用真实网络完成英/日视频验收，同时补 Android/Windows 的构建与运行验证。
 
 ## 已验证结果
 
 - Python：`pytest` 105 项通过，`ruff check .` 通过。
-- Flutter：`flutter analyze` 通过，117 项单测通过。
+- Flutter：`flutter analyze` 通过，123 项单测通过。
 - macOS：`flutter build macos --debug` 通过，Swift 原生音频解码已编译。
 - 播放器：`media_kit 1.2.6` + `media_kit_video 2.0.1` + `media_kit_libs_video 1.0.7` 已接入；macOS 构建通过，插件当前由 CocoaPods 集成。
 - M3 测试覆盖：播放器状态/生命周期、字幕时间边界、视频页加载/叠加/点击跳转；7 项集成测试包含真实 `en.mp4` 播放、跳转、抽音轨和识别。
-- M4 测试覆盖：6 项翻译抽象/批量流程测试，包含空段保留、自动语言、批次边界、进度和重试。
+- M4 测试覆盖：6 项翻译抽象/批量流程测试、4 项双语导出测试、6 项 DeepL provider 测试。
 - 双语字幕导出测试：4 项，覆盖 SRT/VTT/TXT/JSON、译文顺序、关闭双语和长段时间边界。
 - macOS 真模型端到端验收已完成：Flutter 与 Python 对粤语素材逐字一致，实时识别链路的定稿序号和时间戳连续。
 

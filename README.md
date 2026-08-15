@@ -250,12 +250,12 @@ VoiceSmallASR/
 [`sherpa_onnx`](https://pub.dev/packages/sherpa_onnx) 包，与 Python 端**同版本（1.13.5）、同模型**，
 因此识别结果一致，Python 端可作为对照基准。
 
-当前进度：**M1（文件转写 + 字幕导出）、M2（麦克风实时字幕）与 M3（视频播放 + 字幕叠加）已完成，M4 翻译基础、批量流程与双语导出已接入** —— 引擎层、音频解码、
-后台识别 isolate、流式识别、视频播放与字幕联动都已接入，`flutter test` 117 项、macOS 端到端测试 7 项通过。
+当前进度：**M1（文件转写 + 字幕导出）、M2（麦克风实时字幕）与 M3（视频播放 + 字幕叠加）已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已接入** —— 引擎层、音频解码、
+后台识别 isolate、流式识别、视频播放与字幕联动都已接入，`flutter test` 123 项、macOS 端到端测试 7 项通过。
 macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输出**逐字一致**
 （`呢几个字都表达唔到，我想讲嘅意思。`），RTF 约 0.06；实时识别把三段素材拼成「三句话」喂进去，
 每句都定稿且时间戳连续不重叠。
-后续计划包括确定在线翻译服务商、Android/Windows 构建与运行验证、识别语言并翻译成中文、字幕校对编辑、设置与模型管理。
+后续计划包括 API Key 安全设置、真实英/日视频翻译验收、Android/Windows 构建与运行验证、字幕校对编辑、设置与模型管理。
 
 音频解码上两端有意不同：Python 端调系统 ffmpeg，Flutter 端 wav 走纯 Dart 直读、压缩格式与视频交给平台原生解码（macOS 用 AVFoundation，Android 用 MediaCodec，Windows 用 Media Foundation）——`ffmpeg_kit_flutter` 已弃养且从不支持 Windows。macOS 那份已编译并端到端跑通；Android 的 Kotlin 与 Windows 的 C++ 还没在任何机器上编译过。
 
