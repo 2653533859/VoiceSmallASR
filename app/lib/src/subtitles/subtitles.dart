@@ -32,6 +32,45 @@ class Cue {
   final String? translation;
 }
 
+/// 检查识别段是否能安全地作为字幕时间轴导出。
+///
+/// 相邻字幕允许无缝衔接，但不允许倒序或重叠；[duration] 大于 0 时，字幕也不能
+/// 超出音频总时长。编辑器与最终导出共用这一条校验，避免只在界面层保证约束。
+List<String> validateSubtitleTimeline(
+  Iterable<Segment> segments, {
+  double? duration,
+}) {
+  final List<String> errors = <String>[];
+  double? previousEnd;
+  int index = 0;
+  for (final Segment segment in segments) {
+    if (!segment.start.isFinite || !segment.end.isFinite) {
+      errors.add('第 ${index + 1} 条字幕的时间不是有效数字');
+    } else {
+      if (segment.start < 0) errors.add('第 ${index + 1} 条字幕不能从负数秒开始');
+      if (segment.end <= segment.start) errors.add('第 ${index + 1} 条字幕的结束时间必须晚于开始时间');
+      if (previousEnd != null && segment.start < previousEnd - 0.000001) {
+        errors.add('第 ${index + 1} 条字幕与上一条重叠或倒序');
+      }
+      if (duration != null && duration > 0 && segment.end > duration + 0.000001) {
+        errors.add('第 ${index + 1} 条字幕超出音频时长');
+      }
+      previousEnd = segment.end;
+    }
+    index++;
+  }
+  return errors;
+}
+
+/// 时间轴不合法时阻止导出。
+void ensureValidSubtitleTimeline(
+  Iterable<Segment> segments, {
+  double? duration,
+}) {
+  final List<String> errors = validateSubtitleTimeline(segments, duration: duration);
+  if (errors.isNotEmpty) throw ArgumentError('字幕时间轴无效：${errors.first}');
+}
+
 /// 格式化为 `HH:MM:SS,mmm`（SRT）或 `HH:MM:SS.mmm`（VTT）。
 String formatTimestamp(double seconds, {String sep = ','}) {
   final int totalMs = (seconds <= 0 ? 0.0 : seconds * 1000).round();
@@ -215,6 +254,7 @@ String renderSubtitles(
   bool bilingual = true,
   bool translationFirst = false,
 }) {
+  ensureValidSubtitleTimeline(result.segments, duration: result.duration);
   switch (format.toLowerCase()) {
     case 'srt':
       return toSrt(

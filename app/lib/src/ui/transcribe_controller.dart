@@ -104,6 +104,19 @@ class TranscribeController extends ChangeNotifier {
   /// 最近一次识别结果。
   TranscriptionResult? get result => _result;
 
+  /// 接收字幕校对页保存后的结果。
+  ///
+  /// 校对页只在空闲时打开；这里仍做一次时间轴校验，避免其他调用方绕过编辑器
+  /// 把重叠或倒序字幕写回主界面。
+  void applyEditedResult(TranscriptionResult edited) {
+    if (busy) throw StateError('识别进行中，暂时不能应用字幕修改');
+    ensureValidSubtitleTimeline(edited.segments, duration: edited.duration);
+    _result = edited;
+    _statusText = '字幕已更新';
+    _errorText = null;
+    notifyListeners();
+  }
+
   /// 最近一次识别耗时。
   Duration? get elapsed => _elapsed;
 

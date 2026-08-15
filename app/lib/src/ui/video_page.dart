@@ -10,6 +10,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 import 'package:vsasr_app/src/video/video_timeline.dart';
+import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 
 /// 选择视频文件，取消时返回 null。
@@ -55,6 +56,18 @@ class _VideoPageState extends State<VideoPage> {
     await widget.controller.open(path);
   }
 
+  Future<void> _openEditor(TranscriptionResult result) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => SubtitleEditorPage(
+          initialResult: result,
+          player: widget.controller,
+          onSave: widget.transcription.applyEditedResult,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -89,6 +102,15 @@ class _VideoPageState extends State<VideoPage> {
                       onPressed: video.busy ? null : _openTranscribedVideo,
                       icon: const Icon(Icons.subtitles_outlined),
                       label: const Text('加载已转写视频'),
+                    ),
+                  ],
+                  if (hasLinkedResult) ...<Widget>[
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      key: const Key('videoSubtitleEditor'),
+                      onPressed: video.busy ? null : () => _openEditor(result),
+                      icon: const Icon(Icons.edit_note),
+                      label: const Text('编辑字幕'),
                     ),
                   ],
                   const SizedBox(width: 12),

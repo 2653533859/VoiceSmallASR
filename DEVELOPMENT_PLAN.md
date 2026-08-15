@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理已完成首期实现**：文件转写、实时字幕、视频播放与字幕联动（136 项单测 + 7 项端到端）。真实翻译验收、字幕编辑和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理已完成首期实现**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（145 项单测 + 7 项端到端）。真实翻译验收和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,7 +83,7 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2、M3 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，`flutter test` 136 项 + 端到端 7 项）
+### Flutter 端（M1、M2、M3、M5 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，`flutter test` 145 项 + 端到端 7 项）
 
 - 三端工程骨架（windows / macos / android）
 - 129 个锁定依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包、`media_kit` 视频播放栈和设置持久化插件
@@ -186,6 +186,13 @@ VoiceSmallASR/
   - 模型占用统计在后台刷新，不阻塞首页从下载页切换到识别界面；统计失败不影响已就绪模型
   - 新增 4 项离线/模型生命周期测试，覆盖自动下载策略、占用空间、删除清理和配置变更并发边界
 
+- **字幕校对编辑（M5，2026-08-16）**：
+  - 新增独立的 `SubtitleEditorController`，以不可变结果快照实现撤销/重做，编辑失败时不污染当前结果
+  - 支持文本、起止时间、合并、拆分；文本变化清除过期译文和 token 时间戳，时间变化清除过期 token 时间戳
+  - 首页和视频页接入字幕校对入口，编辑页可定位播放器时间点，保存后回写主转写结果
+  - 导出前统一校验时间轴，拒绝负时间、无效区间、重叠/倒序和超出音频时长的字幕
+  - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 145 项通过
+
 ### 环境
 
 两台机器，代码同一份：
@@ -220,7 +227,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **136 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **145 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 还需要开发证书。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ⚠️ 签名待配置 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -295,12 +302,12 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 双语字幕导出：SRT/VTT/TXT 输出原文+译文双行，JSON 保留 `Segment.translation`；已有导出链路并通过 4 项回归测试
 - [ ] 验收：英/日视频生成中英双语 SRT，导出的文件在播放器里两行都正常显示
 
-### M5 · 字幕校对编辑
+### M5 · 字幕校对编辑　✅ 首期已完成（2026-08-16）
 
-- [ ] 可编辑列表：改文字、调起止时间、合并/拆分字幕条
-- [ ] 撤销/重做
-- [ ] 与播放器联动（编辑时定位到对应时间点）
-- [ ] 验收：改完导出的 SRT 时间轴无重叠、无倒序
+- [x] 可编辑列表：改文字、调起止时间、合并/拆分字幕条
+- [x] 撤销/重做
+- [x] 与播放器联动（编辑时定位到对应时间点）
+- [x] 验收：改完导出的 SRT 时间轴无重叠、无倒序；导出入口统一复用时间轴校验
 
 ### M6 · 设置页与模型管理
 
@@ -347,9 +354,9 @@ Dart 侧的契约统一为一个方法：给文件路径，返回 16 kHz float32
 默认使用免费套餐 endpoint，也支持传入付费套餐 endpoint；未来仍可用同一 `TranslationProvider` 接入腾讯、百度或其他 provider。
 API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，设置页配置已接入 M6；普通设置使用 [`shared_preferences`](https://pub.dev/packages/shared_preferences) 持久化。真实 API Key 和真实网络验收不写入自动化测试。
 
-### 待决策 3 · 状态管理与项目文件格式（影响 M5）
+### 已决策 3 · 字幕编辑状态与项目文件格式（M5，2026-08-16）
 
-字幕校对需要撤销/重做与「工程文件」概念（音频路径 + 分段 + 译文 + 编辑历史）。已引入 `provider`，但 M5 的编辑历史可能更适合 `riverpod` 或自建 command 栈。到 M5 前不必决定。
+首期采用独立的 `SubtitleEditorController` 和不可变 `TranscriptionResult` 快照栈实现撤销/重做，不新增 `riverpod` 或工程文件格式。工程文件、批量编辑和更细的编辑命令可在后续需求明确后再扩展。
 
 ## 6. 已知技术约束与踩坑记录
 
@@ -549,7 +556,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 136 项应全绿（不需要模型、不需要设备）
+flutter test                   # 145 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"

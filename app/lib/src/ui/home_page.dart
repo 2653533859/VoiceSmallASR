@@ -13,6 +13,7 @@ import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/settings_page.dart';
+import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
@@ -153,6 +154,20 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<void> _openEditor() async {
+    final TranscriptionResult? result = widget.controller.result;
+    if (result == null || widget.controller.busy) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => SubtitleEditorPage(
+          initialResult: result,
+          player: widget.video,
+          onSave: widget.controller.applyEditedResult,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final LiveController? live = widget.live;
@@ -169,10 +184,20 @@ class _HomePageState extends State<HomePage> {
         if (!c.modelReady) {
           body = _ModelSetupView(controller: c);
         } else if (live == null && widget.video == null) {
-          body = _TranscribeView(controller: c, onOpen: _openFile, onExport: _exportFile);
+          body = _TranscribeView(
+            controller: c,
+            onOpen: _openFile,
+            onExport: _exportFile,
+            onEdit: _openEditor,
+          );
         } else {
           body = _Tabs(
-            transcribe: _TranscribeView(controller: c, onOpen: _openFile, onExport: _exportFile),
+            transcribe: _TranscribeView(
+              controller: c,
+              onOpen: _openFile,
+              onExport: _exportFile,
+              onEdit: _openEditor,
+            ),
             live: live == null ? null : _LiveView(controller: live, onExport: _exportLive),
             video: widget.video == null
                 ? null
@@ -327,11 +352,13 @@ class _TranscribeView extends StatelessWidget {
     required this.controller,
     required this.onOpen,
     required this.onExport,
+    required this.onEdit,
   });
 
   final TranscribeController controller;
   final VoidCallback onOpen;
   final VoidCallback onExport;
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -353,6 +380,13 @@ class _TranscribeView extends StatelessWidget {
                 onPressed: result == null || controller.busy ? null : onExport,
                 icon: const Icon(Icons.save_alt),
                 label: const Text('导出字幕'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                key: const Key('openSubtitleEditor'),
+                onPressed: result == null || controller.busy ? null : onEdit,
+                icon: const Icon(Icons.edit_note),
+                label: const Text('校对字幕'),
               ),
               const SizedBox(width: 12),
               Expanded(
