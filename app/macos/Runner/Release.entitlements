@@ -4,6 +4,9 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- flutter_secure_storage_darwin 的 Keychain Sharing 能力。 -->
+	<key>keychain-access-groups</key>
+	<array/>
 	<!-- 下载模型（GitHub / 镜像）必需；缺了它 sandbox 会静默掐掉出网请求。 -->
 	<key>com.apple.security.network.client</key>
 	<true/>

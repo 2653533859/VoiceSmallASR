@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成**：文件转写、实时字幕、视频播放与字幕联动（123 项单测 + 7 项端到端）。macOS 真实 mp4 播放已验收，Android/Windows 原生代码、API Key 安全配置和真实翻译验收仍待验证 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成**：文件转写、实时字幕、视频播放与字幕联动（126 项单测 + 7 项端到端）。API Key 安全存储基础已完成，设置页接入、真实翻译验收和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,7 +83,7 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2、M3 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成：`flutter analyze` 无告警，`flutter test` 123 项 + 端到端 7 项）
+### Flutter 端（M1、M2、M3 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成：`flutter analyze` 无告警，`flutter test` 126 项 + 端到端 7 项）
 
 - 三端工程骨架（windows / macos / android）
 - 116 个依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包与 `media_kit` 视频播放栈
@@ -171,9 +171,14 @@ VoiceSmallASR/
 
 - **DeepL 在线 provider（M4，2026-08-16）**：
   - 使用 `POST /v2/translate` 和 `Authorization: DeepL-Auth-Key ...`，实现自动/显式源语言、响应顺序校验和错误脱敏
-  - provider 内按 UTF-8 请求体 128 KiB 限制拆分，复用上层批量/重试流程；HTTP client 可注入，API Key 不落盘
+  - provider 内按 UTF-8 请求体 128 KiB 限制拆分，复用上层批量/重试流程；HTTP client 可注入，provider 本身不持久化 API Key
   - 新增 6 项无网络单测覆盖请求格式、空输入、HTTP 错误、响应格式、请求拆分和构造参数
-  - 首期服务商决策为 DeepL；真实 API Key、设置页安全存储和真实网络验收留到后续步骤
+  - 首期服务商决策为 DeepL；真实 API Key 和真实网络验收留到后续步骤
+
+- **API Key 安全存储基础（M6 第一项，2026-08-16）**：
+  - 接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，通过平台安全存储保存 DeepL API Key，不写入代码或普通配置
+  - 固定 provider-specific 存储键，写入前去空白、拒绝空值，支持读取和删除；新增 3 项无网络测试
+  - macOS Debug/Release entitlements 已加入 Keychain Sharing；设置页接入和重启后保留的完整验收仍待完成
 
 ### 环境
 
@@ -209,8 +214,8 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **123 项通过** | ✅ 完成 |
-| Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。`flutter build macos --debug` 已通过，Swift 原生解码已编译。踩到一个必修的坑：pub 会抹掉 `SherpaOnnxC.framework` 的符号链接导致 codesign 失败，见 §6 | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **126 项通过** | ✅ 完成 |
+| Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 还需要开发证书。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ⚠️ 签名待配置 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
 所以这条路径顺带解决了 M7 里原本无解的一项。
@@ -295,7 +300,8 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 - [ ] 语言、线程数、VAD 断句灵敏度、临时结果间隔
 - [ ] 模型下载/删除/占用空间、离线模式开关
-- [ ] 翻译 provider 配置（API key 用安全存储，不落明文）
+- [x] API Key 安全存储基础：`flutter_secure_storage` 适配器、固定存储键、非空校验、读取/删除和 macOS Keychain entitlements
+- [ ] 设置页接入翻译 provider 配置（API key 不落明文）
 - [ ] 验收：改设置后立即生效，重启后保留
 
 ### M7 · 打包分发
@@ -333,7 +339,7 @@ Dart 侧的契约统一为一个方法：给文件路径，返回 16 kHz float32
 已定方向：可插拔 provider 接口，首期使用 DeepL。实现遵循
 [DeepL Translate Text 官方接口](https://developers.deepl.com/api-reference/translate/request-translation)，
 默认使用免费套餐 endpoint，也支持传入付费套餐 endpoint；未来仍可用同一 `TranslationProvider` 接入腾讯、百度或其他 provider。
-API Key 的安全存储与设置页配置属于 M6，真实 API Key 和真实网络验收不写入自动化测试。
+API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，设置页配置仍属于 M6；真实 API Key 和真实网络验收不写入自动化测试。
 
 ### 待决策 3 · 状态管理与项目文件格式（影响 M5）
 
@@ -385,6 +391,10 @@ API Key 的安全存储与设置页配置属于 M6，真实 API Key 和真实网
 - **macOS sandbox 会静默掐掉出网**：`entitlements` 不加 `com.apple.security.network.client`，
   模型下载不会报权限错误，只会像网络故障一样失败。`files.user-selected.read-only` 同理，
   不加则 file_picker 选中的文件读不出来。两个 entitlements 文件（Debug/Release）都要改。
+- **`flutter_secure_storage` 的 macOS Keychain Sharing 需要签名能力**：Debug/Release 两个
+  entitlements 都要加 `keychain-access-groups`；没有开发证书时可用
+  `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` 验证编译，但无法用普通
+  `flutter build macos --debug` 完成可运行的签名包。
 - **Android 的 `INTERNET` 权限在 release 包里会消失**：Flutter 模板只在
   `debug/` 与 `profile/` 的 manifest 里声明它（那是给 hot reload 用的），
   `main/AndroidManifest.xml` 不写就等于 release 包没有网络权限。
@@ -533,7 +543,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 123 项应全绿（不需要模型、不需要设备）
+flutter test                   # 126 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"
@@ -542,7 +552,11 @@ F=~/.pub-cache/hosted/pub.dev/sherpa_onnx_macos-1.13.5/macos/sherpa_onnx_macos/S
   && ln -s A Versions/Current \
   && for n in Headers Modules Resources SherpaOnnxC; do ln -s "Versions/Current/$n" "$n"; done)
 
-flutter build macos --debug     # 本机已验证通过
+# 本机无开发证书时验证编译与打包：
+(cd macos && xcodebuild -workspace Runner.xcworkspace -scheme Runner -configuration Debug \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO)
+# 要运行带 Keychain Sharing 的 macOS 包，需要配置开发证书后再执行：
+# flutter build macos --debug
 flutter run -d macos           # 需 Xcode（本机 26.6 已装）
 flutter run -d windows         # 需开发者模式 + VS C++ 工具链
 flutter run -d <android-id>    # 需真机或模拟器
@@ -582,4 +596,4 @@ unzip -q flutter.zip -d ~/development
 | GitHub 模型下载在国内不通，镜像也失效 | 用户装完 App 拿不到模型，功能完全不可用 | 🟡 已降级：三源已实测可达（macOS 机器，见 §6），两端均已实现 fallback + 截断校验；剩余未知是国内网络下的实际可达性，需在国内机器复测。若届时全挂，再接 ModelScope / 国内对象存储作为第四源（需单独取址逻辑） |
 | 音频解码方案落空 | M1/M3 返工 | 🟡 已收敛：改为三端各写原生解码并已全部落地（见 §5 已决策 1），Dart 侧分发逻辑有 33 项单测兜底；macOS 那份已编译验证，剩余风险是 Kotlin 与 C++ 还没编译过，要在 Android SDK / MSVC 上各验一次 |
 | Android 中低端机跑 int8 SenseVoice 太慢 | 实时字幕体验不可用 | 先在真机实测 RTF；必要时降低线程数、增大 VAD 分段、或只在桌面端提供实时功能 |
-| 无 Mac 设备 | macOS 端始终无法验证与分发 | ✅ 已解除：Flutter 3.47.0 + Xcode 26.6 + CocoaPods 1.17.0 都已装，`flutter build macos --debug` 通过，app 能启动 |
+| 无 Mac 设备 | macOS 端始终无法验证与分发 | 🟡 设备与工具链已具备：Flutter 3.47.0 + Xcode 26.6 + CocoaPods 1.17.0；无签名模式编译通过，但本机尚无开发证书，带 Keychain Sharing 的签名包仍待配置 |
