@@ -12,7 +12,7 @@ SenseVoice-Small（int8 ONNX）+ silero-vad，纯 CPU，模型仅首次运行联
 | 端 | 位置 | 状态 |
 | --- | --- | --- |
 | Python 库 + CLI | `src/voice_small_asr/` | 已完成，105 项测试 |
-| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成**：文件转写、实时字幕、视频播放、字幕联动与字幕校对编辑（149 项 `flutter test` + 7 项 `integration_test`）。macOS 真实 mp4 已验收，Android/Windows 与真实翻译验收仍待验证 |
+| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成，M7 已完成 macOS 无签名包和 Android APK/AAB 构建验证**：文件转写、实时字幕、视频播放、字幕联动与字幕校对编辑（149 项 `flutter test` + 7 项 `integration_test`）。macOS 真实 mp4 已验收，Android/Windows 运行与真实翻译验收仍待验证 |
 
 两端固定 sherpa-onnx **1.13.5**，因此识别结果应逐字一致 —— **Python 端是 Flutter 端的对照基准**。
 阶段计划（M0–M7）、待决策事项与踩坑记录在 `DEVELOPMENT_PLAN.md`，动 Flutter 端前先读。
@@ -48,6 +48,8 @@ cd app && flutter pub get
 flutter analyze                # 验收标准：No issues found
 flutter test                   # 149 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
+flutter build apk --release   # Android release APK；需要 Android SDK/JDK
+flutter build appbundle --release # Android release AAB；当前使用 debug signing 做构建验证
 flutter build macos --debug     # 需开发证书；无签名编译可用 xcodebuild CODE_SIGNING_ALLOWED=NO 验证
 flutter run -d macos           # 需开发证书；本机当前只验证无签名编译
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh  # 生成无签名 .app/.dmg
@@ -60,12 +62,11 @@ flutter test integration_test/e2e_test.dart -d macos
 `app/pubspec.lock` 里每个包的 `url` 重写成镜像地址并重新解析依赖（实测 92 个包全被改动）。
 如果不小心设了并跑过 pub get，`git checkout app/pubspec.lock` 后不带该变量重跑一次。
 
-**本机可验证的范围（2026-08-16 起）：`flutter analyze`、`flutter test`、以及 macOS 的无签名编译。**
+**本机可验证的范围（2026-08-16 起）：`flutter analyze`、`flutter test`、Android release APK/AAB 构建，以及 macOS 的无签名编译。**
 Xcode 26.6 + CocoaPods 1.17.0 已装，无签名模式的 `xcodebuild` 已成功编译，
 所以 `app/macos/Runner/MainFlutterWindow.swift` 里的 Swift 原生解码、media_kit 播放插件和
 `flutter_secure_storage_darwin` **已经编译过**；普通 `flutter build macos --debug` 还需要开发证书。
-但 **Android 的 Kotlin 与 Windows 的 C++ 仍然编译不到**（无 Android cmdline-tools、无 MSVC）——
-改那两处后不要声称已验证。`DEVELOPMENT_PLAN.md` 记录的另一台开发机是 Windows（`E:\dev\flutter`）。
+Android 的 Kotlin 已随 release APK/AAB 编译验证，但本机没有 Android 真机/模拟器，不能据此声称 Android 运行时、音频解码或性能已验证；Windows 的 C++ 仍需 MSVC 与 Windows SDK。`DEVELOPMENT_PLAN.md` 记录的另一台开发机是 Windows（`E:\dev\flutter`）。
 
 ## 架构
 
@@ -158,7 +159,8 @@ worker 的工厂参数 `TranscriberFactory` 必须是顶层/静态函数（闭�
 目前三端都已实现：macOS `macos/Runner/MainFlutterWindow.swift`（AVAssetReader，混声道与重采样交给
 AVFoundation）、Android `android/.../MainActivity.kt`（MediaExtractor + MediaCodec，混声道与重采样自己做）、
 Windows `windows/runner/audio_decoder.cpp`（IMFSourceReader，先要 16 kHz 单声道 float32，被拒则自己算）。
-macOS 那份**已编译验证**（无签名 `xcodebuild` 通过）；**Kotlin 与 C++ 仍一行都没编译过**。
+macOS 那份**已编译验证**（无签名 `xcodebuild` 通过），Android Kotlin 已随 release APK/AAB 编译验证；
+Android 真机/模拟器运行与 Windows C++ 编译仍未验证。
 重采样在 `wav.dart`、Kotlin、C++ 里各有一份线性插值实现，三者必须逐行等价 —— 改一处要同步另两处。
 原生侧未注册通道时 Dart 侧会抛出带指引的 `AudioDecodeException`，不会静默返回空音频。
 

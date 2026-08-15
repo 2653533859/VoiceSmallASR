@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + 7 项端到端）。真实翻译验收和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包和 Android APK/AAB 构建验证**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + 7 项端到端）。真实翻译验收、Android/Windows 运行验证和 Windows 原生构建仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -211,6 +211,8 @@ VoiceSmallASR/
 Xcode 26.6               2026-08-15 装好
 CocoaPods 1.17.0         brew 装（Flutter 3.47 默认走 SPM，但 doctor 仍要求它）
 flutter build macos       ✅ 通过，Swift 原生解码已编译
+Android SDK               /opt/homebrew/share/android-commandlinetools，platform 36，build-tools 36.1.0，NDK 28.2.13676358，JDK 17
+flutter build apk/appbundle ✅ 通过；APK/AAB 仅作构建验证，release 使用 debug signing
 ```
 
 **Windows（此前的开发机，全部在 E 盘）**
@@ -263,7 +265,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
   - [x] macOS 原生实现（AVAssetReader，**已编译且已在真机跑通**：
         端到端测试里解 `yue.m4a` 得到与 wav 一致的识别结果）
   - [x] Android 原生实现（MediaExtractor + MediaCodec + 自己混声道与重采样，
-        **未编译验证 —— 本机无 Android SDK/kotlinc**）
+        **已随 Android release APK/AAB 编译验证；尚未在真机/模拟器运行**）
   - [x] Windows 原生实现（Media Foundation IMFSourceReader，
         **未编译验证 —— 本机无 MSVC 与 Windows SDK**）
 - [x] `AsrEngine` 放入 isolate，避免长音频卡 UI；`initBindings()` 需在每个 isolate 内单独调用
@@ -291,7 +293,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
       按 100 ms 一块喂进实时会话 —— 四句全部定稿（英文那段被 VAD 切成两句）、
       `index` 从 0 连续递增、时间戳不重叠不倒序，过程中有局部结果上屏。
       麦克风那一路本身没法自动化（要真人说话），但它之后的链路与该测试完全相同
-- [ ] **Android 真机不掉帧 —— 未验证**（本机无 Android SDK，见 §3 环境）
+- [ ] **Android 真机不掉帧 —— 未验证**（本机已具备 SDK，但没有连接真机/模拟器）
 
 ### M3 · 视频播放 + 字幕叠加　✅ 已完成（2026-08-16）
 
@@ -326,10 +328,10 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 ### M7 · 打包分发
 
-- [ ] Android APK / AAB（可在本机构建）
+- [x] Android APK / AAB（本机已构建：APK 约 169 MiB、AAB 约 124 MiB；APK 通过 v2 签名校验，release 使用 debug signing，仅完成构建验证）
 - [ ] Windows exe + 安装包（需 VS 工具链）
 - [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；带开发者证书的签名发布包仍待配置
-- [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查生成的 macOS `.app` 不含模型文件
+- [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB 均不含模型文件
 
 ## 5. 决策记录与待决策事项
 
@@ -342,7 +344,7 @@ ffmpeg 封装包，代价是工作量约 3 倍。
 
 | 平台 | 原生 API | 落地文件与状态 |
 | --- | --- | --- |
-| Android | `MediaExtractor` + `MediaCodec` | `android/.../MainActivity.kt` —— 已写，未编译；解出 PCM 后自己混声道 + 重采样 |
+| Android | `MediaExtractor` + `MediaCodec` | `android/.../MainActivity.kt` —— 已随 release APK/AAB 编译验证，尚未真机运行；解出 PCM 后自己混声道 + 重采样 |
 | macOS | `AVAssetReader` + `AVAssetReaderAudioMixOutput`（AVFoundation） | `macos/Runner/MainFlutterWindow.swift` —— 已写，未编译；混声道与重采样都由 AVFoundation 给 |
 | Windows | Media Foundation `IMFSourceReader`（`MFCreateSourceReaderFromURL`） | `windows/runner/audio_decoder.cpp` —— 已写，未编译；先要 `MF_MT_AUDIO_*` = 16 kHz/单声道/float32，被拒则自己算 |
 

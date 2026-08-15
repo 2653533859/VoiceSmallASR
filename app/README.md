@@ -11,7 +11,7 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 | 层 | 状态 |
 | --- | --- |
 | 引擎层（`lib/src/asr/`） | ✅ 已移植，与 Python 端一一对应（含 VAD 驱动的流式识别） |
-| 音频解码（`lib/src/audio/`） | ✅ Dart 侧完成；macOS 原生解码已编译，Android/Windows 已写但未编译 |
+| 音频解码（`lib/src/audio/`） | ✅ Dart 侧完成；macOS 原生解码已编译，Android release 构建已编译，Windows 已写但未编译 |
 | 麦克风采集（`lib/src/audio/microphone.dart`） | ✅ `record` 取 16 kHz 单声道 PCM16 → float32 |
 | 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道 |
 | 字幕导出（`lib/src/subtitles/`） | ✅ 含双语字幕 |
@@ -27,6 +27,10 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 flutter pub get
 flutter analyze     # 验收标准：No issues found
 flutter test        # 149 项，不依赖模型与设备
+
+# Android release 构建（需要 Android SDK/JDK；当前 release 使用 debug signing 做验证）
+flutter build apk --release
+flutter build appbundle --release
 
 # macOS 无签名 Release .app/.dmg（从仓库根目录执行；发布签名仍需证书）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh

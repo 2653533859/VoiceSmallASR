@@ -255,10 +255,10 @@ VoiceSmallASR/
 macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输出**逐字一致**
 （`呢几个字都表达唔到，我想讲嘅意思。`），RTF 约 0.06；实时识别把三段素材拼成「三句话」喂进去，
 每句都定稿且时间戳连续不重叠。
-后续计划包括真实英/日视频翻译验收、Android/Windows 构建与运行验证、设置完善和 M7 打包分发。
-当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`；发布签名仍需开发者证书。
+后续计划包括真实英/日视频翻译验收、Android/Windows 运行验证、设置完善和 M7 打包分发。
+当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`，并已在本机成功构建 Android release APK/AAB；Android 产物使用 debug signing 做构建验证，发布签名仍需开发者证书/正式密钥。
 
-音频解码上两端有意不同：Python 端调系统 ffmpeg，Flutter 端 wav 走纯 Dart 直读、压缩格式与视频交给平台原生解码（macOS 用 AVFoundation，Android 用 MediaCodec，Windows 用 Media Foundation）——`ffmpeg_kit_flutter` 已弃养且从不支持 Windows。macOS 那份已编译并端到端跑通；Android 的 Kotlin 与 Windows 的 C++ 还没在任何机器上编译过。
+音频解码上两端有意不同：Python 端调系统 ffmpeg，Flutter 端 wav 走纯 Dart 直读、压缩格式与视频交给平台原生解码（macOS 用 AVFoundation，Android 用 MediaCodec，Windows 用 Media Foundation）——`ffmpeg_kit_flutter` 已弃养且从不支持 Windows。macOS 那份已编译并端到端跑通；Android 的 Kotlin 已随 release APK/AAB 编译验证但尚未真机运行，Windows 的 C++ 仍待 MSVC 环境。
 
 ```bash
 # 国内建议先配 SDK 镜像：storage.googleapis.com 实测约 100 KB/s
@@ -268,6 +268,8 @@ cd app
 flutter pub get
 flutter analyze
 flutter test                # 不需要模型、不需要设备
+flutter build apk --release       # 需要 Android SDK/JDK
+flutter build appbundle --release # 需要 Android SDK/JDK
 flutter run -d macos        # 需 Xcode + 开发证书；本机当前只验证无签名编译
 flutter run -d windows      # 需开启 Windows 开发者模式 + Visual Studio C++ 工具链
 ```
