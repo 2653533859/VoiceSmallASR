@@ -60,8 +60,8 @@ jobs:
         working-directory: app
         shell: pwsh
         env:
-          VSASR_SMOKE_AUDIO: "${{ runner.temp }}\voicesmallasr-windows-smoke\tone.m4a"
-          VSASR_SMOKE_VIDEO: "${{ runner.temp }}\voicesmallasr-windows-smoke\tone.mp4"
+          VSASR_SMOKE_AUDIO: "${{ runner.temp }}/voicesmallasr-windows-smoke/tone.m4a"
+          VSASR_SMOKE_VIDEO: "${{ runner.temp }}/voicesmallasr-windows-smoke/tone.mp4"
         run: flutter test integration_test/windows_smoke_test.dart -d windows
 
       - name: Verify artifacts
