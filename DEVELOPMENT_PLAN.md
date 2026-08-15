@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包和 Android APK/AAB 构建验证**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + 7 项端到端）。真实翻译验收、Android/Windows 运行验证和 Windows 原生构建仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包和 Android APK/AAB 构建验证**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android 模拟器端到端 7 项）。真实翻译验收、Android 真机性能、Windows 运行验证和 Windows 原生构建仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -213,6 +213,7 @@ CocoaPods 1.17.0         brew 装（Flutter 3.47 默认走 SPM，但 doctor 仍�
 flutter build macos       ✅ 通过，Swift 原生解码已编译
 Android SDK               /opt/homebrew/share/android-commandlinetools，platform 36，build-tools 36.1.0，NDK 28.2.13676358，JDK 17
 flutter build apk/appbundle ✅ 通过；APK/AAB 仅作构建验证，release 使用 debug signing
+Android Emulator          API 35 arm64 `vsasr-api35`；真实端到端 7 项通过，软件渲染，仅作功能验证
 ```
 
 **Windows（此前的开发机，全部在 E 盘）**
@@ -252,7 +253,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 | 事项 | 说明 | 谁做 |
 | --- | --- | --- |
-| 真机或模拟器 | 此前 `adb devices` 为空。真机最快；模拟器需再下 ~1.5 GB 系统镜像 | 用户插机器 / AI 装模拟器 |
+| 真机或模拟器 | 本机已安装 API 35 ARM64 `vsasr-api35` 模拟器并通过功能端到端测试；真机仍未连接，性能需实机测量 | 用户插机器 / AI 装模拟器 |
 
 **M0 不完成，M1 之后的所有阶段都无法验证。**
 
@@ -265,7 +266,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
   - [x] macOS 原生实现（AVAssetReader，**已编译且已在真机跑通**：
         端到端测试里解 `yue.m4a` 得到与 wav 一致的识别结果）
   - [x] Android 原生实现（MediaExtractor + MediaCodec + 自己混声道与重采样，
-        **已随 Android release APK/AAB 编译验证；尚未在真机/模拟器运行**）
+        **已在 Android 15 API 35 ARM64 模拟器端到端运行验证；真机性能仍未验证**）
   - [x] Windows 原生实现（Media Foundation IMFSourceReader，
         **未编译验证 —— 本机无 MSVC 与 Windows SDK**）
 - [x] `AsrEngine` 放入 isolate，避免长音频卡 UI；`initBindings()` 需在每个 isolate 内单独调用
@@ -293,14 +294,15 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
       按 100 ms 一块喂进实时会话 —— 四句全部定稿（英文那段被 VAD 切成两句）、
       `index` 从 0 连续递增、时间戳不重叠不倒序，过程中有局部结果上屏。
       麦克风那一路本身没法自动化（要真人说话），但它之后的链路与该测试完全相同
-- [ ] **Android 真机不掉帧 —— 未验证**（本机已具备 SDK，但没有连接真机/模拟器）
+- [x] **Android 模拟器功能闭环** —— API 35 ARM64 模拟器通过 7 项端到端测试：模型目录、WAV、Kotlin 原生 m4a 解码、识别、视频播放/跳转/抽音轨、实时识别
+- [ ] **Android 真机不掉帧 —— 未验证**（模拟器使用软件渲染，不能替代中低端真机性能测试）
 
 ### M3 · 视频播放 + 字幕叠加　✅ 已完成（2026-08-16）
 
 - [x] 播放器：采用 `media_kit`，已接入 Android/macOS/Windows 依赖与统一控制器
 - [x] 从视频抽音轨 → 识别 → 字幕轨：复用 M1 的平台原生解码并在视频页加载识别结果
 - [x] 播放进度与字幕高亮联动，点字幕跳转
-- [x] 验收：模型自带英文语音生成的 `en.mp4` 在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验
+- [x] 验收：模型自带英文语音生成的 `en.mp4` 在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验；Android API 35 模拟器同样通过真实播放器、跳转、抽音轨与识别测试
 
 ### M4 · 翻译（识别语言 → 中文；基础、批量、双语导出、DeepL provider 与应用内工作流已完成）
 
@@ -619,6 +621,6 @@ unzip -q flutter.zip -d ~/development
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
 | GitHub 模型下载在国内不通，镜像也失效 | 用户装完 App 拿不到模型，功能完全不可用 | 🟡 已降级：三源已实测可达（macOS 机器，见 §6），两端均已实现 fallback + 截断校验；剩余未知是国内网络下的实际可达性，需在国内机器复测。若届时全挂，再接 ModelScope / 国内对象存储作为第四源（需单独取址逻辑） |
-| 音频解码方案落空 | M1/M3 返工 | 🟡 已收敛：改为三端各写原生解码并已全部落地（见 §5 已决策 1），Dart 侧分发逻辑有 33 项单测兜底；macOS 那份已编译验证，剩余风险是 Kotlin 与 C++ 还没编译过，要在 Android SDK / MSVC 上各验一次 |
+| 音频解码方案落空 | M1/M3 返工 | 🟡 已收敛：改为三端各写原生解码并已全部落地（见 §5 已决策 1），Dart 侧分发逻辑有 33 项单测兜底；macOS 与 Android 模拟器已编译/运行验证，剩余风险是 Windows C++ 仍需 MSVC 编译和 Android 真机性能实测 |
 | Android 中低端机跑 int8 SenseVoice 太慢 | 实时字幕体验不可用 | 先在真机实测 RTF；必要时降低线程数、增大 VAD 分段、或只在桌面端提供实时功能 |
 | 无 Mac 设备 | macOS 端始终无法验证与分发 | 🟡 设备与工具链已具备：Flutter 3.47.0 + Xcode 26.6 + CocoaPods 1.17.0；无签名模式编译通过，但本机尚无开发证书，带 Keychain Sharing 的签名包仍待配置 |

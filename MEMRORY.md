@@ -16,7 +16,8 @@
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
 - M7 macOS 无签名打包首期已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；带证书的签名发布仍待配置。
 - M7 Android 构建验证已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，release 使用 debug signing，仅代表可构建。
-- 当前下一步是用真实网络完成英/日视频翻译验收，补 Android 真机/模拟器运行与性能验证、Windows 构建验证，并继续推进签名发布与 M7 分发。
+- Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；模拟器使用软件渲染，真机性能仍未验证。
+- 当前下一步是用真实网络完成英/日视频翻译验收，补 Android 真机性能验证、Windows 构建验证，并继续推进签名发布与 M7 分发。
 
 ## 已验证结果
 
@@ -45,9 +46,9 @@
 
 ## 尚未验证的环境
 
-- Android 原生 Kotlin 解码已随 release APK/AAB 编译验证，但尚未在真机/模拟器运行。
+- Android 原生 Kotlin 解码已在 API 35 ARM64 模拟器端到端运行验证，但尚未在真机运行。
 - Windows 原生 C++ 解码尚未在 MSVC/Windows SDK 上编译运行。
-- Android/Windows 的 media_kit 视频播放尚未在真机/真桌面运行验证。
+- Android 模拟器的 media_kit 视频播放已通过端到端验证；Windows 的 media_kit 视频播放尚未在真桌面运行验证。
 - Android 实时字幕的中低端设备性能尚未测量。
 
 ## 工作约定
