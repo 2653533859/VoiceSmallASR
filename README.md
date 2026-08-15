@@ -57,6 +57,8 @@ uv run vsasr live -l zh -o live.srt
 
 模型默认下载到 `~/.cache/voice-small-asr/models`，多个项目共享同一份。可用环境变量 `VSASR_MODEL_DIR` 或 `--model-dir` 改到别处。
 
+下载按三个源依次尝试，任一成功即止：GitHub 直连 → `ghfast.top` → `gh-proxy.com`（后两个是 GitHub Release 的公共代理镜像，国内直连常超时）。某个源超时、返回错误码或给出截断内容时会自动换下一个，全部失败才报错。Flutter 端用同一份源列表、同样的顺序。
+
 ## 命令行
 
 ```
@@ -248,14 +250,24 @@ VoiceSmallASR/
 [`sherpa_onnx`](https://pub.dev/packages/sherpa_onnx) 包，与 Python 端**同版本（1.13.5）、同模型**，
 因此识别结果一致，Python 端可作为对照基准。
 
-当前进度：引擎层已移植完成（`flutter analyze` 无告警），UI 尚未开始。
-计划的功能包括文件转写、麦克风实时字幕、视频播放与字幕叠加、
-识别语言并翻译成中文、字幕校对编辑、设置与模型管理。
+当前进度：**M1（文件转写 + 字幕导出）与 M2（麦克风实时字幕）已完成** —— 引擎层、音频解码、
+后台识别 isolate、流式识别与两个页签的界面都已就绪，`flutter test` 103 项通过。
+macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输出**逐字一致**
+（`呢几个字都表达唔到，我想讲嘅意思。`），RTF 约 0.06；实时识别把三段素材拼成「三句话」喂进去，
+每句都定稿且时间戳连续不重叠。
+后续计划包括视频播放与字幕叠加、识别语言并翻译成中文、字幕校对编辑、设置与模型管理。
+
+音频解码上两端有意不同：Python 端调系统 ffmpeg，Flutter 端 wav 走纯 Dart 直读、压缩格式与视频交给平台原生解码（macOS 用 AVFoundation，Android 用 MediaCodec，Windows 用 Media Foundation）——`ffmpeg_kit_flutter` 已弃养且从不支持 Windows。macOS 那份已编译并端到端跑通；Android 的 Kotlin 与 Windows 的 C++ 还没在任何机器上编译过。
 
 ```bash
+# 国内建议先配 SDK 镜像：storage.googleapis.com 实测约 100 KB/s
+export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
+
 cd app
 flutter pub get
 flutter analyze
+flutter test                # 不需要模型、不需要设备
+flutter run -d macos        # 需 Xcode（本机 26.6 已装）
 flutter run -d windows      # 需开启 Windows 开发者模式 + Visual Studio C++ 工具链
 ```
 
@@ -275,7 +287,7 @@ flutter run -d windows      # 需开启 Windows 开发者模式 + Visual Studio 
 uv sync --extra mic          # 安装全部依赖
 uv run ruff check .          # 静态检查
 uv run ruff format .         # 格式化
-uv run pytest                # 全部测试（97 项）
+uv run pytest                # 全部测试（105 项）
 ```
 
-测试分两层：不依赖模型的单元测试（字幕、配置、数据结构、模型缓存、CLI）随时可跑；依赖模型的集成测试用模型包自带的多语种音频，模型缺失时自动跳过。下载相关的测试用替身响应对象，不发真实网络请求。
+测试分两层：不依赖模型的单元测试（字幕、配置、数据结构、模型缓存、CLI）随时可跑；依赖模型的集成测试用模型包自带的多语种音频，模型缺失时自动跳过（未下载模型时为 87 passed / 18 skipped）。下载相关的测试用替身响应对象，不发真实网络请求。

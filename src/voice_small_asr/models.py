@@ -2,10 +2,14 @@
 
 首次运行需联网下载模型，之后完全离线。也可把整个模型目录拷到
 无网机器上，配合 ``VSASR_MODEL_DIR`` 或 ``allow_download=False`` 使用。
+
+下载按 :data:`BASE_URLS` 的顺序逐个尝试，任一成功即止：国内直连
+github.com 常超时，因此备了两个 GitHub Release 公共代理镜像。
 """
 
 from __future__ import annotations
 
+import http.client
 import shutil
 import tarfile
 import tempfile
@@ -16,7 +20,19 @@ from pathlib import Path
 
 from voice_small_asr.config import default_model_dir
 
-BASE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+#: 模型下载源，按优先级排列，任一成功即止。
+#:
+#: 后两个是 GitHub Release 的公共代理镜像（国内直连 github.com 常超时）。
+#: 与 Flutter 端 ``model_manager.dart`` 的 ``kModelBaseUrls`` 保持同源同序，
+#: 两端下载行为一致；增删源时请同步修改另一端。
+BASE_URLS: tuple[str, ...] = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models",
+    "https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models",
+    "https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models",
+)
+
+#: 首选下载源。
+BASE_URL = BASE_URLS[0]
 
 #: 下载进度回调：``(阶段描述, 已完成字节, 总字节, 总字节未知时为 0)``。
 ProgressHook = Callable[[str, int, int], None]
@@ -31,6 +47,9 @@ class ModelSpec:
     #: 压缩包解压后必须存在的文件（相对包内顶层目录）；单文件模型留空。
     members: tuple[str, ...] = ()
     approx_mb: int = 0
+    #: 完整文件的保守下限（字节）。镜像走 chunked 编码时拿不到
+    #: ``Content-Length``，只能靠这个下限拦住明显截断的文件，见 :func:`_download`。
+    min_bytes: int = 0
 
     @property
     def archive_name(self) -> str:
@@ -40,6 +59,11 @@ class ModelSpec:
     def is_archive(self) -> bool:
         return self.archive_name.endswith(".tar.bz2")
 
+    @property
+    def urls(self) -> tuple[str, ...]:
+        """所有候选下载地址，按 :data:`BASE_URLS` 的优先级排列。"""
+        return tuple(f"{base}/{self.archive_name}" for base in BASE_URLS)
+
 
 #: SenseVoice-Small int8：中/英/粤/日/韩，开启 ITN 时带标点。
 #: 选 2024-07-17 而非 2025-09-09，因为后者不支持标点，无法用于字幕。
@@ -48,10 +72,16 @@ ASR_MODEL = ModelSpec(
     url=f"{BASE_URL}/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
     members=("model.int8.onnx", "tokens.txt"),
     approx_mb=228,
+    min_bytes=100 * 1024 * 1024,  # 压缩包实测约 155 MB，取整数下限
 )
 
 #: silero-vad：语音端点检测，用于分句与流式触发。
-VAD_MODEL = ModelSpec(name="silero_vad.onnx", url=f"{BASE_URL}/silero_vad.onnx", approx_mb=1)
+VAD_MODEL = ModelSpec(
+    name="silero_vad.onnx",
+    url=f"{BASE_URL}/silero_vad.onnx",
+    approx_mb=1,
+    min_bytes=512 * 1024,  # 实测 643854 字节
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,10 +114,27 @@ def is_ready(model_dir: Path | None = None) -> bool:
     return all(p.is_file() for p in (paths.asr_model, paths.tokens, paths.vad_model))
 
 
-def _download(url: str, dest: Path, progress: ProgressHook | None) -> None:
-    """下载到 ``dest``，先写临时文件再原子改名，避免半截文件被当成有效缓存。"""
+def _download(
+    url: str,
+    dest: Path,
+    progress: ProgressHook | None,
+    *,
+    source: tuple[int, int] | None = None,
+    min_bytes: int = 0,
+) -> None:
+    """下载到 ``dest``，先写临时文件再原子改名，避免半截文件被当成有效缓存。
+
+    Args:
+        url: 完整下载地址。
+        dest: 目标文件路径。
+        progress: 进度回调。
+        source: ``(第几个源, 共几个源)``，仅用于进度文案。
+        min_bytes: 完整文件的保守下限，用于服务端不给 ``Content-Length`` 时兜底。
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     label = f"下载 {dest.name}"
+    if source is not None:
+        label += f"（源 {source[0]}/{source[1]}）"
     with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 (固定 https 源)
         total = int(response.headers.get("Content-Length") or 0)
         done = 0
@@ -106,10 +153,41 @@ def _download(url: str, dest: Path, progress: ProgressHook | None) -> None:
                 raise OSError(
                     f"{dest.name} 下载不完整：收到 {done} 字节，应为 {total} 字节，请重试"
                 )
+            # 两个镜像源是流式代理，常用 chunked 编码而不给 Content-Length，
+            # 上面那条校验此时形同虚设。退回一个保守下限：拦不住只差几 KB 的
+            # 截断，但能拦住"下了一半断线"这种常见情况 —— 尤其是 VAD 模型，
+            # 它没有解压环节兜底，一旦装成缓存就每次都加载失败。
+            if not total and min_bytes and done < min_bytes:
+                raise OSError(
+                    f"{dest.name} 下载不完整：只收到 {done} 字节"
+                    f"（服务端未给出总长度，至少应有 {min_bytes} 字节），请重试"
+                )
             tmp.replace(dest)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
+
+
+def _download_with_fallback(spec: ModelSpec, dest: Path, progress: ProgressHook | None) -> None:
+    """按 :data:`BASE_URLS` 的顺序逐个源尝试下载，任一成功即返回。
+
+    全部失败时抛出最后一个错误，并在消息里说明已尝试的源数量 ——
+    只报最后一个源的超时会让人误以为只有那一个镜像坏了。
+    """
+    urls = spec.urls
+    total = len(urls)
+    last: Exception | None = None
+    for position, url in enumerate(urls, start=1):
+        try:
+            _download(url, dest, progress, source=(position, total), min_bytes=spec.min_bytes)
+            return
+        # HTTPException 不是 OSError 的子类：chunked 响应中途断连抛的
+        # IncompleteRead 就在这一支，漏掉它会让异常直接穿出去，后面的镜像根本不试。
+        except (OSError, http.client.HTTPException) as exc:  # 含超时/HTTP 错误/下载不完整
+            last = exc
+            if progress and position < total:
+                progress(f"源 {position}/{total} 失败（{exc}），换下一个镜像", 0, 0)
+    raise OSError(f"{spec.archive_name} 下载失败，已尝试 {total} 个源，最后一个错误：{last}")
 
 
 def _extract(archive: Path, root: Path, progress: ProgressHook | None) -> None:
@@ -145,7 +223,7 @@ def ensure(
                 continue
             archive = archives / spec.archive_name
             if not archive.is_file():
-                _download(spec.url, archive, progress)
+                _download_with_fallback(spec, archive, progress)
             try:
                 _extract(archive, root, progress)
             except (tarfile.TarError, OSError):
@@ -156,7 +234,7 @@ def ensure(
             if not keep_archive:
                 archive.unlink(missing_ok=True)
         elif not (root / spec.name).is_file():
-            _download(spec.url, root / spec.name, progress)
+            _download_with_fallback(spec, root / spec.name, progress)
 
     if not keep_archive and archives.is_dir() and not any(archives.iterdir()):
         shutil.rmtree(archives, ignore_errors=True)

@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as so;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 
 /// SenseVoice 用 `<|zh|>` 这类标签承载语言/情感/事件元信息。
 final RegExp _tagRe = RegExp(r'<\|([^|]*)\|>');
@@ -50,7 +51,7 @@ List<Word> buildWords(so.OfflineRecognizerResult result, double offset, double l
 }
 
 /// VAD 会话：一路音频对应一个实例，用完必须 [dispose]。
-class VadSession {
+class VadSession implements SpeechSegmenter {
   VadSession._(this._vad, this.config);
 
   factory VadSession.create(VadConfig config, String modelPath, {double bufferSeconds = 60.0}) {
@@ -77,10 +78,12 @@ class VadSession {
   final VadConfig config;
 
   /// 是否正在说话（用于决定要不要出局部结果）。
+  @override
   bool get isSpeaking => _vad.isDetected();
 
   /// 送入音频。按 `windowSize` 分批喂，与 silero-vad 的推理窗口对齐 ——
   /// 整段一次性喂会让段起点判定失准。
+  @override
   void accept(Float32List samples) {
     final int window = config.windowSize;
     for (int offset = 0; offset < samples.length; offset += window) {
@@ -90,6 +93,7 @@ class VadSession {
   }
 
   /// 取出所有已完成的语音段，`start` 为全局秒数。
+  @override
   List<({Float32List samples, double start})> drain() {
     final List<({Float32List samples, double start})> out = <({Float32List samples, double start})>[];
     while (!_vad.isEmpty()) {
@@ -103,9 +107,12 @@ class VadSession {
   }
 
   /// 音频结束时调用，把尾部未定稿的语音段推入队列。
+  @override
   void flush() => _vad.flush();
 
+  @override
   void reset() => _vad.reset();
 
+  @override
   void dispose() => _vad.free();
 }

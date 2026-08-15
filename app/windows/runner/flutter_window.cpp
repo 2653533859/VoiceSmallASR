@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "audio_decoder.h"
 #include "flutter/generated_plugin_registrant.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -25,6 +26,8 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  // 原生音频解码（`vsasr/audio_decoder`）：见 audio_decoder.cpp。
+  vsasr::RegisterAudioDecoderChannel(flutter_controller_->engine()->messenger());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

@@ -4,5 +4,15 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- 下载模型（GitHub / 镜像）必需；缺了它 sandbox 会静默掐掉出网请求。 -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- file_picker 选中的音频/视频要能读；导出字幕要能写用户选的路径，
+	     只给 read-only 的话保存对话框选完路径也写不进去。 -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- 麦克风实时字幕（M2）。 -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 </dict>
 </plist>

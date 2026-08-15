@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 下载模型必需。模板只在 debug/profile 的 manifest 里声明 INTERNET（那是给
+         hot reload 用的），release 包不会继承，缺了它装机后拿不到模型。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 麦克风实时字幕（M2）。运行时授权由 record 的 hasPermission() 发起。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
         android:label="vsasr_app"
         android:name="${applicationName}"

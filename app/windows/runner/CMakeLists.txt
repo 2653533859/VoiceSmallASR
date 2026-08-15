@@ -7,6 +7,7 @@ project(runner LANGUAGES CXX)
 #
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME} WIN32
+  "audio_decoder.cpp"
   "flutter_window.cpp"
   "main.cpp"
   "utils.cpp"
@@ -34,6 +35,9 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+# 原生音频解码（audio_decoder.cpp）用 Media Foundation：
+# mfuuid 提供 MFMediaType_Audio / MFAudioFormat_Float 这些 GUID 的定义。
+target_link_libraries(${BINARY_NAME} PRIVATE "mfplat.lib" "mfreadwrite.lib" "mfuuid.lib" "ole32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

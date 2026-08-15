@@ -24,6 +24,16 @@ const String kAsrArchiveName = '$kAsrModelName.tar.bz2';
 /// silero-vad 单文件模型（约 630 KB）。
 const String kVadModelName = 'silero_vad.onnx';
 
+/// 完整文件的保守下限（字节），与 Python 端 `ModelSpec.min_bytes` 同源。
+///
+/// 镜像源是流式代理，常用 chunked 编码而不给 `Content-Length`，那时按长度
+/// 比对的校验形同虚设，只能靠这个下限拦住「下了一半断线」的文件。
+const int kAsrArchiveMinBytes = 100 * 1024 * 1024; // 压缩包实测约 155 MB
+const int kVadModelMinBytes = 512 * 1024; // 实测 643854 字节
+
+/// 连接或响应流连续无数据这么久就切换下一个下载源。
+const Duration kModelDownloadTimeout = Duration(seconds: 60);
+
 /// 下载源。国内直连 github.com 常超时（flutter doctor 已报错），
 /// 因此按顺序尝试多个源，任一成功即可。
 const List<String> kModelBaseUrls = <String>[
@@ -62,13 +72,16 @@ class ModelPaths {
 
 /// 模型管理器：解析路径、检查就绪、按需下载。
 class ModelManager {
-  ModelManager({this.baseUrls = kModelBaseUrls});
+  ModelManager({this.baseUrls = kModelBaseUrls, String? root}) : _cachedRoot = root;
 
   final List<String> baseUrls;
 
   String? _cachedRoot;
 
   /// 模型根目录，首次调用时解析并缓存。
+  ///
+  /// 构造时传了 `root` 就直接用它（测试与「设置页指定模型目录」都靠这个），
+  /// 否则取应用私有目录下的 `models`。
   Future<String> resolveRoot() async {
     final String? cached = _cachedRoot;
     if (cached != null) return cached;
@@ -114,13 +127,14 @@ class ModelManager {
   Future<void> _downloadWithFallback(
     String fileName,
     File dest,
-    ModelProgress? progress,
-  ) async {
+    ModelProgress? progress, {
+    required int minBytes,
+  }) async {
     Object? lastError;
     for (int i = 0; i < baseUrls.length; i++) {
       final String url = '${baseUrls[i]}/$fileName';
       try {
-        await _download(url, dest, fileName, i + 1, baseUrls.length, progress);
+        await _download(url, dest, fileName, i + 1, baseUrls.length, progress, minBytes);
         return;
       } catch (error) {
         lastError = error;
@@ -137,6 +151,7 @@ class ModelManager {
     int sourceIndex,
     int sourceCount,
     ModelProgress? progress,
+    int minBytes,
   ) async {
     await dest.parent.create(recursive: true);
     final File tmp = File('${dest.path}.part');
@@ -144,7 +159,9 @@ class ModelManager {
 
     final http.Client client = http.Client();
     try {
-      final http.StreamedResponse response = await client.send(http.Request('GET', Uri.parse(url)));
+      final http.StreamedResponse response = await client
+          .send(http.Request('GET', Uri.parse(url)))
+          .timeout(kModelDownloadTimeout);
       if (response.statusCode != 200) {
         throw HttpException('HTTP ${response.statusCode}', uri: Uri.parse(url));
       }
@@ -153,7 +170,7 @@ class ModelManager {
       final IOSink sink = tmp.openWrite();
       final String stage = '下载 $label（源 $sourceIndex/$sourceCount）';
       try {
-        await response.stream.forEach((List<int> chunk) {
+        await response.stream.timeout(kModelDownloadTimeout).forEach((List<int> chunk) {
           sink.add(chunk);
           done += chunk.length;
           progress?.call(stage, done, total);
@@ -165,6 +182,14 @@ class ModelManager {
       // 否则截断的文件会被当成有效缓存，之后永远不再重新下载。
       if (total > 0 && done != total) {
         throw Exception('$label 下载不完整：收到 $done 字节，应为 $total 字节');
+      }
+      // 镜像走 chunked 编码时没有 Content-Length，上面那条校验形同虚设，
+      // 退回保守下限。VAD 模型尤其要紧：它没有解压环节兜底，
+      // 一旦半截文件被装成缓存，之后每次运行都加载失败。
+      if (total <= 0 && minBytes > 0 && done < minBytes) {
+        throw Exception(
+          '$label 下载不完整：只收到 $done 字节（服务端未给出总长度，至少应有 $minBytes 字节）',
+        );
       }
       await tmp.rename(dest.path);
     } catch (_) {
@@ -195,7 +220,12 @@ class ModelManager {
     if (!File(paths.asrModel).existsSync() || !File(paths.tokens).existsSync()) {
       final File archive = File(p.join(paths.root, '_archives', kAsrArchiveName));
       if (!archive.existsSync()) {
-        await _downloadWithFallback(kAsrArchiveName, archive, progress);
+        await _downloadWithFallback(
+          kAsrArchiveName,
+          archive,
+          progress,
+          minBytes: kAsrArchiveMinBytes,
+        );
       }
       progress?.call('解压识别模型…', 0, 0);
       try {
@@ -220,7 +250,7 @@ class ModelManager {
     // VAD：单文件，直接下载
     final File vad = File(paths.vadModel);
     if (!vad.existsSync()) {
-      await _downloadWithFallback(kVadModelName, vad, progress);
+      await _downloadWithFallback(kVadModelName, vad, progress, minBytes: kVadModelMinBytes);
     }
 
     final ModelPaths result = await resolvePaths();

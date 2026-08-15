@@ -1,22 +1,42 @@
-/// 识别引擎门面：模型加载、整段转写。
+/// 识别引擎门面：模型加载、整段转写、实时识别。
 /// 对应 Python 端 `voice_small_asr/engine.py` 的 `Recognizer` 与 `Transcriber`。
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as so;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/vad_session.dart';
 
 /// 整段转写进度：[done] / [total] 为已处理与总采样数。
 typedef TranscribeProgress = void Function(int done, int total);
 
+/// 转写能力的最小契约。
+///
+/// 抽出来为了两件事：`TranscriptionWorker` 可以在后台 isolate 里换成替身，
+/// 界面层也可以在没有原生库的环境里注入进程内替身 —— 于是整条链路都能测。
+abstract interface class Transcriber {
+  Future<TranscriptionResult> transcribe(
+    Float32List samples, {
+    TranscribeProgress? onProgress,
+  });
+
+  /// 开一路实时识别会话（麦克风）。同一时刻只应存在一路 ——
+  /// 同一个识别器不能并发使用。
+  Future<LiveSession> startLive();
+
+  Future<void> dispose();
+}
+
 /// 识别引擎。构造一次、复用多次：模型加载要一到两秒，识别本身很快。
 ///
-/// 用完必须调用 [dispose] 释放原生资源。
-class AsrEngine {
+/// 用完必须调用 [dispose] 释放原生资源。长音频请通过
+/// `TranscriptionWorker` 放到后台 isolate，别直接在 UI isolate 上跑。
+class AsrEngine implements Transcriber, SegmentDecoder {
   AsrEngine._(this._recognizer, this.paths, this.config);
 
   final so.OfflineRecognizer _recognizer;
@@ -62,6 +82,7 @@ class AsrEngine {
   }
 
   /// 解码单段音频。[offset] 是该段在整条音频里的起始秒数。
+  @override
   Segment decodeSamples(
     Float32List samples, {
     double offset = 0.0,
@@ -93,6 +114,7 @@ class AsrEngine {
   ///
   /// Dart 绑定没有批量 `decodeStreams`，因此逐段解码；调用方应放在
   /// isolate 或用 [onProgress] 驱动进度条，避免长音频卡住 UI。
+  @override
   Future<TranscriptionResult> transcribe(
     Float32List samples, {
     TranscribeProgress? onProgress,
@@ -136,9 +158,62 @@ class AsrEngine {
     if (_disposed) throw StateError('AsrEngine 已释放，请重新 create()');
   }
 
-  void dispose() {
+  /// 开一路实时识别：新建一个 VAD 会话，解码复用本引擎。
+  @override
+  Future<LiveSession> startLive() async {
+    _ensureAlive();
+    final VadSession vad = VadSession.create(config.vad, paths.vadModel);
+    return _EngineLiveSession(
+      StreamingTranscriber(segmenter: vad, decoder: this, config: config),
+      vad,
+    );
+  }
+
+  @override
+  Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
     _recognizer.free();
+  }
+}
+
+/// 引擎自带的实时会话：同步解码，产出的段直接推进流里。
+///
+/// 解码是同步 FFI 调用，会占住当前 isolate —— 因此这个对象应当活在
+/// `TranscriptionWorker` 的后台 isolate 里，而不是 UI isolate。
+class _EngineLiveSession implements LiveSession {
+  _EngineLiveSession(this._streamer, this._vad);
+
+  final StreamingTranscriber _streamer;
+  final VadSession _vad;
+  final StreamController<Segment> _out = StreamController<Segment>.broadcast();
+  bool _closed = false;
+
+  @override
+  Stream<Segment> get segments => _out.stream;
+
+  @override
+  void accept(Float32List chunk) {
+    if (_closed) return;
+    for (final Segment segment in _streamer.accept(chunk)) {
+      _out.add(segment);
+    }
+  }
+
+  @override
+  Future<void> finish() async {
+    if (_closed) return;
+    _closed = true;
+    try {
+      for (final Segment segment in _streamer.flush()) {
+        _out.add(segment);
+      }
+    } finally {
+      try {
+        await _out.close();
+      } finally {
+        _vad.dispose();
+      }
+    }
   }
 }

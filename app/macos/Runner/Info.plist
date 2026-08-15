@@ -24,6 +24,11 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
+	<!-- 实时字幕要录音。缺这一项时系统不会弹授权框，而是直接把进程干掉，
+	     表现为「一点开始录音就闪退」。entitlements 里的 device.audio-input 是
+	     沙盒开关，两者都要有。 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于把你说的话实时转成字幕。音频只在本机处理，不会上传。</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>

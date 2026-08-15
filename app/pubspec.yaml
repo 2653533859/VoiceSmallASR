@@ -40,12 +40,15 @@ dependencies:
   http: ^1.6.0
   archive: ^4.0.9
   path: ^1.9.1
-  permission_handler: ^13.0.1
+  # 麦克风采集。运行时授权用它自带的 hasPermission()，因此不需要 permission_handler。
   record: ^7.1.1
   provider: ^6.1.5+1
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # 真机/真桌面上的端到端验收（integration_test/）：真模型、真引擎、真原生解码。
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
