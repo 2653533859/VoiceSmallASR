@@ -333,7 +333,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 ### M7 · 打包分发
 
 - [x] Android APK / AAB（本机已构建：APK 约 169 MiB、AAB 约 124 MiB；APK 通过 v2 签名校验，release 使用 debug signing，仅完成构建验证）
-- [ ] Windows exe + 安装包（需 VS 工具链）
+- [ ] Windows exe + 安装包（已准备 `.github/workflows/windows-build.yml`、`scripts/build_windows_unsigned.ps1` 和 Inno Setup 配置；需 Windows runner 实际通过后再勾选）
 - [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；带开发者证书的签名发布包仍待配置
 - [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB 均不含模型文件
 

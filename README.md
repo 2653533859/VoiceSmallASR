@@ -258,6 +258,7 @@ macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输
 后续计划包括真实英/日视频翻译验收、Android 真机性能与 Windows 运行验证、设置完善和 M7 打包分发。
 当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`，并已在本机成功构建 Android release APK/AAB；Android 产物使用 debug signing 做构建验证，发布签名仍需开发者证书/正式密钥。
 真实 DeepL 验收入口为 `app/integration_test/deepl_acceptance_test.dart`，需要仓库外的密钥文件和英/日视频素材；密钥不会写入仓库。
+Windows Release 与 Inno Setup 安装包由 `.github/workflows/windows-build.yml` 在 Windows runner 上构建，结果以 CI 实际产物为准。
 
 音频解码上两端有意不同：Python 端调系统 ffmpeg，Flutter 端 wav 走纯 Dart 直读、压缩格式与视频交给平台原生解码（macOS 用 AVFoundation，Android 用 MediaCodec，Windows 用 Media Foundation）——`ffmpeg_kit_flutter` 已弃养且从不支持 Windows。macOS 那份已编译并端到端跑通；Android 的 Kotlin 已在 API 35 ARM64 模拟器端到端验证但尚未真机运行，Windows 的 C++ 仍待 MSVC 环境。
 
