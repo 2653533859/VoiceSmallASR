@@ -10,8 +10,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/settings/app_settings.dart';
+import 'package:vsasr_app/src/settings/translation_secrets.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 
 import 'support/fake_asr.dart';
 
@@ -48,10 +51,18 @@ void main() {
     TranscribeController controller, {
     PickFile? pickFile,
     SaveFile? saveFile,
+    AppSettingsRepository? settings,
+    TranslationProviderFactory? translationProviderFactory,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: HomePage(controller: controller, pickFile: pickFile, saveFile: saveFile),
+        home: HomePage(
+          controller: controller,
+          pickFile: pickFile,
+          saveFile: saveFile,
+          settings: settings,
+          translationProviderFactory: translationProviderFactory,
+        ),
       ),
     );
     // postFrameCallback 里的 refreshModel 是异步的，再走一帧才能看到结果
@@ -182,6 +193,60 @@ void main() {
     expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
   });
 
+  testWidgets('配置 API Key 后可以把识别结果翻译为中文', (WidgetTester tester) async {
+    final _FakeSecretStore secrets = _FakeSecretStore()..values[kDeepLApiKeyStorageKey] = 'test-key';
+    final AppSettingsRepository settings = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: secrets),
+    );
+    final _FakeTranslationProvider provider = _FakeTranslationProvider();
+    final TranscribeController controller = build(text: 'hello');
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      settings: settings,
+      translationProviderFactory: (_) => provider,
+      pickFile: () async => '/tmp/en.wav',
+    );
+
+    await tester.tap(find.text('选择音频/视频'));
+    for (int i = 0; i < 6; i++) {
+      await tester.pump();
+    }
+    await tester.tap(find.byKey(const Key('translateSubtitle')));
+    await tester.pumpAndSettle();
+
+    expect(provider.calls, 1);
+    expect(controller.result?.segments.single.translation, '译文：hello');
+    expect(find.text('译文：hello'), findsOneWidget);
+    expect(find.text('翻译完成：1 段'), findsOneWidget);
+  });
+
+  testWidgets('没有 API Key 时翻译入口提示先配置设置', (WidgetTester tester) async {
+    final AppSettingsRepository settings = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: _FakeSecretStore()),
+    );
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      settings: settings,
+      pickFile: () async => '/tmp/en.wav',
+    );
+
+    await tester.tap(find.text('选择音频/视频'));
+    for (int i = 0; i < 6; i++) {
+      await tester.pump();
+    }
+    await tester.tap(find.byKey(const Key('translateSubtitle')));
+    await tester.pump();
+
+    expect(find.text('请先在设置中保存 DeepL API Key'), findsOneWidget);
+  });
+
   testWidgets('切换语言后新识别结果用新语言', (WidgetTester tester) async {
     final TranscribeController controller = build();
     addTearDown(controller.shutdown);
@@ -200,4 +265,57 @@ void main() {
     expect(controller.result?.segments.single.language, 'yue');
     expect(find.text('粤语'), findsWidgets); // 下拉里选中的 + 分段行里的语言标签
   });
+}
+
+class _FakeTranslationProvider implements TranslationProvider {
+  int calls = 0;
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) async {
+    calls++;
+    return texts.map((String text) => '译文：$text').toList();
+  }
+}
+
+class _FakePreferenceStore implements PreferenceStore {
+  @override
+  Future<String?> readString(String key) async => null;
+
+  @override
+  Future<bool?> readBool(String key) async => null;
+
+  @override
+  Future<int?> readInt(String key) async => null;
+
+  @override
+  Future<double?> readDouble(String key) async => null;
+
+  @override
+  Future<void> writeString(String key, String value) async {}
+
+  @override
+  Future<void> writeBool(String key, bool value) async {}
+
+  @override
+  Future<void> writeInt(String key, int value) async {}
+
+  @override
+  Future<void> writeDouble(String key, double value) async {}
+}
+
+class _FakeSecretStore implements SecretStore {
+  final Map<String, String> values = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String value) async => values[key] = value;
+
+  @override
+  Future<void> delete(String key) async => values.remove(key);
 }

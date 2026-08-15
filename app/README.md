@@ -15,7 +15,7 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 | 麦克风采集（`lib/src/audio/microphone.dart`） | ✅ `record` 取 16 kHz 单声道 PCM16 → float32 |
 | 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道 |
 | 字幕导出（`lib/src/subtitles/`） | ✅ 含双语字幕 |
-| 翻译层（`lib/src/translation/`） | 🚧 M4 基础抽象、批量/重试/进度、双语导出与 DeepL provider 已完成；M6 设置页、模型管理与离线模式已接入，真实网络验收待完成 |
+| 翻译层（`lib/src/translation/`） | 🚧 M4 基础抽象、批量/重试/进度、双语导出、DeepL provider 与文件转写页翻译入口已完成；M6 设置页、模型管理与离线模式已接入，真实网络验收待完成 |
 | 界面（`lib/src/ui/`） | ✅ M1、M2、M3、M5 完成：文件转写、实时字幕、视频播放、字幕联动、字幕校对编辑 |
 
 ## 开发
@@ -26,7 +26,7 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 
 flutter pub get
 flutter analyze     # 验收标准：No issues found
-flutter test        # 145 项，不依赖模型与设备
+flutter test        # 149 项，不依赖模型与设备
 
 # 端到端验收（真模型 + 真引擎 + 真原生解码，需 macOS；素材放法见上一级 DEVELOPMENT_PLAN §7）
 flutter test integration_test/e2e_test.dart -d macos

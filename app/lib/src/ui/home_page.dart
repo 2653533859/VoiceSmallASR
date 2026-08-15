@@ -17,6 +17,8 @@ import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
+import 'package:vsasr_app/src/translation/deepl_provider.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 选择要转写的文件，返回绝对路径；用户取消时返回 null。
@@ -24,6 +26,9 @@ typedef PickFile = Future<String?> Function();
 
 /// 保存字幕：给文件名与内容，返回落地位置的描述；用户取消时返回 null。
 typedef SaveFile = Future<String?> Function(String fileName, String content);
+
+/// 创建翻译 provider。生产环境默认使用 DeepL，测试可以注入不触网的替身。
+typedef TranslationProviderFactory = TranslationProvider Function(String apiKey);
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -34,6 +39,7 @@ class HomePage extends StatefulWidget {
     this.pickFile,
     this.saveFile,
     this.settings,
+    this.translationProviderFactory,
   });
 
   final TranscribeController controller;
@@ -50,6 +56,8 @@ class HomePage extends StatefulWidget {
 
   /// 设置存储。测试注入替身；生产环境由顶层应用复用同一个仓库。
   final AppSettingsRepository? settings;
+
+  final TranslationProviderFactory? translationProviderFactory;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -168,6 +176,31 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<void> _translate() async {
+    final TranscriptionResult? result = widget.controller.result;
+    if (result == null || widget.controller.busy) return;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    try {
+      final AppSettingsRepository repository = widget.settings ?? AppSettingsRepository();
+      final String? apiKey = await repository.translationSecrets.readDeepLApiKey();
+      if (!mounted) return;
+      if (apiKey == null) {
+        messenger.showSnackBar(const SnackBar(content: Text('请先在设置中保存 DeepL API Key')));
+        return;
+      }
+      final TranslationProvider provider =
+          widget.translationProviderFactory?.call(apiKey) ?? DeepLTranslationProvider(apiKey: apiKey);
+      try {
+        await widget.controller.translateCurrentResult(provider);
+      } finally {
+        if (provider is DeepLTranslationProvider) provider.close();
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('翻译失败：$error')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final LiveController? live = widget.live;
@@ -189,6 +222,7 @@ class _HomePageState extends State<HomePage> {
             onOpen: _openFile,
             onExport: _exportFile,
             onEdit: _openEditor,
+            onTranslate: _translate,
           );
         } else {
           body = _Tabs(
@@ -197,6 +231,7 @@ class _HomePageState extends State<HomePage> {
               onOpen: _openFile,
               onExport: _exportFile,
               onEdit: _openEditor,
+              onTranslate: _translate,
             ),
             live: live == null ? null : _LiveView(controller: live, onExport: _exportLive),
             video: widget.video == null
@@ -353,12 +388,14 @@ class _TranscribeView extends StatelessWidget {
     required this.onOpen,
     required this.onExport,
     required this.onEdit,
+    required this.onTranslate,
   });
 
   final TranscribeController controller;
   final VoidCallback onOpen;
   final VoidCallback onExport;
   final VoidCallback onEdit;
+  final VoidCallback onTranslate;
 
   @override
   Widget build(BuildContext context) {
@@ -368,28 +405,35 @@ class _TranscribeView extends StatelessWidget {
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
               FilledButton.icon(
                 onPressed: controller.busy ? null : onOpen,
                 icon: const Icon(Icons.folder_open),
                 label: const Text('选择音频/视频'),
               ),
-              const SizedBox(width: 12),
               OutlinedButton.icon(
                 onPressed: result == null || controller.busy ? null : onExport,
                 icon: const Icon(Icons.save_alt),
                 label: const Text('导出字幕'),
               ),
-              const SizedBox(width: 12),
               OutlinedButton.icon(
                 key: const Key('openSubtitleEditor'),
                 onPressed: result == null || controller.busy ? null : onEdit,
                 icon: const Icon(Icons.edit_note),
                 label: const Text('校对字幕'),
               ),
-              const SizedBox(width: 12),
-              Expanded(
+              OutlinedButton.icon(
+                key: const Key('translateSubtitle'),
+                onPressed: result == null || controller.busy ? null : onTranslate,
+                icon: const Icon(Icons.translate),
+                label: const Text('翻译为中文'),
+              ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 240),
                 child: Text(
                   controller.filePath == null ? '' : p.basename(controller.filePath!),
                   overflow: TextOverflow.ellipsis,
@@ -558,7 +602,19 @@ class _SegmentList extends StatelessWidget {  const _SegmentList({required this.
         return ListTile(
           dense: true,
           leading: Text('${segment.index + 1}'),
-          title: Text(segment.text),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(segment.text),
+              if ((segment.translation ?? '').trim().isNotEmpty)
+                Text(
+                  segment.translation!.trim(),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+            ],
+          ),
           subtitle: Row(
             children: <Widget>[
               Text(span, style: Theme.of(context).textTheme.bodySmall),

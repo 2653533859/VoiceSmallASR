@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理已完成首期实现**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（145 项单测 + 7 项端到端）。真实翻译验收和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + 7 项端到端）。真实翻译验收和 Android/Windows 原生验证仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,7 +83,7 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2、M3、M5 完成，M4 基础、批量流程、双语导出与 DeepL provider 已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，`flutter test` 145 项 + 端到端 7 项）
+### Flutter 端（M1、M2、M3、M5 完成，M4 基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，`flutter test` 149 项 + 端到端 7 项）
 
 - 三端工程骨架（windows / macos / android）
 - 129 个锁定依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包、`media_kit` 视频播放栈和设置持久化插件
@@ -191,7 +191,13 @@ VoiceSmallASR/
   - 支持文本、起止时间、合并、拆分；文本变化清除过期译文和 token 时间戳，时间变化清除过期 token 时间戳
   - 首页和视频页接入字幕校对入口，编辑页可定位播放器时间点，保存后回写主转写结果
   - 导出前统一校验时间轴，拒绝负时间、无效区间、重叠/倒序和超出音频时长的字幕
-  - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 145 项通过
+  - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 149 项通过
+
+- **应用内翻译工作流（M4，2026-08-16）**：
+  - 主转写页新增“翻译为中文”入口，从系统安全存储读取 DeepL API Key，provider 可注入测试替身
+  - 翻译期间锁定转写状态并显示批量进度；所有批次成功后才一次性写回译文，失败时保留原识别结果
+  - 转写列表显示译文，后续 SRT/VTT/TXT/JSON 导出和视频字幕叠加复用同一份结果
+  - 新增 4 项状态机/界面回归测试；全量 `flutter test` 已增至 149 项
 
 ### 环境
 
@@ -227,7 +233,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **145 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **149 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 还需要开发证书。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ⚠️ 签名待配置 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -294,12 +300,13 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 播放进度与字幕高亮联动，点字幕跳转
 - [x] 验收：模型自带英文语音生成的 `en.mp4` 在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验
 
-### M4 · 翻译（识别语言 → 中文；基础、批量、双语导出与 DeepL provider 已完成）
+### M4 · 翻译（识别语言 → 中文；基础、批量、双语导出、DeepL provider 与应用内工作流已完成）
 
 - [x] `TranslationProvider` 抽象：`Future<List<String>> translate(List<String> texts, {String? from, required String to})`；`translateResult()` 已将等长译文安全写入 `Segment.translation`
 - [x] 在线 provider 实现：首期采用 `DeepLTranslationProvider`，支持免费/付费 API base URL，API Key 仅通过构造参数注入
 - [x] 批量翻译 + 失败重试 + 进度回报；支持 `batchSize`、`maxRetries`、`retryDelay`，所有批次成功后写入 `Segment.translation`
 - [x] 双语字幕导出：SRT/VTT/TXT 输出原文+译文双行，JSON 保留 `Segment.translation`；已有导出链路并通过 4 项回归测试
+- [x] 应用内翻译工作流：从安全存储读取 DeepL API Key，在文件转写页发起翻译、显示进度并回写结果；失败不写入半成品
 - [ ] 验收：英/日视频生成中英双语 SRT，导出的文件在播放器里两行都正常显示
 
 ### M5 · 字幕校对编辑　✅ 首期已完成（2026-08-16）
@@ -556,7 +563,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 145 项应全绿（不需要模型、不需要设备）
+flutter test                   # 149 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"

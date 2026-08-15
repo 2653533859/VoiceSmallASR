@@ -15,6 +15,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 
 /// 当前正在做什么。
 enum JobStage {
@@ -32,6 +33,9 @@ enum JobStage {
 
   /// 正在识别。
   transcribing,
+
+  /// 正在翻译当前识别结果。
+  translating,
 
   /// 正在删除或刷新模型缓存。
   managingModel,
@@ -330,6 +334,54 @@ class TranscribeController extends ChangeNotifier {
     } on Object catch (error) {
       _errorText = _humanize(error);
       _statusText = '识别失败';
+    } finally {
+      _stage = JobStage.idle;
+      notifyListeners();
+    }
+  }
+
+  /// 翻译当前识别结果，并在所有批次成功后一次性写回译文。
+  ///
+  /// [provider] 由界面或调用方创建，API Key 的读取和 provider 生命周期不放进
+  /// 状态机。翻译失败时保留原结果，避免把半成品译文显示或导出出去。
+  Future<void> translateCurrentResult(
+    TranslationProvider provider, {
+    String targetLanguage = 'ZH',
+    int batchSize = 20,
+    int maxRetries = 2,
+    Duration retryDelay = const Duration(milliseconds: 250),
+  }) async {
+    if (busy) return;
+    final TranscriptionResult? source = _result;
+    if (source == null) throw StateError('还没有可翻译的识别结果');
+    _stage = JobStage.translating;
+    _errorText = null;
+    _progress = 0;
+    _statusText = '正在翻译…';
+    notifyListeners();
+    try {
+      final TranscriptionResult translated = await translateResult(
+        source,
+        provider,
+        to: targetLanguage,
+        batchSize: batchSize,
+        maxRetries: maxRetries,
+        retryDelay: retryDelay,
+        onProgress: (int done, int total) {
+          _progress = total > 0 ? done / total : null;
+          _statusText = total > 0 ? '正在翻译… ${(done / total * 100).round()}%' : '正在翻译…';
+          notifyListeners();
+        },
+      );
+      if (_disposed) return;
+      _result = translated;
+      _progress = 1;
+      _statusText = '翻译完成：${translated.length} 段';
+    } on Object catch (error) {
+      if (_disposed) return;
+      _errorText = _humanize(error);
+      _progress = null;
+      _statusText = '翻译失败';
     } finally {
       _stage = JobStage.idle;
       notifyListeners();

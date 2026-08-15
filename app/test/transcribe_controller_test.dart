@@ -14,6 +14,7 @@ import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 
 import 'support/fake_asr.dart';
@@ -330,6 +331,51 @@ void main() {
     await c.shutdown();
   });
 
+  test('翻译成功后一次性写回所有译文并报告状态', () async {
+    final TranscribeController c = TranscribeController(
+      decoder: FakeDecoder(),
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => FakeTranscriber(text: 'hello'),
+    );
+
+    await c.transcribeFile('/tmp/a.wav');
+    final _FakeTranslationProvider provider = _FakeTranslationProvider();
+    await c.translateCurrentResult(provider);
+
+    expect(provider.calls, 1);
+    expect(c.result?.segments.single.translation, '译文：hello');
+    expect(c.statusText, '翻译完成：1 段');
+    expect(c.progress, 1);
+    expect(c.errorText, isNull);
+    await c.shutdown();
+  });
+
+  test('翻译失败时保留原结果并回到空闲状态', () async {
+    final TranscribeController c = TranscribeController(
+      decoder: FakeDecoder(),
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => FakeTranscriber(text: 'hello'),
+    );
+
+    await c.transcribeFile('/tmp/a.wav');
+    final TranscriptionResult? before = c.result;
+    await c.translateCurrentResult(_FakeTranslationProvider(failure: StateError('服务不可用')));
+
+    expect(c.result, same(before));
+    expect(c.stage, JobStage.idle);
+    expect(c.statusText, '翻译失败');
+    expect(c.errorText, contains('服务不可用'));
+    await c.shutdown();
+  });
+
   // 回归：dispose() 只关「当下的」worker。模型加载要几十秒，界面在这期间
   // 被销毁时 _worker 还是 null，于是 isolate 与 240 MB 模型一起漏掉；
   // 而 prepare 的收尾还会 notifyListeners，抛 "used after being disposed"。
@@ -355,6 +401,25 @@ void main() {
 
     expect(arrived.disposed, isTrue);
   });
+}
+
+class _FakeTranslationProvider implements TranslationProvider {
+  _FakeTranslationProvider({this.failure});
+
+  final Object? failure;
+  int calls = 0;
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) async {
+    calls++;
+    final Object? error = failure;
+    if (error != null) throw error;
+    return texts.map((String text) => '译文：$text').toList();
+  }
 }
 
 class _BlockingTranscriber extends FakeTranscriber {
