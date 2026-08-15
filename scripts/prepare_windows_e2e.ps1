@@ -17,9 +17,26 @@ $archiveName = "$modelName.tar.bz2"
 $baseUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 $archivePath = Join-Path $temporaryRoot $archiveName
 
+function Download-File {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    $partial = "$Destination.part"
+    if (Test-Path -LiteralPath $partial -PathType Leaf) {
+        Remove-Item -LiteralPath $partial -Force
+    }
+    & curl.exe --fail --location --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 `
+        --output $partial $Url
+    if ($LASTEXITCODE -ne 0) {
+        throw "下载失败：$Url，退出码 $LASTEXITCODE"
+    }
+    Move-Item -LiteralPath $partial -Destination $Destination -Force
+}
+
 New-Item -ItemType Directory -Force -Path $ModelRoot | Out-Null
 if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
-    Invoke-WebRequest -Uri "$baseUrl/$archiveName" -OutFile $archivePath
+    Download-File -Url "$baseUrl/$archiveName" -Destination $archivePath
 }
 
 $asrDir = Join-Path $ModelRoot $modelName
@@ -35,7 +52,7 @@ if (-not (Test-Path -LiteralPath $asrModel -PathType Leaf) -or
 
 $vadPath = Join-Path $ModelRoot "silero_vad.onnx"
 if (-not (Test-Path -LiteralPath $vadPath -PathType Leaf)) {
-    Invoke-WebRequest -Uri "$baseUrl/silero_vad.onnx" -OutFile $vadPath
+    Download-File -Url "$baseUrl/silero_vad.onnx" -Destination $vadPath
 }
 
 $wavs = Join-Path $asrDir "test_wavs"
