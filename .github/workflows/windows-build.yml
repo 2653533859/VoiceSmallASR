@@ -48,7 +48,31 @@ jobs:
           $installer = "${{ github.workspace }}\dist\windows\VoiceSmallASR-unsigned-setup.exe"
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "缺少 Windows 可执行文件：$exe" }
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "缺少 Windows 安装包：$installer" }
+
+          $requiredFiles = @(
+            "flutter_windows.dll",
+            "libmpv-2.dll",
+            "onnxruntime.dll",
+            "sherpa-onnx-c-api.dll"
+          )
+          foreach ($requiredFile in $requiredFiles) {
+            $path = Join-Path $releaseDir $requiredFile
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "缺少 Windows 运行时依赖：$path"
+            }
+          }
+
+          $forbiddenFiles = Get-ChildItem -LiteralPath $releaseDir -Recurse -File |
+            Where-Object {
+              $_.Name -match '(?i)(\.onnx|\.tar|\.bz2)$' -or $_.Name -ieq "tokens.txt"
+            }
+          if ($forbiddenFiles) {
+            $paths = ($forbiddenFiles | ForEach-Object { $_.FullName }) -join "; "
+            throw "Windows Release 误包含模型文件：$paths"
+          }
+
           Get-Item -LiteralPath $exe, $installer | Select-Object FullName, Length
+          Write-Host "Windows Release 产物检查通过：运行时依赖齐全且未包含模型文件"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
