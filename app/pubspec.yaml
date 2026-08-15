@@ -43,6 +43,9 @@ dependencies:
   # 麦克风采集。运行时授权用它自带的 hasPermission()，因此不需要 permission_handler。
   record: ^7.1.1
   provider: ^6.1.5+1
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
 
 dev_dependencies:
   flutter_test:

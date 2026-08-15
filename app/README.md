@@ -15,7 +15,7 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 | 麦克风采集（`lib/src/audio/microphone.dart`） | ✅ `record` 取 16 kHz 单声道 PCM16 → float32 |
 | 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道 |
 | 字幕导出（`lib/src/subtitles/`） | ✅ 含双语字幕 |
-| 界面（`lib/src/ui/`） | ✅ M1、M2 完成：模型下载页、文件转写、实时字幕、分段列表、导出字幕 |
+| 界面（`lib/src/ui/`） | ✅ M1、M2 完成，M3 播放器子项已实现：文件转写、实时字幕、视频播放、字幕联动 |
 
 ## 开发
 
@@ -25,7 +25,7 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 
 flutter pub get
 flutter analyze     # 验收标准：No issues found
-flutter test        # 103 项，不依赖模型与设备
+flutter test        # 107 项，不依赖模型与设备
 
 # 端到端验收（真模型 + 真引擎 + 真原生解码，需 macOS；素材放法见上一级 DEVELOPMENT_PLAN §7）
 flutter test integration_test/e2e_test.dart -d macos
@@ -34,7 +34,8 @@ flutter test integration_test/e2e_test.dart -d macos
 不要设 `PUB_HOSTED_URL`：pub.dev 可直连，指向镜像会把 `pubspec.lock` 里所有包的 `url`
 改写成镜像地址并重新解析依赖，那样的 lock 不应提交。
 
-构建/运行各平台的前置条件：macOS 需 Xcode + CocoaPods（本机已装，`flutter build macos --debug` 通过）；
+构建/运行各平台的前置条件：macOS 需 Xcode + CocoaPods（media_kit 的 macOS 插件当前不支持 Swift Package Manager；
+本机已装，`flutter build macos --debug` 通过）；
 Windows 需开发者模式 + Visual Studio C++ 工具链；
 Android 需真机或模拟器。
 

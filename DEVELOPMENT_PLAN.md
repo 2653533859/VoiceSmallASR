@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2 已完成**：引擎层 + 音频解码 + 后台 isolate + 文件转写界面 + 麦克风实时字幕（103 项单测 + 6 项端到端）。macOS 已验收，Android/Windows 原生代码未编译 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2 已完成，M3 播放器子项已实现**：文件转写、实时字幕、视频播放与字幕联动（107 项单测 + 6 项端到端）。macOS 播放器构建已验收，真实 mp4 播放与 Android/Windows 原生代码仍待验证 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -53,6 +53,7 @@ VoiceSmallASR/
 │   │   │   ├── microphone.dart      ← 对应 audio.py 的 iter_microphone（record 包）
 │   │   │   └── audio_decoder.dart   ← 对应 audio.py 的 ffmpeg 路径（转给原生解码）
 │   │   ├── subtitles/subtitles.dart ← 对应 subtitles.py（多双语字幕）
+│   │   ├── video/                   media_kit 播放器与字幕时间轴
 │   │   └── ui/                      界面层（Python 端对应物是 cli.py）
 │   │       ├── app.dart             MaterialApp 外壳
 │   │       ├── transcribe_controller.dart  状态机：模型→解码→识别→导出
@@ -82,10 +83,10 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2 完成：`flutter analyze` 无告警，`flutter test` 103 项 + 端到端 6 项全通过）
+### Flutter 端（M1、M2 完成，M3 播放器子项已实现：`flutter analyze` 无告警，`flutter test` 107 项 + 端到端 6 项）
 
 - 三端工程骨架（windows / macos / android）
-- 93 个依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包
+- 116 个依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包与 `media_kit` 视频播放栈
 - Gradle 国内镜像（阿里云 Maven + 腾讯云 Gradle 发行版）
 - 六个引擎文件移植完成，Python 端修过的 bug 一并带过来：
   - 空格 token 不能丢（否则英文字幕拼成 `with50`）
@@ -150,6 +151,13 @@ VoiceSmallASR/
   - 顺带修掉一个内存隐患：切语言时旧 isolate 还在关，新的就抢先加载了，
     两份模型同时驻留；`prepare()` 现在先等旧的关完
 
+- **视频播放与字幕联动（M3 第一项，2026-08-16）**：
+  - 采用 `media_kit` + `media_kit_video` + `media_kit_libs_video`，统一覆盖 Android、macOS、Windows；
+    macOS 插件当前不支持 Swift Package Manager，已由 CocoaPods 集成并通过 `flutter build macos --debug`
+  - 新增视频播放页：打开视频、播放/暂停、拖动进度、显示当前识别字幕；视频转写复用 M1 的原生抽音轨路径
+  - 字幕列表跟随播放位置高亮，点击任一字幕跳转到对应时间；播放器后端可注入替身，便于无原生库单测
+  - 代码审查补上异步收尾生命周期保护，以及无扩展名路径的安全判断；新增 4 项播放器/视频页测试
+
 ### 环境
 
 两台机器，代码同一份：
@@ -184,7 +192,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **103 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **107 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。`flutter build macos --debug` 已通过，Swift 原生解码已编译。踩到一个必修的坑：pub 会抹掉 `SherpaOnnxC.framework` 的符号链接导致 codesign 失败，见 §6 | ✅ 完成 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -244,11 +252,11 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
       麦克风那一路本身没法自动化（要真人说话），但它之后的链路与该测试完全相同
 - [ ] **Android 真机不掉帧 —— 未验证**（本机无 Android SDK，见 §3 环境）
 
-### M3 · 视频播放 + 字幕叠加
+### M3 · 视频播放 + 字幕叠加（播放器子项已实现，真实视频验收待完成）
 
-- [ ] 播放器（`video_player` 或 `media_kit`，需评估 Windows/macOS/Android 一致性）
-- [ ] 从视频抽音轨 → 识别 → 字幕轨
-- [ ] 播放进度与字幕高亮联动，点字幕跳转
+- [x] 播放器：采用 `media_kit`，已接入 Android/macOS/Windows 依赖与统一控制器
+- [x] 从视频抽音轨 → 识别 → 字幕轨：复用 M1 的平台原生解码并在视频页加载识别结果
+- [x] 播放进度与字幕高亮联动，点字幕跳转
 - [ ] 验收：一段带外语对白的 mp4，播放时字幕跟得上、点击可跳转
 
 ### M4 · 翻译（识别语言 → 中文）
@@ -505,7 +513,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 103 项应全绿（不需要模型、不需要设备）
+flutter test                   # 107 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"

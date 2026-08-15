@@ -6,13 +6,16 @@
 
 - Python 端已完成：离线多语种识别、CLI、VAD 流式识别、时间戳和字幕导出。
 - Flutter 端已完成 M1（文件转写 + 字幕导出）和 M2（麦克风实时字幕）的 macOS 闭环。
-- 当前下一阶段是 M3：视频播放、字幕叠加、播放进度与字幕联动。
+- M3 的第一个实现子项已完成：跨平台视频播放器、字幕叠加、播放进度联动与点击字幕跳转。
+- 当前下一步是用真实 mp4 做 macOS 端到端验收，再补 Android/Windows 的构建与运行验证。
 
 ## 已验证结果
 
 - Python：`pytest` 105 项通过，`ruff check .` 通过。
-- Flutter：`flutter analyze` 通过，103 项单测通过。
+- Flutter：`flutter analyze` 通过，107 项单测通过。
 - macOS：`flutter build macos --debug` 通过，Swift 原生音频解码已编译。
+- 播放器：`media_kit 1.2.6` + `media_kit_video 2.0.1` + `media_kit_libs_video 1.0.7` 已接入；macOS 构建通过，插件当前由 CocoaPods 集成。
+- M3 测试覆盖：播放器状态/生命周期、字幕时间边界、视频页加载/叠加/点击跳转。
 - macOS 真模型端到端验收已完成：Flutter 与 Python 对粤语素材逐字一致，实时识别链路的定稿序号和时间戳连续。
 
 ## 最近修复
@@ -21,11 +24,13 @@
 - Flutter 模型下载的连接和响应流增加 60 秒超时，超时后切换镜像源。
 - 实时会话收尾时用 `finally` 释放 VAD 原生资源。
 - Windows Media Foundation 解码线程增加异常和线程创建失败兜底，确保 MethodChannel 回包。
+- 播放器异步操作在页面销毁后不再访问已销毁的状态对象；无扩展名路径判断视频时不再越界。
 
 ## 尚未验证的环境
 
 - Android 原生 Kotlin 解码尚未在 Android SDK/真机上编译运行。
 - Windows 原生 C++ 解码尚未在 MSVC/Windows SDK 上编译运行。
+- Android/Windows 的 media_kit 视频播放尚未在真机/真桌面运行验证。
 - Android 实时字幕的中低端设备性能尚未测量。
 
 ## 工作约定

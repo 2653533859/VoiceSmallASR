@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 顶层 Widget。[controller] / [live] 只在测试里显式传入。
 class VsasrApp extends StatefulWidget {
@@ -29,12 +30,14 @@ class _VsasrAppState extends State<VsasrApp> {
         languageOf: () => _controller.language,
       );
   late final bool _ownsLive = widget.live == null;
+  late final VideoPlaybackController _video = VideoPlaybackController();
 
   @override
   void dispose() {
     // 先收实时会话再关 worker：会话活在 worker 的 isolate 里。
     if (_ownsLive) _live.dispose();
     if (_ownsController) _controller.dispose();
+    _video.dispose();
     super.dispose();
   }
 
@@ -48,7 +51,7 @@ class _VsasrAppState extends State<VsasrApp> {
         useMaterial3: true,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: HomePage(controller: _controller, live: _live),
+      home: HomePage(controller: _controller, live: _live, video: _video),
     );
   }
 }

@@ -12,7 +12,7 @@ SenseVoice-Small（int8 ONNX）+ silero-vad，纯 CPU，模型仅首次运行联
 | 端 | 位置 | 状态 |
 | --- | --- | --- |
 | Python 库 + CLI | `src/voice_small_asr/` | 已完成，105 项测试 |
-| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2 已完成**：引擎层 + 音频解码 + 后台 isolate + 文件转写界面 + 麦克风实时字幕（103 项 `flutter test` + 6 项 `integration_test`）。macOS 已验收与 Python 端逐字一致 |
+| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2 已完成，M3 播放器子项已实现**：文件转写、实时字幕、视频播放与字幕联动（107 项 `flutter test` + 6 项 `integration_test`）。macOS 构建已通过，真实 mp4 与 Android/Windows 仍待验证 |
 
 两端固定 sherpa-onnx **1.13.5**，因此识别结果应逐字一致 —— **Python 端是 Flutter 端的对照基准**。
 阶段计划（M0–M7）、待决策事项与踩坑记录在 `DEVELOPMENT_PLAN.md`，动 Flutter 端前先读。
@@ -46,7 +46,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"   # 本机 Flutter 3.47.0 装�
 
 cd app && flutter pub get
 flutter analyze                # 验收标准：No issues found
-flutter test                   # 103 项，不需要模型也不需要设备
+flutter test                   # 107 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
 flutter build macos --debug     # 可用（Xcode 26.6 + CocoaPods 1.17.0 已装）
 flutter run -d macos           # 可用
@@ -59,9 +59,9 @@ flutter test integration_test/e2e_test.dart -d macos
 `app/pubspec.lock` 里每个包的 `url` 重写成镜像地址并重新解析依赖（实测 92 个包全被改动）。
 如果不小心设了并跑过 pub get，`git checkout app/pubspec.lock` 后不带该变量重跑一次。
 
-**本机可验证的范围（2026-08-15 起）：`flutter analyze`、`flutter test`、以及 macOS 的构建与运行。**
+**本机可验证的范围（2026-08-16 起）：`flutter analyze`、`flutter test`、以及 macOS 的构建与运行。**
 Xcode 26.6 + CocoaPods 1.17.0 已装，`flutter build macos --debug` 通过，
-所以 `app/macos/Runner/MainFlutterWindow.swift` 里的 Swift 原生解码**已经编译过**。
+所以 `app/macos/Runner/MainFlutterWindow.swift` 里的 Swift 原生解码与 media_kit 播放插件**已经编译过**。
 但 **Android 的 Kotlin 与 Windows 的 C++ 仍然编译不到**（无 Android cmdline-tools、无 MSVC）——
 改那两处后不要声称已验证。`DEVELOPMENT_PLAN.md` 记录的另一台开发机是 Windows（`E:\dev\flutter`）。
 

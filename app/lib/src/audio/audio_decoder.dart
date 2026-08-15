@@ -26,10 +26,15 @@ const MethodChannel kAudioDecoderChannel = MethodChannel('vsasr/audio_decoder');
 /// 纯 Dart 直读的格式。
 const List<String> kWavExtensions = <String>['wav', 'wave'];
 
+/// 播放器与文件转写共用的视频容器白名单。
+const List<String> kVideoExtensions = <String>[
+  'mp4', 'mov', 'mkv', 'avi', 'webm', 'ts', 'flv',
+];
+
 /// 需要平台原生解码的格式（音频 + 视频容器，视频只取音轨）。
 const List<String> kNativeAudioExtensions = <String>[
   'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wma', 'aiff', 'caf',
-  'mp4', 'mov', 'mkv', 'avi', 'webm', 'ts', 'flv',
+  ...kVideoExtensions,
 ];
 
 /// 文件选择器可用的扩展名白名单。

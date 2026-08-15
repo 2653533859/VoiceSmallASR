@@ -13,6 +13,8 @@ import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/ui/video_page.dart';
+import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 选择要转写的文件，返回绝对路径；用户取消时返回 null。
 typedef PickFile = Future<String?> Function();
@@ -25,6 +27,7 @@ class HomePage extends StatefulWidget {
     super.key,
     required this.controller,
     this.live,
+    this.video,
     this.pickFile,
     this.saveFile,
   });
@@ -33,6 +36,9 @@ class HomePage extends StatefulWidget {
 
   /// 实时字幕。为 null 时不显示「实时字幕」页签（不需要麦克风的测试用）。
   final LiveController? live;
+
+  /// 视频播放控制器。为 null 时不显示「视频播放」页签（测试用）。
+  final VideoPlaybackController? video;
 
   /// 文件选择与保存。测试注入替身，默认走 `file_picker`。
   final PickFile? pickFile;
@@ -135,20 +141,25 @@ class _HomePageState extends State<HomePage> {
     final LiveController? live = widget.live;
     return ListenableBuilder(
       // 两个控制器都要监听：语言下拉在录音时必须禁用（切语言会重启 isolate）。
-      listenable: live == null
-          ? widget.controller
-          : Listenable.merge(<Listenable>[widget.controller, live]),
+      listenable: Listenable.merge(<Listenable>[
+        widget.controller,
+        ?live,
+        ?widget.video,
+      ]),
       builder: (BuildContext context, Widget? _) {
         final TranscribeController c = widget.controller;
         final Widget body;
         if (!c.modelReady) {
           body = _ModelSetupView(controller: c);
-        } else if (live == null) {
+        } else if (live == null && widget.video == null) {
           body = _TranscribeView(controller: c, onOpen: _openFile, onExport: _exportFile);
         } else {
           body = _Tabs(
             transcribe: _TranscribeView(controller: c, onOpen: _openFile, onExport: _exportFile),
-            live: _LiveView(controller: live, onExport: _exportLive),
+            live: live == null ? null : _LiveView(controller: live, onExport: _exportLive),
+            video: widget.video == null
+                ? null
+                : VideoPage(controller: widget.video!, transcription: c),
           );
         }
         return Scaffold(
@@ -167,24 +178,34 @@ class _HomePageState extends State<HomePage> {
 }
 /// 「文件转写 / 实时字幕」两个页签。
 class _Tabs extends StatelessWidget {
-  const _Tabs({required this.transcribe, required this.live});
+  const _Tabs({required this.transcribe, this.live, this.video});
 
   final Widget transcribe;
-  final Widget live;
+  final Widget? live;
+  final Widget? video;
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 1 + (live == null ? 0 : 1) + (video == null ? 0 : 1),
       child: Column(
         children: <Widget>[
-          const TabBar(
+          TabBar(
             tabs: <Widget>[
-              Tab(icon: Icon(Icons.audio_file_outlined), text: '文件转写'),
-              Tab(icon: Icon(Icons.mic_none), text: '实时字幕'),
+              const Tab(icon: Icon(Icons.audio_file_outlined), text: '文件转写'),
+              if (live != null) const Tab(icon: Icon(Icons.mic_none), text: '实时字幕'),
+              if (video != null) const Tab(icon: Icon(Icons.video_library_outlined), text: '视频播放'),
             ],
           ),
-          Expanded(child: TabBarView(children: <Widget>[transcribe, live])),
+          Expanded(
+            child: TabBarView(
+              children: <Widget>[
+                transcribe,
+                ?live,
+                ?video,
+              ],
+            ),
+          ),
         ],
       ),
     );
