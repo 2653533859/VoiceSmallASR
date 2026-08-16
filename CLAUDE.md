@@ -49,7 +49,13 @@ flutter analyze                # 验收标准：No issues found
 flutter test                   # 149 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
 flutter build apk --release   # Android release APK；需要 Android SDK/JDK
-flutter build appbundle --release # Android release AAB；当前使用 debug signing 做构建验证
+flutter build appbundle --release # Android release AAB；无签名变量时使用 debug signing 做构建验证
+# 正式 Android 签名：四个 VSASR_ANDROID_* 变量必须全部设置，缺一会直接失败
+VSASR_ANDROID_KEYSTORE_FILE=/secure/release.jks \
+VSASR_ANDROID_KEY_ALIAS=voice-small-asr \
+VSASR_ANDROID_KEYSTORE_PASSWORD='...' \
+VSASR_ANDROID_KEY_PASSWORD='...' \
+flutter build appbundle --release
 flutter build macos --debug     # 需开发证书；无签名编译可用 xcodebuild CODE_SIGNING_ALLOWED=NO 验证
 flutter run -d macos           # 需开发证书；本机当前只验证无签名编译
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh  # 生成无签名 .app/.dmg

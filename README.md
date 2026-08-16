@@ -256,7 +256,7 @@ macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输
 （`呢几个字都表达唔到，我想讲嘅意思。`），RTF 约 0.06；实时识别把三段素材拼成「三句话」喂进去，
 每句都定稿且时间戳连续不重叠。
 后续计划包括真实英/日视频翻译验收、Android 真机性能、Windows 用户桌面运行验证，以及签名发布。
-当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`，并已在本机成功构建 Android release APK/AAB；Android 产物使用 debug signing 做构建验证，发布签名仍需开发者证书/正式密钥。
+当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`，并已在本机成功构建 Android release APK/AAB；未提供签名变量时 Android 产物使用 debug signing 做构建验证，正式证书产物仍需开发者 keystore。Android signing 配置支持 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD` 和 `VSASR_ANDROID_KEY_PASSWORD` 四个环境变量。
 真实 DeepL 验收入口为 `app/integration_test/deepl_acceptance_test.dart`，需要仓库外的密钥文件和英/日视频素材；密钥不会写入仓库。
 Windows Release 与 Inno Setup 安装包已由 `.github/workflows/windows-build.yml` 在 Windows runner 上构建通过，CI 同时检查运行时 DLL 和模型文件排除，并通过无模型桌面 smoke 验证 AAC 解码与 MP4 播放；手动 `run_full_e2e=true` 的完整模型 e2e 已在 run `31919855391` 通过 7 项测试，用户桌面验证仍待完成。
 

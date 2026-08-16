@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。真实翻译验收、Android 真机性能和 Windows 用户桌面运行仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Android 正式签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。真实翻译验收、Android 真机性能、证书签名产物和 Windows 用户桌面运行仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -342,7 +342,9 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 ### M7 · 打包分发
 
-- [x] Android APK / AAB（本机已构建：APK 约 169 MiB、AAB 约 124 MiB；APK 通过 v2 签名校验，release 使用 debug signing，仅完成构建验证）
+- [x] Android APK / AAB（本机已构建：APK 约 169 MiB、AAB 约 124 MiB；APK 通过 v2 签名校验，未提供签名变量时使用 debug signing，仅完成构建验证）
+- [x] Android 正式签名配置（`app/android/app/build.gradle.kts` 支持显式 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD`、`VSASR_ANDROID_KEY_PASSWORD`；缺少任一变量会在配置时失败，不会静默生成 debug 签名发布包）
+- [ ] Android 正式证书产物验收 —— 仍需开发者提供 keystore 与 JDK 环境
 - [x] Windows exe + 安装包（GitHub Actions run `31912544699` 已通过；自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，Release 目录约 111 MiB，`VoiceSmallASR-unsigned-setup.exe` 约 31 MiB，未签名）
 - [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；带开发者证书的签名发布包仍待配置
 - [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB，Windows CI 也自动拒绝 `.onnx`、`.tar`、`.bz2` 和 `tokens.txt`

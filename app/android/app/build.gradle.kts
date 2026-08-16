@@ -4,6 +4,24 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+private val androidSigningVariables = listOf(
+    "VSASR_ANDROID_KEYSTORE_FILE",
+    "VSASR_ANDROID_KEY_ALIAS",
+    "VSASR_ANDROID_KEYSTORE_PASSWORD",
+    "VSASR_ANDROID_KEY_PASSWORD",
+)
+
+private val androidSigningRequested = androidSigningVariables.any { name ->
+    !System.getenv(name).isNullOrBlank()
+}
+
+private fun requiredAndroidSigningValue(name: String): String =
+    System.getenv(name)?.trim()?.takeUnless { it.isEmpty() }
+        ?: error("$name is required when Android release signing is configured")
+
+private val externalAndroidKeystorePath: String? =
+    if (androidSigningRequested) requiredAndroidSigningValue("VSASR_ANDROID_KEYSTORE_FILE") else null
+
 android {
     namespace = "com.voicesmallasr.vsasr_app"
     compileSdk = flutter.compileSdkVersion
@@ -29,11 +47,30 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (externalAndroidKeystorePath != null) {
+            create("releaseExternal") {
+                val keystoreFile = project.file(externalAndroidKeystorePath!!)
+                require(keystoreFile.isFile) {
+                    "Android keystore file does not exist: ${keystoreFile.absolutePath}"
+                }
+                storeFile = keystoreFile
+                storePassword = requiredAndroidSigningValue("VSASR_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = requiredAndroidSigningValue("VSASR_ANDROID_KEY_ALIAS")
+                keyPassword = requiredAndroidSigningValue("VSASR_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Without explicit credentials this remains a build-only artifact.
+            // CI/release machines opt in with VSASR_ANDROID_* environment variables.
+            signingConfig = if (externalAndroidKeystorePath != null) {
+                signingConfigs.getByName("releaseExternal")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

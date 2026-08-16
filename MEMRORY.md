@@ -15,7 +15,8 @@
 - M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数和 DeepL API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
 - M7 macOS 无签名打包首期已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；带证书的签名发布仍待配置。
-- M7 Android 构建验证已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，release 使用 debug signing，仅代表可构建。
+- M7 Android 构建验证已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，未提供签名变量时使用 debug signing，仅代表可构建。
+- Android 正式签名配置已接入 `app/android/app/build.gradle.kts`：显式提供四个 `VSASR_ANDROID_*` 环境变量时使用外部 keystore，变量不完整或文件不存在会直接失败；当前仍没有开发者 keystore，正式签名产物尚未验收。
 - Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；2026-08-16 重跑 7/7，粤语识别 RTF `0.027`；模拟器使用软件渲染，真机性能仍未验证。
 - M4 真实验收入口已准备：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材，`app/integration_test/deepl_acceptance_test.dart` 使用仓库外的 `--dart-define-from-file` 密钥文件验证真实 DeepL、双语 SRT 和视频字幕叠加；本机尚无有效 DeepL API Key，因此尚未执行网络验收。
 - Windows M7 构建已完成：GitHub Actions run `31912544699` 在 `windows-2022` runner 上通过 MSVC 编译 Flutter Release，并用 `scripts/build_windows_unsigned.ps1` + Inno Setup 生成未签名安装包；CI 自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，并拒绝模型文件；Release 目录约 111 MiB，安装包约 31 MiB。
