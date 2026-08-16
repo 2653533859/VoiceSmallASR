@@ -4,12 +4,19 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要创建或更新的 Release tag，例如 v1.0.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 env:
   FLUTTER_VERSION: "3.47.0"
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   android:
@@ -43,8 +50,8 @@ jobs:
           flutter build apk --release
           flutter build appbundle --release
           mkdir -p dist/android
-          cp build/app/outputs/apk/release/app-release.apk "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk"
-          cp build/app/outputs/bundle/release/app-release.aab "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab"
+          cp build/app/outputs/apk/release/app-release.apk "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk"
+          cp build/app/outputs/bundle/release/app-release.aab "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.aab"
 
       - name: Verify Android release assets
         working-directory: app
@@ -53,12 +60,12 @@ jobs:
           set -euo pipefail
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK is not configured}}"
           build_tools_dir="$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          "$build_tools_dir/apksigner" verify --verbose "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk"
-          if unzip -l "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk" | grep -Eiq '\.(onnx|tar|bz2)$|tokens\.txt'; then
+          "$build_tools_dir/apksigner" verify --verbose "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk"
+          if unzip -l "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk" | grep -Eiq '\.(onnx|tar|bz2)$|tokens\.txt'; then
             echo "Android APK contains model files" >&2
             exit 1
           fi
-          test -s "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab"
+          test -s "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.aab"
 
       - name: Upload Android release assets
         uses: actions/upload-artifact@v4
@@ -84,22 +91,20 @@ jobs:
 
       - name: Build personal-use macOS app and DMG
         run: |
-          FLUTTER_BIN=flutter ./scripts/build_macos_unsigned.sh
+          FLUTTER_BIN="$(command -v flutter)" ./scripts/build_macos_unsigned.sh
           ditto -c -k --sequesterRsrc --keepParent \
             dist/macos/VoiceSmallASR.app \
-            "dist/macos/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.zip"
+            "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip"
           cp dist/macos/VoiceSmallASR-unsigned.dmg \
-            "dist/macos/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg"
-          hdiutil imageinfo "dist/macos/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg" >/dev/null
+            "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg"
+          hdiutil imageinfo "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg" >/dev/null
 
       - name: Upload macOS release assets
         uses: actions/upload-artifact@v4
         with:
           name: voicesmallasr-release-macos
           if-no-files-found: error
-          path: |
-            dist/macos/VoiceSmallASR-${{ github.ref_name }}-macos-unsigned.dmg
-            dist/macos/VoiceSmallASR-${{ github.ref_name }}-macos-unsigned.zip
+          path: dist/macos/*-macos-unsigned.*
 
   windows:
     name: Windows unsigned installer
@@ -124,7 +129,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/build_windows_unsigned.ps1 -Flutter flutter
-          $asset = "dist\windows\VoiceSmallASR-$env:GITHUB_REF_NAME-windows-unsigned-setup.exe"
+          $asset = "dist\windows\VoiceSmallASR-$env:RELEASE_TAG-windows-unsigned-setup.exe"
           Copy-Item "dist\windows\VoiceSmallASR-unsigned-setup.exe" $asset
 
       - name: Verify Windows release asset
@@ -132,7 +137,7 @@ jobs:
         run: |
           $releaseDir = "${{ github.workspace }}\app\build\windows\x64\runner\Release"
           $exe = Join-Path $releaseDir "vsasr_app.exe"
-          $installer = "${{ github.workspace }}\dist\windows\VoiceSmallASR-${{ github.ref_name }}-windows-unsigned-setup.exe"
+          $installer = "${{ github.workspace }}\dist\windows\VoiceSmallASR-$env:RELEASE_TAG-windows-unsigned-setup.exe"
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "缺少 Windows 可执行文件：$exe" }
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "缺少 Windows 安装包：$installer" }
           if ((Get-Item -LiteralPath $installer).Length -le 0) { throw "Windows 安装包为空：$installer" }
@@ -142,7 +147,7 @@ jobs:
         with:
           name: voicesmallasr-release-windows
           if-no-files-found: error
-          path: dist/windows/VoiceSmallASR-${{ github.ref_name }}-windows-unsigned-setup.exe
+          path: dist/windows/*-windows-unsigned-setup.exe
 
   release:
     name: Create GitHub Release
@@ -162,27 +167,27 @@ jobs:
         run: |
           set -euo pipefail
           find dist/release -maxdepth 1 -type f -print
-          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk"
-          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab"
-          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg"
-          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.zip"
-          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-windows-unsigned-setup.exe"
+          test -s "dist/release/VoiceSmallASR-${RELEASE_TAG}-android.apk"
+          test -s "dist/release/VoiceSmallASR-${RELEASE_TAG}-android.aab"
+          test -s "dist/release/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg"
+          test -s "dist/release/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip"
+          test -s "dist/release/VoiceSmallASR-${RELEASE_TAG}-windows-unsigned-setup.exe"
 
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "VoiceSmallASR $GITHUB_REF_NAME" \
+              --title "VoiceSmallASR $RELEASE_TAG" \
               --notes "个人使用版本：Android debug-signed APK/AAB、Windows 未签名安装包、macOS 未签名 DMG/APP 压缩包。"
           fi
-          gh release upload "$GITHUB_REF_NAME" \
-            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk \
-            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab \
-            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg \
-            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.zip \
-            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-windows-unsigned-setup.exe \
+          gh release upload "$RELEASE_TAG" \
+            dist/release/VoiceSmallASR-${RELEASE_TAG}-android.apk \
+            dist/release/VoiceSmallASR-${RELEASE_TAG}-android.aab \
+            dist/release/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg \
+            dist/release/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip \
+            dist/release/VoiceSmallASR-${RELEASE_TAG}-windows-unsigned-setup.exe \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
