@@ -31,6 +31,7 @@ mkdir -p "$DIST_DIR" "$STAGING_DIR"
 (
   cd "$APP_DIR"
   "$FLUTTER_BIN" pub get
+  "$FLUTTER_BIN" build macos --config-only
 )
 
 (
