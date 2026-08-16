@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Android 正式签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。真实翻译验收、Android 真机性能、证书签名产物和 Windows 用户桌面运行仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Android 可选外部签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。真实翻译验收、Android 真机性能和 Windows 用户桌面运行仍待完成；商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -245,7 +245,7 @@ Run 31919855391                完整模型 e2e 7 项、桌面 smoke、产物校
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
 | 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **149 项通过** | ✅ 完成 |
-| Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 还需要开发证书。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ⚠️ 签名待配置 |
+| Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；个人使用的无签名包已满足目标，普通 `flutter build macos --debug` 的开发证书仅在需要正式签名运行/发布时才需要。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ✅ 个人使用构建完成 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
 所以这条路径顺带解决了 M7 里原本无解的一项。
@@ -343,10 +343,10 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 ### M7 · 打包分发
 
 - [x] Android APK / AAB（本机已构建：APK 约 169 MiB、AAB 约 124 MiB；APK 通过 v2 签名校验，未提供签名变量时使用 debug signing，仅完成构建验证）
-- [x] Android 正式签名配置（`app/android/app/build.gradle.kts` 支持显式 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD`、`VSASR_ANDROID_KEY_PASSWORD`；缺少任一变量会在配置时失败，不会静默生成 debug 签名发布包；已用临时 keystore 构建并通过 `apksigner` v2 校验）
-- [ ] Android 正式证书产物验收 —— JDK 17 与构建链路已验证，仍需开发者提供正式 keystore/证书
+- [x] Android 可选外部签名配置（`app/android/app/build.gradle.kts` 支持显式 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD`、`VSASR_ANDROID_KEY_PASSWORD`；缺少任一变量会在配置时失败，不会静默生成 debug 签名发布包；已用临时 keystore 构建并通过 `apksigner` v2 校验）
+- [x] Android 个人使用产物验收 —— JDK 17 与构建链路已验证；未提供外部签名变量时生成的 debug-signed APK 可个人安装和测试，正式发布证书不在范围
 - [x] Windows exe + 安装包（GitHub Actions run `31912544699` 已通过；自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，Release 目录约 111 MiB，`VoiceSmallASR-unsigned-setup.exe` 约 31 MiB，未签名）
-- [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；带开发者证书的签名发布包仍待配置
+- [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；个人使用不要求开发者证书，App Store/公证发布另行配置
 - [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB，Windows CI 也自动拒绝 `.onnx`、`.tar`、`.bz2` 和 `tokens.txt`
 
 ## 5. 决策记录与待决策事项
@@ -431,8 +431,9 @@ API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.de
   不加则 file_picker 选中的文件读不出来。两个 entitlements 文件（Debug/Release）都要改。
 - **`flutter_secure_storage` 的 macOS Keychain Sharing 需要签名能力**：Debug/Release 两个
   entitlements 都要加 `keychain-access-groups`；没有开发证书时可用
-  `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` 验证编译，但无法用普通
-  `flutter build macos --debug` 完成可运行的签名包。
+  `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` 验证编译并生成个人使用的无签名包，
+  但无法用普通 `flutter build macos --debug` 完成带 Keychain Sharing 的签名包。若个人使用需要 macOS
+  持久化 DeepL API Key，仍需另行提供可用的签名运行环境；这不影响不依赖该能力的本地识别功能。
 - **Android 的 `INTERNET` 权限在 release 包里会消失**：Flutter 模板只在
   `debug/` 与 `profile/` 的 manifest 里声明它（那是给 hot reload 用的），
   `main/AndroidManifest.xml` 不写就等于 release 包没有网络权限。
@@ -623,7 +624,7 @@ bash scripts/prepare_translation_acceptance_media.sh "$WAVS" "$WAVS"
 flutter test integration_test/deepl_acceptance_test.dart -d macos \
   --dart-define-from-file=/path/to/voicesmallasr-deepl.env
 
-# 生成不含模型、未签名的 macOS Release .app 与 .dmg（需要 Xcode；发布签名仍需证书）
+# 生成不含模型、未签名的 macOS Release .app 与 .dmg（需要 Xcode；个人使用不要求发布签名）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
 ```
 
@@ -647,4 +648,4 @@ unzip -q flutter.zip -d ~/development
 | GitHub 模型下载在国内不通，镜像也失效 | 用户装完 App 拿不到模型，功能完全不可用 | 🟡 已降级：三源已实测可达（macOS 机器，见 §6），两端均已实现 fallback + 截断校验；剩余未知是国内网络下的实际可达性，需在国内机器复测。若届时全挂，再接 ModelScope / 国内对象存储作为第四源（需单独取址逻辑） |
 | 音频解码方案落空 | M1/M3 返工 | 🟡 已收敛：改为三端各写原生解码并已全部落地（见 §5 已决策 1），Dart 侧分发逻辑有 33 项单测兜底；macOS、Android 模拟器和 Windows CI 完整模型 e2e 已运行验证，用户桌面差异和 Android 真机性能仍待实测 |
 | Android 中低端机跑 int8 SenseVoice 太慢 | 实时字幕体验不可用 | 先在真机实测 RTF；必要时降低线程数、增大 VAD 分段、或只在桌面端提供实时功能 |
-| 无 Mac 设备 | macOS 端始终无法验证与分发 | 🟡 设备与工具链已具备：Flutter 3.47.0 + Xcode 26.6 + CocoaPods 1.17.0；无签名模式编译通过，但本机尚无开发证书，带 Keychain Sharing 的签名包仍待配置 |
+| 无 Mac 设备 | macOS 端始终无法验证与分发 | 🟡 设备与工具链已具备：Flutter 3.47.0 + Xcode 26.6 + CocoaPods 1.17.0；个人使用的无签名模式编译通过，带 Keychain Sharing 的签名包仅在需要正式签名运行/发布时配置 |

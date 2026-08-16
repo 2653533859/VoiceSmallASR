@@ -14,21 +14,22 @@
 - M4 的应用内翻译工作流已完成：文件转写页从安全存储读取 DeepL API Key，显示批量进度，成功后回写译文，失败时保留原结果；译文会显示在列表并进入后续导出/视频叠加链路。
 - M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数和 DeepL API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
-- M7 macOS 无签名打包首期已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；带证书的签名发布仍待配置。
-- M7 Android 构建验证已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，未提供签名变量时使用 debug signing，仅代表可构建。
-- Android 正式签名配置已接入 `app/android/app/build.gradle.kts`：显式提供四个 `VSASR_ANDROID_*` 环境变量时使用外部 keystore，变量不完整或文件不存在会直接失败；JDK 17 与构建链路已验证，本机已用隔离的临时 keystore 构建 APK，`apksigner` v2 校验通过，当前仍没有开发者 keystore，正式发布证书产物尚未验收。
+- M7 macOS 个人使用打包已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；App Store/公证所需的开发者签名不在本项目范围内。
+- M7 Android 个人使用构建已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，未提供签名变量时使用 debug signing，APK 可用于个人安装和测试。
+- Android 可选外部签名配置已接入 `app/android/app/build.gradle.kts`：显式提供四个 `VSASR_ANDROID_*` 环境变量时使用外部 keystore，变量不完整或文件不存在会直接失败；JDK 17 与构建链路已验证，本机已用隔离的临时 keystore 构建 APK，`apksigner` v2 校验通过；个人使用不要求开发者 keystore。
 - Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；2026-08-16 重跑 7/7，粤语识别 RTF `0.027`；模拟器使用软件渲染，真机性能仍未验证。
 - M4 真实验收入口已准备：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材，`app/integration_test/deepl_acceptance_test.dart` 使用仓库外的 `--dart-define-from-file` 密钥文件验证真实 DeepL、双语 SRT 和视频字幕叠加；本机尚无有效 DeepL API Key，因此尚未执行网络验收。
 - Windows M7 构建已完成：GitHub Actions run `31912544699` 在 `windows-2022` runner 上通过 MSVC 编译 Flutter Release，并用 `scripts/build_windows_unsigned.ps1` + Inno Setup 生成未签名安装包；CI 自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，并拒绝模型文件；Release 目录约 111 MiB，安装包约 31 MiB。
 - Windows 完整模型 e2e 已验收：GitHub Actions run `31919855391` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试，粤语 wav 识别 RTF `0.064`；同一 workflow 的 Windows smoke、产物校验和 artifact 上传也通过。`.github/workflows/windows-build.yml` 的手动 `run_full_e2e=true` 会恢复模型缓存，必要时通过三源 fallback 下载并做最小字节数校验，再用 `VSASR_MODEL_DIR` 指向外部模型目录运行测试。
-- 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；当前未完成项仍是 DeepL 真实网络验收、Android 真机性能、Windows 用户桌面运行和正式签名。
-- 当前下一步是用真实网络完成英/日视频翻译验收；此外仍需补 Android 真机性能、Windows 用户桌面运行验证，并继续推进签名发布。
+- 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；当前未完成项仍是 DeepL 真实网络验收、Android 真机性能和 Windows 用户桌面运行。
+- 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
+- 当前下一步是用真实网络完成英/日视频翻译验收；此外仍需补 Android 真机性能和 Windows 用户桌面运行验证。
 
 ## 已验证结果
 
 - Python：`pytest` 105 项通过，`ruff check .` 通过。
 - Flutter：`flutter analyze` 通过，149 项单测通过。
-- macOS：无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 因本机没有开发证书而无法完成签名。
+- macOS：无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；普通 `flutter build macos --debug` 仍因本机没有开发证书而无法完成签名，但这不影响个人使用的无签名包交付。
 - M7 打包：已生成 `dist/macos/VoiceSmallASR.app`（通用二进制，约 161 MB）和 `VoiceSmallASR-unsigned.dmg`（约 64 MB），并用 `hdiutil imageinfo` 验证为 UDZO 镜像。
 - Android M7 构建：`app/build/app/outputs/flutter-apk/app-release.apk`（169 MiB，177,219,459 bytes）和 `app/build/app/outputs/bundle/release/app-release.aab`（124 MiB，129,974,495 bytes）构建成功；APK 含 arm64-v8a、armeabi-v7a、x86_64，`apksigner verify --verbose` 通过 v2 签名校验，APK/AAB 均未打入 `.onnx`、tar 或 `tokens.txt` 模型文件。
 - Windows M7 构建：run `31912544699` 的 `vsasr_app.exe`（141,312 bytes）和 `VoiceSmallASR-unsigned-setup.exe`（32,809,700 bytes）均为 x86-64 PE 文件；Release 目录约 111 MiB，包含 sherpa/ONNX、media_kit 原生 DLL，CI 自动确认未打入 `.onnx`、`.tar`、`.bz2` 或 `tokens.txt` 模型文件。
