@@ -57,6 +57,11 @@ jobs:
           path: ${{ runner.temp }}/voicesmallasr-models
           key: windows-e2e-model-${{ runner.os }}-2024-07-17-v1
 
+      - name: Install 7-Zip for Windows full model e2e
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_full_e2e == true }}
+        shell: pwsh
+        run: choco install 7zip --no-progress --yes
+
       - name: Prepare Windows full e2e model and media
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_full_e2e == true }}
         shell: pwsh

@@ -78,9 +78,26 @@ if (-not (Test-Path -LiteralPath $asrModel -PathType Leaf) -or
         Remove-Item -LiteralPath $asrDir -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $ModelRoot | Out-Null
-    & tar -xjf $archivePath -C $ModelRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "模型压缩包解压失败，退出码 $LASTEXITCODE"
+    $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
+    if ($null -ne $sevenZip) {
+        $tarPath = Join-Path $temporaryRoot "$modelName.tar"
+        if (Test-Path -LiteralPath $tarPath -PathType Leaf) {
+            Remove-Item -LiteralPath $tarPath -Force
+        }
+        & $sevenZip.Path e $archivePath "-o$temporaryRoot" -y
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $tarPath -PathType Leaf)) {
+            throw "7-Zip 解压 bzip2 模型包失败，退出码 $LASTEXITCODE"
+        }
+        & $sevenZip.Path x $tarPath "-o$ModelRoot" -y
+        if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip 解压 tar 模型包失败，退出码 $LASTEXITCODE"
+        }
+        Remove-Item -LiteralPath $tarPath -Force
+    } else {
+        & tar -xjf $archivePath -C $ModelRoot
+        if ($LASTEXITCODE -ne 0) {
+            throw "模型压缩包解压失败，退出码 $LASTEXITCODE"
+        }
     }
 }
 

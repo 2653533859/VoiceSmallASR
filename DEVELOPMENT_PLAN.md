@@ -304,7 +304,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] **Android 模拟器功能闭环** —— API 35 ARM64 模拟器通过 7 项端到端测试：模型目录、WAV、Kotlin 原生 m4a 解码、识别、视频播放/跳转/抽音轨、实时识别；2026-08-16 重跑 7/7，通过粤语识别 RTF `0.027`
 - [ ] **Android 真机不掉帧 —— 未验证**（模拟器使用软件渲染，不能替代中低端真机性能测试）
 - [x] **Windows CI 桌面 smoke** —— run `31914757787` 在 Windows runner 上通过真实 AAC 原生解码、media_kit MP4 打开/读取时长/播放；未加载 ASR 模型，因此完整识别 e2e 仍待验证
-- [ ] **Windows 完整模型 e2e —— 待执行**：`.github/workflows/windows-build.yml` 已提供手动 `run_full_e2e=true` 开关；模型准备脚本使用三源 fallback、每源有限重试、最低 256 KiB/s 低速超时、大小校验和 Actions cache，运行时通过 `VSASR_MODEL_DIR` 使用外部模型目录，避免复制进应用沙盒
+- [ ] **Windows 完整模型 e2e —— 待执行**：`.github/workflows/windows-build.yml` 已提供手动 `run_full_e2e=true` 开关；模型准备脚本使用三源 fallback、每源有限重试、最低 256 KiB/s 低速超时、大小校验、Actions cache 和 7-Zip 分层解压，运行时通过 `VSASR_MODEL_DIR` 使用外部模型目录，避免复制进应用沙盒
 
 ### M3 · 视频播放 + 字幕叠加　✅ 已完成（2026-08-16）
 
