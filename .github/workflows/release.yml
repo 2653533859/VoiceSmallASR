@@ -1,0 +1,188 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: "3.47.0"
+
+jobs:
+  android:
+    name: Android APK and AAB
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get Flutter dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build personal-use APK and AAB
+        working-directory: app
+        run: |
+          flutter build apk --release
+          flutter build appbundle --release
+          mkdir -p dist/android
+          cp build/app/outputs/apk/release/app-release.apk "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk"
+          cp build/app/outputs/bundle/release/app-release.aab "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab"
+
+      - name: Verify Android release assets
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK is not configured}}"
+          build_tools_dir="$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$build_tools_dir/apksigner" verify --verbose "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk"
+          if unzip -l "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk" | grep -Eiq '\.(onnx|tar|bz2)$|tokens\.txt'; then
+            echo "Android APK contains model files" >&2
+            exit 1
+          fi
+          test -s "dist/android/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab"
+
+      - name: Upload Android release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: voicesmallasr-release-android
+          if-no-files-found: error
+          path: app/dist/android/*
+
+  macos:
+    name: macOS unsigned app and DMG
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build personal-use macOS app and DMG
+        run: |
+          FLUTTER_BIN=flutter ./scripts/build_macos_unsigned.sh
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/macos/VoiceSmallASR.app \
+            "dist/macos/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.zip"
+          cp dist/macos/VoiceSmallASR-unsigned.dmg \
+            "dist/macos/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg"
+          hdiutil imageinfo "dist/macos/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg" >/dev/null
+
+      - name: Upload macOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: voicesmallasr-release-macos
+          if-no-files-found: error
+          path: |
+            dist/macos/VoiceSmallASR-${{ github.ref_name }}-macos-unsigned.dmg
+            dist/macos/VoiceSmallASR-${{ github.ref_name }}-macos-unsigned.zip
+
+  windows:
+    name: Windows unsigned installer
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build personal-use Windows installer
+        shell: pwsh
+        run: |
+          ./scripts/build_windows_unsigned.ps1 -Flutter flutter
+          $asset = "dist\windows\VoiceSmallASR-$env:GITHUB_REF_NAME-windows-unsigned-setup.exe"
+          Copy-Item "dist\windows\VoiceSmallASR-unsigned-setup.exe" $asset
+
+      - name: Verify Windows release asset
+        shell: pwsh
+        run: |
+          $releaseDir = "${{ github.workspace }}\app\build\windows\x64\runner\Release"
+          $exe = Join-Path $releaseDir "vsasr_app.exe"
+          $installer = "${{ github.workspace }}\dist\windows\VoiceSmallASR-${{ github.ref_name }}-windows-unsigned-setup.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "缺少 Windows 可执行文件：$exe" }
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "缺少 Windows 安装包：$installer" }
+          if ((Get-Item -LiteralPath $installer).Length -le 0) { throw "Windows 安装包为空：$installer" }
+
+      - name: Upload Windows release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: voicesmallasr-release-windows
+          if-no-files-found: error
+          path: dist/windows/VoiceSmallASR-${{ github.ref_name }}-windows-unsigned-setup.exe
+
+  release:
+    name: Create GitHub Release
+    needs: [android, macos, windows]
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: voicesmallasr-release-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Verify release asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist/release -maxdepth 1 -type f -print
+          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk"
+          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab"
+          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg"
+          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.zip"
+          test -s "dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-windows-unsigned-setup.exe"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "VoiceSmallASR $GITHUB_REF_NAME" \
+              --notes "个人使用版本：Android debug-signed APK/AAB、Windows 未签名安装包、macOS 未签名 DMG/APP 压缩包。"
+          fi
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.apk \
+            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-android.aab \
+            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.dmg \
+            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-macos-unsigned.zip \
+            dist/release/VoiceSmallASR-${GITHUB_REF_NAME}-windows-unsigned-setup.exe \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
