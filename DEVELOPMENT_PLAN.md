@@ -360,7 +360,7 @@ ffmpeg 封装包，代价是工作量约 3 倍。
 | --- | --- | --- |
 | Android | `MediaExtractor` + `MediaCodec` | `android/.../MainActivity.kt` —— 已随 release APK/AAB 编译并在 API 35 模拟器运行验证，尚未真机运行；解出 PCM 后自己混声道 + 重采样 |
 | macOS | `AVAssetReader` + `AVAssetReaderAudioMixOutput`（AVFoundation） | `macos/Runner/MainFlutterWindow.swift` —— 已无签名编译验证；混声道与重采样都由 AVFoundation 给 |
-| Windows | Media Foundation `IMFSourceReader`（`MFCreateSourceReaderFromURL`） | `windows/runner/audio_decoder.cpp` —— 已在 Windows CI 编译并通过 AAC 桌面 smoke，完整模型 e2e 尚未运行；先要 `MF_MT_AUDIO_*` = 16 kHz/单声道/float32，被拒则自己算 |
+| Windows | Media Foundation `IMFSourceReader`（`MFCreateSourceReaderFromURL`） | `windows/runner/audio_decoder.cpp` —— 已在 Windows CI 编译，并通过 AAC 桌面 smoke 与完整模型 e2e（run `31919855391`）；先要 `MF_MT_AUDIO_*` = 16 kHz/单声道/float32，被拒则自己算 |
 
 Dart 侧的契约统一为一个方法：给文件路径，返回 16 kHz float32 单声道 `Float32List`
 （与 `AsrEngine.transcribe` 的入参一致），三端各自实现，Dart 层不感知平台差异。
