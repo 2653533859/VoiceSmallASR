@@ -73,7 +73,7 @@ jobs:
         shell: pwsh
         env:
           VSASR_MODEL_DIR: '${{ runner.temp }}/voicesmallasr-models'
-        run: flutter test integration_test/e2e_test.dart -d windows
+        run: flutter test --reporter expanded integration_test/e2e_test.dart -d windows
 
       - name: Prepare Windows desktop smoke media
         shell: pwsh
