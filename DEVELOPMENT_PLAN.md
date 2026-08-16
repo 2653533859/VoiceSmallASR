@@ -343,7 +343,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 ### M7 · 打包分发
 
 - [x] Android APK / AAB（本机已构建：APK 约 169 MiB、AAB 约 124 MiB；APK 通过 v2 签名校验，未提供签名变量时使用 debug signing，仅完成构建验证）
-- [x] Android 正式签名配置（`app/android/app/build.gradle.kts` 支持显式 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD`、`VSASR_ANDROID_KEY_PASSWORD`；缺少任一变量会在配置时失败，不会静默生成 debug 签名发布包）
+- [x] Android 正式签名配置（`app/android/app/build.gradle.kts` 支持显式 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD`、`VSASR_ANDROID_KEY_PASSWORD`；缺少任一变量会在配置时失败，不会静默生成 debug 签名发布包；已用临时 keystore 构建并通过 `apksigner` v2 校验）
 - [ ] Android 正式证书产物验收 —— 仍需开发者提供 keystore 与 JDK 环境
 - [x] Windows exe + 安装包（GitHub Actions run `31912544699` 已通过；自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，Release 目录约 111 MiB，`VoiceSmallASR-unsigned-setup.exe` 约 31 MiB，未签名）
 - [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；带开发者证书的签名发布包仍待配置
