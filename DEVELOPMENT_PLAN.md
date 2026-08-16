@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Android 可选外部签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。真实翻译验收、Android 真机性能和 Windows 用户桌面运行仍待完成；商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Android 可选外部签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行；DeepL 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -173,7 +173,7 @@ VoiceSmallASR/
   - 使用 `POST /v2/translate` 和 `Authorization: DeepL-Auth-Key ...`，实现自动/显式源语言、响应顺序校验和错误脱敏
   - provider 内按 UTF-8 请求体 128 KiB 限制拆分，复用上层批量/重试流程；HTTP client 可注入，provider 本身不持久化 API Key
   - 新增 6 项无网络单测覆盖请求格式、空输入、HTTP 错误、响应格式、请求拆分和构造参数
-  - 首期服务商决策为 DeepL；真实 API Key 和真实网络验收留到后续步骤
+  - 首期服务商决策为 DeepL；真实 API Key 和真实网络验收作为可选验收，不纳入个人使用交付门禁
 
 - **API Key 安全存储基础（M6 第一项，2026-08-16）**：
   - 接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，通过平台安全存储保存 DeepL API Key，不写入代码或普通配置
@@ -323,7 +323,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 应用内翻译工作流：从安全存储读取 DeepL API Key，在文件转写页发起翻译、显示进度并回写结果；失败不写入半成品
 - [ ] 验收：英/日视频生成中英双语 SRT，导出的文件在播放器里两行都正常显示
       已准备独立手工入口 `app/integration_test/deepl_acceptance_test.dart` 和
-      `scripts/prepare_translation_acceptance_media.sh`；仍需有效 DeepL API Key 才能执行真实网络验收
+      `scripts/prepare_translation_acceptance_media.sh`；按个人使用范围主动跳过，不计入当前交付门禁
 
 ### M5 · 字幕校对编辑　✅ 首期已完成（2026-08-16）
 
@@ -617,7 +617,7 @@ flutter test integration_test/e2e_test.dart -d macos   # 7 项应全绿（含真
 # Windows 完整模型 e2e（手动触发；首次下载约 155 MB，成功后由 Actions cache 复用）
 gh workflow run windows-build.yml --ref main -f run_full_e2e=true
 
-# M4 真实 DeepL 英/日视频验收（不会进入默认测试集，密钥文件放在仓库外）
+# 可选：M4 真实 DeepL 英/日视频验收（个人使用可跳过，密钥文件放在仓库外）
 WAVS="$SUP/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs"
 bash scripts/prepare_translation_acceptance_media.sh "$WAVS" "$WAVS"
 # 外部 env 文件示例：DEEPL_API_KEY=...；可选 DEEPL_API_BASE_URL=https://api-free.deepl.com
