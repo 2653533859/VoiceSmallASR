@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027）。真实翻译验收、Android 真机性能、Windows 完整模型 e2e 和用户桌面运行仍待完成 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。真实翻译验收、Android 真机性能和 Windows 用户桌面运行仍待完成 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -228,6 +228,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 ```
 GitHub Actions windows-2022    Flutter 3.47.0 + MSVC + Inno Setup 6
 Run 31914757787                Release、桌面 smoke、产物校验与 artifact 上传均通过
+Run 31919855391                完整模型 e2e 7 项、桌面 smoke、产物校验与 artifact 上传均通过
 ```
 
 ## 4. 阶段计划
@@ -275,7 +276,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
   - [x] Android 原生实现（MediaExtractor + MediaCodec + 自己混声道与重采样，
         **已在 Android 15 API 35 ARM64 模拟器端到端运行验证；真机性能仍未验证**）
   - [x] Windows 原生实现（Media Foundation IMFSourceReader，
-        **已在 GitHub Actions windows-2022 runner 编译，并通过桌面 smoke 验证 AAC 解码；完整模型 e2e 和用户桌面运行仍未验证**）
+        **已在 GitHub Actions windows-2022 runner 编译，并通过桌面 smoke 与完整模型 e2e 验证 AAC 解码；用户桌面运行仍未验证**）
 - [x] `AsrEngine` 放入 isolate，避免长音频卡 UI；`initBindings()` 需在每个 isolate 内单独调用
       （`transcription_worker.dart`：常驻 isolate、模型只加载一次、请求串行；
       8 项测试用替身工厂跑通整条链路，不加载原生库）
@@ -303,8 +304,8 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
       麦克风那一路本身没法自动化（要真人说话），但它之后的链路与该测试完全相同
 - [x] **Android 模拟器功能闭环** —— API 35 ARM64 模拟器通过 7 项端到端测试：模型目录、WAV、Kotlin 原生 m4a 解码、识别、视频播放/跳转/抽音轨、实时识别；2026-08-16 重跑 7/7，通过粤语识别 RTF `0.027`
 - [ ] **Android 真机不掉帧 —— 未验证**（模拟器使用软件渲染，不能替代中低端真机性能测试）
-- [x] **Windows CI 桌面 smoke** —— run `31914757787` 在 Windows runner 上通过真实 AAC 原生解码、media_kit MP4 打开/读取时长/播放；未加载 ASR 模型，因此完整识别 e2e 仍待验证
-- [ ] **Windows 完整模型 e2e —— 待执行**：`.github/workflows/windows-build.yml` 已提供手动 `run_full_e2e=true` 开关；模型准备脚本使用三源 fallback、每源有限重试、最低 256 KiB/s 低速超时、大小校验、Actions cache 和 7-Zip 分层解压，运行时通过 `VSASR_MODEL_DIR` 使用外部模型目录，避免复制进应用沙盒
+- [x] **Windows CI 桌面 smoke** —— run `31914757787` 在 Windows runner 上通过真实 AAC 原生解码、media_kit MP4 打开/读取时长/播放；未加载 ASR 模型
+- [x] **Windows 完整模型 e2e** —— run `31919855391` 在 Windows runner 上通过 7 项测试：模型目录、WAV、m4a 解码、粤语 wav/m4a 识别、真实 mp4 播放/跳转/抽音轨识别、实时三句识别；粤语 wav RTF `0.064`。workflow 使用三源 fallback、有限重试、最低 256 KiB/s 低速超时、大小校验、Actions cache、7-Zip 分层解压和 `VSASR_MODEL_DIR` 外部模型目录
 
 ### M3 · 视频播放 + 字幕叠加　✅ 已完成（2026-08-16）
 
@@ -642,6 +643,6 @@ unzip -q flutter.zip -d ~/development
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
 | GitHub 模型下载在国内不通，镜像也失效 | 用户装完 App 拿不到模型，功能完全不可用 | 🟡 已降级：三源已实测可达（macOS 机器，见 §6），两端均已实现 fallback + 截断校验；剩余未知是国内网络下的实际可达性，需在国内机器复测。若届时全挂，再接 ModelScope / 国内对象存储作为第四源（需单独取址逻辑） |
-| 音频解码方案落空 | M1/M3 返工 | 🟡 已收敛：改为三端各写原生解码并已全部落地（见 §5 已决策 1），Dart 侧分发逻辑有 33 项单测兜底；macOS、Android 模拟器和 Windows CI smoke 已运行验证，Windows 完整模型 e2e 已有手动 workflow 入口但尚未执行，用户桌面差异和 Android 真机性能仍待实测 |
+| 音频解码方案落空 | M1/M3 返工 | 🟡 已收敛：改为三端各写原生解码并已全部落地（见 §5 已决策 1），Dart 侧分发逻辑有 33 项单测兜底；macOS、Android 模拟器和 Windows CI 完整模型 e2e 已运行验证，用户桌面差异和 Android 真机性能仍待实测 |
 | Android 中低端机跑 int8 SenseVoice 太慢 | 实时字幕体验不可用 | 先在真机实测 RTF；必要时降低线程数、增大 VAD 分段、或只在桌面端提供实时功能 |
 | 无 Mac 设备 | macOS 端始终无法验证与分发 | 🟡 设备与工具链已具备：Flutter 3.47.0 + Xcode 26.6 + CocoaPods 1.17.0；无签名模式编译通过，但本机尚无开发证书，带 Keychain Sharing 的签名包仍待配置 |
