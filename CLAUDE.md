@@ -58,6 +58,8 @@ pwsh -File scripts/build_windows_unsigned.ps1 -Flutter flutter
 
 # 端到端验收：真模型 + 真引擎 + 真原生解码 + 实时识别 + 真实视频播放，7 项（素材要先放进沙盒容器，见 DEVELOPMENT_PLAN §7）
 flutter test integration_test/e2e_test.dart -d macos
+# Windows 完整模型 e2e（GitHub Actions 手动触发，首次下载模型较慢）
+gh workflow run windows-build.yml --ref main -f run_full_e2e=true
 # 真实 DeepL 英/日视频验收（密钥文件必须在仓库外，素材先用 scripts/prepare_translation_acceptance_media.sh 生成）
 flutter test integration_test/deepl_acceptance_test.dart -d macos \
   --dart-define-from-file=/path/to/voicesmallasr-deepl.env

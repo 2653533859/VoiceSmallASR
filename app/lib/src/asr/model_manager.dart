@@ -81,12 +81,16 @@ class ModelManager {
   /// 模型根目录，首次调用时解析并缓存。
   ///
   /// 构造时传了 `root` 就直接用它（测试与「设置页指定模型目录」都靠这个），
-  /// 否则取应用私有目录下的 `models`。
+  /// 否则取应用私有目录下的 `models`。桌面端集成测试可用
+  /// `VSASR_MODEL_DIR` 指向 CI 准备好的外部模型目录，避免把模型复制进应用沙盒。
   Future<String> resolveRoot() async {
     final String? cached = _cachedRoot;
     if (cached != null) return cached;
     final Directory support = await getApplicationSupportDirectory();
-    final String root = p.join(support.path, 'models');
+    final String? environmentRoot = Platform.environment['VSASR_MODEL_DIR']?.trim();
+    final String root = environmentRoot == null || environmentRoot.isEmpty
+        ? p.join(support.path, 'models')
+        : environmentRoot;
     _cachedRoot = root;
     return root;
   }

@@ -5,6 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_full_e2e:
+        description: "下载/恢复模型并运行 Windows 完整模型 e2e（首次可能需要较长时间）"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -43,6 +49,26 @@ jobs:
       - name: Build Windows Release and installer
         shell: pwsh
         run: ./scripts/build_windows_unsigned.ps1 -Flutter flutter
+
+      - name: Restore Windows e2e model cache
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_full_e2e == true }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/voicesmallasr-models
+          key: windows-e2e-model-${{ runner.os }}-2024-07-17-v1
+
+      - name: Prepare Windows full e2e model and media
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_full_e2e == true }}
+        shell: pwsh
+        run: ./scripts/prepare_windows_e2e.ps1 -ModelRoot "${{ runner.temp }}\voicesmallasr-models"
+
+      - name: Run Windows full model e2e
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_full_e2e == true }}
+        working-directory: app
+        shell: pwsh
+        env:
+          VSASR_MODEL_DIR: '${{ runner.temp }}/voicesmallasr-models'
+        run: flutter test integration_test/e2e_test.dart -d windows
 
       - name: Prepare Windows desktop smoke media
         shell: pwsh
