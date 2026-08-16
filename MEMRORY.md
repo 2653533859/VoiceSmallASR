@@ -1,6 +1,6 @@
 # VoiceSmallASR 开发记忆
 
-> 更新时间：2026-08-16
+> 更新时间：2026-08-17
 
 ## 当前阶段
 
@@ -23,7 +23,7 @@
 - Windows 完整模型 e2e 已验收：GitHub Actions run `31919855391` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试，粤语 wav 识别 RTF `0.064`；同一 workflow 的 Windows smoke、产物校验和 artifact 上传也通过。`.github/workflows/windows-build.yml` 的手动 `run_full_e2e=true` 会恢复模型缓存，必要时通过三源 fallback 下载并做最小字节数校验，再用 `VSASR_MODEL_DIR` 指向外部模型目录运行测试。
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，DeepL 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
-- 三端 GitHub Release 工作流已接入 `.github/workflows/release.yml`：推送 `v*` tag 后在云端构建 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包，并自动创建/更新 GitHub Release；首个 `v1.0.0` 尚待云端验证。
+- 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31978719431` 云端构建并发布 `v1.0.0`，包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.0。
 - 当前下一步是补 Android 真机性能和 Windows 用户桌面运行验证；DeepL 真实网络验收仅在以后需要在线翻译时再执行。
 
 ## 已验证结果

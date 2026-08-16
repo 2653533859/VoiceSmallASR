@@ -260,7 +260,7 @@ macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输
 macOS 无签名包可以完成个人使用所需的编译与打包；但 `flutter_secure_storage` 的 Keychain Sharing 需要签名运行环境，因此 macOS 上要持久化 DeepL API Key 时仍需可用的签名包。
 DeepL provider 和应用内翻译流程已接入，但个人使用可不配置 API Key；真实 DeepL 验收入口为 `app/integration_test/deepl_acceptance_test.dart`，仅在以后需要验证在线翻译时使用，密钥不会写入仓库。
 Windows Release 与 Inno Setup 安装包已由 `.github/workflows/windows-build.yml` 在 Windows runner 上构建通过，CI 同时检查运行时 DLL 和模型文件排除，并通过无模型桌面 smoke 验证 AAC 解码与 MP4 播放；手动 `run_full_e2e=true` 的完整模型 e2e 已在 run `31919855391` 通过 7 项测试，用户桌面验证仍待完成。
-`.github/workflows/release.yml` 已准备好三端 GitHub Release：推送 `v*` tag 后云端生成 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包。
+`.github/workflows/release.yml` 已完成三端 GitHub Release：`v1.0.0` 已在云端生成 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包，可从 [GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.0) 下载。
 
 音频解码上两端有意不同：Python 端调系统 ffmpeg，Flutter 端 wav 走纯 Dart 直读、压缩格式与视频交给平台原生解码（macOS 用 AVFoundation，Android 用 MediaCodec，Windows 用 Media Foundation）——`ffmpeg_kit_flutter` 已弃养且从不支持 Windows。macOS 那份已编译并端到端跑通；Android 的 Kotlin 已在 API 35 ARM64 模拟器端到端验证但尚未真机运行，Windows 的 C++ 已在 MSVC CI 编译并通过桌面 smoke 与完整模型 e2e，但用户桌面运行仍未验证。
 

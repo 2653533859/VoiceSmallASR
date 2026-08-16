@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，Android 可选外部签名配置已接入，三端 GitHub Release 工作流已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能、Windows 用户桌面运行和首个三端 Release 云端验证；DeepL 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB、Windows Release/安装包和三端 GitHub Release，Android 可选外部签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行验证；DeepL 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -348,7 +348,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] Windows exe + 安装包（GitHub Actions run `31912544699` 已通过；自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，Release 目录约 111 MiB，`VoiceSmallASR-unsigned-setup.exe` 约 31 MiB，未签名）
 - [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；个人使用不要求开发者证书，App Store/公证发布另行配置
 - [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB，Windows CI 也自动拒绝 `.onnx`、`.tar`、`.bz2` 和 `tokens.txt`
-- [ ] 三端 GitHub Release —— `.github/workflows/release.yml` 监听 `v*` tag，在云端生成 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包，并上传到 GitHub Release；首个 `v1.0.0` 待云端验证
+- [x] 三端 GitHub Release —— `.github/workflows/release.yml` 已在云端完成 `v1.0.0` 发布（run `31978719431`），包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包：[GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.0)
 
 ## 5. 决策记录与待决策事项
 
