@@ -49,7 +49,7 @@
 - Windows Media Foundation 解码线程增加异常和线程创建失败兜底，确保 MethodChannel 回包。
 - 播放器异步操作在页面销毁后不再访问已销毁的状态对象；无扩展名路径判断视频时不再越界。
 - `media_kit` 集成测试先挂载真实 `Video` 完成首帧初始化，再调用播放器 `open()`；英文素材按首个有效字幕段验证，避免假设整段只有一个 cue。
-- Windows 完整 e2e 模型准备改为多源下载、低速超时、最小文件大小校验和 Actions cache；`VSASR_MODEL_DIR` 仅在显式设置时覆盖默认应用私有模型目录。
+- Windows 完整 e2e 模型准备改为多源下载、每源有限重试、低速超时、最小文件大小校验和 Actions cache；`VSASR_MODEL_DIR` 仅在显式设置时覆盖默认应用私有模型目录。
 
 ## 尚未验证的环境
 

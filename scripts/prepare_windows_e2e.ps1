@@ -48,9 +48,9 @@ function Download-ModelFile {
         }
         $url = "$baseUrl/$FileName"
         Write-Host "下载模型文件：$url"
-        & curl.exe --fail --location --retry 5 --retry-all-errors --retry-delay 5 `
-            --connect-timeout 30 --speed-limit 1024 --speed-time 60 `
-            --retry-max-time 1800 --max-time 1800 --output $Destination $url
+        & curl.exe --fail --location --retry 1 --retry-all-errors --retry-delay 5 `
+            --connect-timeout 30 --speed-limit 16384 --speed-time 60 `
+            --retry-max-time 600 --max-time 900 --output $Destination $url
         if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $Destination -PathType Leaf)) {
             $length = (Get-Item -LiteralPath $Destination).Length
             if ($length -ge $MinimumBytes) {
