@@ -153,6 +153,40 @@ void main() {
     expect(controller.result, isNotNull);
   });
 
+  testWidgets('批量翻译复用配置的 provider 并显示翻译完成状态', (WidgetTester tester) async {
+    final _FakeSecretStore secrets = _FakeSecretStore()
+      ..values[kTranslationApiKeyStorageKey] = 'test-key';
+    final AppSettingsRepository settings = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: secrets),
+    );
+    final _FakeTranslationProvider provider = _FakeTranslationProvider();
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      settings: settings,
+      translationProviderFactory: (_) => provider,
+      pickBatchFiles: () async => <String>['/tmp/one.wav', '/tmp/two.wav'],
+    );
+
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchPickFiles')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchStart')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchTranslate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('继续翻译'));
+    await tester.pumpAndSettle();
+
+    expect(provider.calls, 2);
+    expect(find.text('已翻译 2/2'), findsOneWidget);
+    expect(find.textContaining('已完成翻译'), findsNWidgets(2));
+  });
+
   testWidgets('模型准备失败时显示错误并把按钮改成重试', (WidgetTester tester) async {
     final TranscribeController controller = TranscribeController(
       models: ModelManager(root: workspace.path),

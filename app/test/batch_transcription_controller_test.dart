@@ -8,6 +8,7 @@ import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 
 import 'support/fake_asr.dart';
 
@@ -147,6 +148,79 @@ void main() {
     expect(batch.items[1].attempts, 2);
   });
 
+  test('批量翻译复用同一个 provider，单个文件失败不阻塞后续文件', () async {
+    final _RecordingDecoder decoder = _RecordingDecoder();
+    final TranscribeController transcriber = buildController(decoder);
+    final BatchTranscriptionController batch = BatchTranscriptionController(
+      transcriber: transcriber,
+    );
+    final _BatchTranslationProvider provider = _BatchTranslationProvider(
+      failOnCall: 1,
+    );
+    addTearDown(() async {
+      batch.dispose();
+      await transcriber.shutdown();
+    });
+
+    batch.enqueue(<String>['/tmp/a.wav', '/tmp/b.wav']);
+    await batch.start();
+    await batch.translateAll(provider, targetLanguage: 'zh-CN', maxRetries: 0);
+
+    expect(provider.calls, 2);
+    expect(batch.items[0].status, BatchItemStatus.translationFailed);
+    expect(batch.items[1].status, BatchItemStatus.translated);
+    expect(batch.items[1].result?.segments.single.translation, '译文：呢几个字都表达唔到');
+
+    provider.failOnCall = null;
+    batch.retryTranslation(0);
+    await batch.translateAll(provider, targetLanguage: 'zh-CN', maxRetries: 0);
+    expect(
+      batch.items.every(
+        (BatchItem item) => item.status == BatchItemStatus.translated,
+      ),
+      isTrue,
+    );
+    expect(provider.calls, 3);
+  });
+
+  test('取消批量翻译后，迟到结果不会写回译文', () async {
+    final _RecordingDecoder decoder = _RecordingDecoder();
+    final TranscribeController transcriber = buildController(decoder);
+    final BatchTranscriptionController batch = BatchTranscriptionController(
+      transcriber: transcriber,
+    );
+    final Completer<List<String>> response = Completer<List<String>>();
+    final _BatchTranslationProvider provider = _BatchTranslationProvider(
+      response: response,
+    );
+    bool cancelRequested = false;
+    batch.addListener(() {
+      if (!cancelRequested &&
+          batch.currentItem?.status == BatchItemStatus.translating) {
+        cancelRequested = true;
+        unawaited(batch.cancel());
+      }
+    });
+    addTearDown(() async {
+      batch.dispose();
+      await transcriber.shutdown();
+    });
+
+    batch.enqueue(<String>['/tmp/a.wav']);
+    await batch.start();
+    final Future<void> translating = batch.translateAll(
+      provider,
+      targetLanguage: 'zh-CN',
+      maxRetries: 0,
+    );
+    response.complete(<String>['迟到译文']);
+    await translating;
+
+    expect(cancelRequested, isTrue);
+    expect(batch.items.single.status, BatchItemStatus.completed);
+    expect(batch.items.single.result?.segments.single.translation, isNull);
+  });
+
   test('取消会标记当前和后续条目，迟到结果不会写入条目', () async {
     final _RecordingDecoder decoder = _RecordingDecoder();
     final TranscribeController transcriber = buildController(decoder);
@@ -201,5 +275,26 @@ class _FailOnceDecoder extends _RecordingDecoder {
       throw AudioDecodeException('模拟解码失败', path: path);
     }
     return Float32List(kSampleRate);
+  }
+}
+
+class _BatchTranslationProvider implements TranslationProvider {
+  _BatchTranslationProvider({this.failOnCall, this.response});
+
+  int? failOnCall;
+  final Completer<List<String>>? response;
+  int calls = 0;
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) async {
+    calls++;
+    final Completer<List<String>>? pending = response;
+    if (pending != null) return pending.future;
+    if (failOnCall == calls) throw StateError('模拟翻译失败');
+    return texts.map((String text) => '译文：$text').toList();
   }
 }

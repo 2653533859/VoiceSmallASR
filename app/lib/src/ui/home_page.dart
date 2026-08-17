@@ -400,8 +400,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _openBatch() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (BuildContext context) =>
-            BatchPage(controller: _batch, pickFiles: _pickBatchFiles),
+        builder: (BuildContext context) => BatchPage(
+          controller: _batch,
+          pickFiles: _pickBatchFiles,
+          onTranslate: _translateBatch,
+        ),
       ),
     );
   }
@@ -734,6 +737,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } on Object catch (error) {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text('翻译失败：$error')));
+    }
+  }
+
+  Future<void> _translateBatch() async {
+    if (_batch.running || !_batch.hasTranslatableItems) return;
+    final AppSettingsRepository repository = _settingsRepository;
+    final TranslationApiSettings settings = await repository
+        .loadTranslationApiSettings();
+    if (!mounted) return;
+    if (!_translationDisclosureAccepted) {
+      final bool confirmed = await confirmThirdPartyTranslation(context);
+      if (!confirmed || !mounted) return;
+      _translationDisclosureAccepted = true;
+    }
+
+    final TranslationProvider? provider;
+    final Future<TranslationProvider?> Function()? resolver =
+        widget.translationProviderResolver;
+    if (resolver != null) {
+      provider = await resolver();
+    } else {
+      final String? apiKey = await repository.translationSecrets.readApiKey();
+      if (apiKey == null) {
+        throw StateError('请先在设置中保存第三方翻译 API Key');
+      }
+      provider =
+          widget.translationProviderFactory?.call(apiKey) ??
+          ApiTranslationProvider(
+            apiKey: apiKey,
+            endpoint: settings.endpoint,
+            model: settings.model,
+          );
+    }
+    if (provider == null) {
+      throw StateError('请先在设置中配置可用的第三方翻译服务');
+    }
+    try {
+      await _batch.translateAll(
+        provider,
+        targetLanguage: settings.targetLanguage,
+      );
+    } finally {
+      if (provider is ClosableTranslationProvider) provider.close();
     }
   }
 

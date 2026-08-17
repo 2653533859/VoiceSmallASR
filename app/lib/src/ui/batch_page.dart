@@ -1,4 +1,4 @@
-/// 批量文件处理页面：选择队列、顺序转写、暂停、取消和失败重试。
+/// 批量文件处理页面：选择队列、顺序转写/翻译、暂停、取消和失败重试。
 library;
 
 import 'dart:async';
@@ -12,16 +12,20 @@ class BatchPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.pickFiles,
+    this.onTranslate,
   });
 
   final BatchTranscriptionController controller;
   final PickBatchFiles pickFiles;
+  final Future<void> Function()? onTranslate;
 
   @override
   State<BatchPage> createState() => _BatchPageState();
 }
 
 class _BatchPageState extends State<BatchPage> {
+  bool _translationStarting = false;
+
   Future<void> _pickFiles() async {
     try {
       final List<String> paths = await widget.pickFiles();
@@ -53,6 +57,21 @@ class _BatchPageState extends State<BatchPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('取消批量处理失败：$error')));
+    }
+  }
+
+  Future<void> _translate() async {
+    final Future<void> Function()? translate = widget.onTranslate;
+    if (translate == null || _translationStarting) return;
+    setState(() => _translationStarting = true);
+    try {
+      await translate();
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('批量翻译失败：$error')));
+    } finally {
+      if (mounted) setState(() => _translationStarting = false);
     }
   }
 
@@ -90,7 +109,9 @@ class _BatchPageState extends State<BatchPage> {
                     ),
                     OutlinedButton.icon(
                       key: const Key('batchPause'),
-                      onPressed: batch.running ? batch.pause : null,
+                      onPressed: batch.running && !batch.translating
+                          ? batch.pause
+                          : null,
                       icon: const Icon(Icons.pause),
                       label: const Text('暂停'),
                     ),
@@ -100,7 +121,20 @@ class _BatchPageState extends State<BatchPage> {
                       icon: const Icon(Icons.stop_circle_outlined),
                       label: const Text('取消'),
                     ),
+                    OutlinedButton.icon(
+                      key: const Key('batchTranslate'),
+                      onPressed:
+                          batch.running ||
+                              !batch.hasTranslatableItems ||
+                              widget.onTranslate == null ||
+                              _translationStarting
+                          ? null
+                          : _translate,
+                      icon: const Icon(Icons.translate),
+                      label: const Text('批量翻译'),
+                    ),
                     Text('已完成 ${batch.completedCount}/${batch.items.length}'),
+                    Text('已翻译 ${batch.translatedCount}/${batch.items.length}'),
                   ],
                 ),
               ),
@@ -120,6 +154,12 @@ class _BatchPageState extends State<BatchPage> {
                                         BatchItemStatus.failed &&
                                     !batch.running
                                 ? () => unawaited(_retry(index))
+                                : batch.items[index].status ==
+                                          BatchItemStatus.translationFailed &&
+                                      !batch.running &&
+                                      widget.onTranslate != null &&
+                                      !_translationStarting
+                                ? () => unawaited(_retryTranslation(index))
                                 : null,
                           );
                         },
@@ -139,6 +179,17 @@ class _BatchPageState extends State<BatchPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('重试失败：$error')));
+    }
+  }
+
+  Future<void> _retryTranslation(int index) async {
+    try {
+      widget.controller.retryTranslation(index);
+      await _translate();
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('重试翻译失败：$error')));
     }
   }
 }
@@ -162,7 +213,9 @@ class _BatchItemTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(detail),
-            if (progress != null && item.status == BatchItemStatus.processing)
+            if (progress != null &&
+                (item.status == BatchItemStatus.processing ||
+                    item.status == BatchItemStatus.translating))
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: LinearProgressIndicator(value: progress),

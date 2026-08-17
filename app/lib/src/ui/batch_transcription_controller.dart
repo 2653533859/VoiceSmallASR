@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 
 /// 批量条目的生命周期。
 enum BatchItemStatus {
@@ -13,7 +14,10 @@ enum BatchItemStatus {
   processing,
   paused,
   completed,
+  translating,
+  translated,
   failed,
+  translationFailed,
   cancelled,
 }
 
@@ -37,7 +41,9 @@ class BatchItem {
 
   bool get finished =>
       status == BatchItemStatus.completed ||
+      status == BatchItemStatus.translated ||
       status == BatchItemStatus.failed ||
+      status == BatchItemStatus.translationFailed ||
       status == BatchItemStatus.cancelled;
 
   String get statusLabel => switch (status) {
@@ -45,7 +51,10 @@ class BatchItem {
     BatchItemStatus.processing => '处理中',
     BatchItemStatus.paused => '已暂停',
     BatchItemStatus.completed => '已完成',
+    BatchItemStatus.translating => '翻译中',
+    BatchItemStatus.translated => '已完成翻译',
     BatchItemStatus.failed => '失败',
+    BatchItemStatus.translationFailed => '翻译失败',
     BatchItemStatus.cancelled => '已取消',
   };
 
@@ -75,8 +84,7 @@ typedef PickBatchFiles = Future<List<String>> Function();
 
 /// 顺序处理多个文件，复用主控制器中已经加载的识别模型。
 ///
-/// 当前阶段只负责批量识别。翻译、导出和缓存会在队列状态稳定后接入，避免
-/// 在单文件结果尚未可靠落地时产生半成品文件。
+/// 先顺序识别文件，再用同一个 provider 顺序翻译已完成的结果。
 class BatchTranscriptionController extends ChangeNotifier {
   BatchTranscriptionController({required this.transcriber}) {
     transcriber.addListener(_onTranscriberChanged);
@@ -85,6 +93,7 @@ class BatchTranscriptionController extends ChangeNotifier {
   final TranscribeController transcriber;
   final List<BatchItem> _items = <BatchItem>[];
   bool _running = false;
+  bool _translating = false;
   bool _paused = false;
   bool _pauseRequested = false;
   bool _cancelRequested = false;
@@ -95,6 +104,8 @@ class BatchTranscriptionController extends ChangeNotifier {
   List<BatchItem> get items => List<BatchItem>.unmodifiable(_items);
 
   bool get running => _running;
+
+  bool get translating => _translating;
 
   bool get paused => _paused;
 
@@ -109,8 +120,22 @@ class BatchTranscriptionController extends ChangeNotifier {
   bool get hasQueuedItems =>
       _items.any((BatchItem item) => item.status == BatchItemStatus.queued);
 
+  bool get hasTranslatableItems => _items.any(
+    (BatchItem item) =>
+        item.status == BatchItemStatus.completed ||
+        item.status == BatchItemStatus.translationFailed,
+  );
+
   int get completedCount => _items
-      .where((BatchItem item) => item.status == BatchItemStatus.completed)
+      .where(
+        (BatchItem item) =>
+            item.status == BatchItemStatus.completed ||
+            item.status == BatchItemStatus.translated,
+      )
+      .length;
+
+  int get translatedCount => _items
+      .where((BatchItem item) => item.status == BatchItemStatus.translated)
       .length;
 
   /// 追加文件并去除空路径和重复项。
@@ -149,9 +174,61 @@ class BatchTranscriptionController extends ChangeNotifier {
     return future;
   }
 
+  /// 顺序翻译已经完成识别的文件，并在整个队列中复用同一个 provider。
+  ///
+  /// provider 的创建和释放由调用方负责；这样 API provider 内部的 HTTP client
+  /// 可以跨文件复用连接池，同时不会把 API Key 或 provider 生命周期塞进队列。
+  Future<void> translateAll(
+    TranslationProvider provider, {
+    required String targetLanguage,
+    int batchSize = 20,
+    int maxRetries = 2,
+    Duration retryDelay = const Duration(milliseconds: 250),
+  }) {
+    if (_running || _paused) {
+      return Future<void>.error(StateError('批量处理进行中，请稍后再翻译'));
+    }
+    if (targetLanguage.trim().isEmpty) {
+      return Future<void>.error(
+        ArgumentError.value(targetLanguage, 'targetLanguage', '目标语言不能为空'),
+      );
+    }
+    if (batchSize < 1) {
+      return Future<void>.error(
+        ArgumentError.value(batchSize, 'batchSize', '必须 >= 1'),
+      );
+    }
+    if (maxRetries < 0) {
+      return Future<void>.error(
+        ArgumentError.value(maxRetries, 'maxRetries', '不能为负'),
+      );
+    }
+    if (retryDelay.isNegative) {
+      return Future<void>.error(
+        ArgumentError.value(retryDelay, 'retryDelay', '不能为负'),
+      );
+    }
+    if (!hasTranslatableItems) return Future<void>.value();
+
+    _running = true;
+    _translating = true;
+    _cancelRequested = false;
+    _currentIndex = null;
+    _notify();
+    final Future<void> future = _runTranslationQueue(
+      provider,
+      targetLanguage: targetLanguage,
+      batchSize: batchSize,
+      maxRetries: maxRetries,
+      retryDelay: retryDelay,
+    );
+    _runFuture = future;
+    return future;
+  }
+
   /// 请求在当前文件完成后暂停，避免中断并留下不可用的局部结果。
   void pause() {
-    if (!_running) return;
+    if (!_running || _translating) return;
     _pauseRequested = true;
     _notify();
   }
@@ -164,9 +241,15 @@ class BatchTranscriptionController extends ChangeNotifier {
     if (!_running && !_paused) return;
     _cancelRequested = true;
     _pauseRequested = false;
-    _markWaiting(BatchItemStatus.cancelled);
+    if (_translating) {
+      // 翻译请求本身由 provider 控制，取消只阻止当前请求完成后写回，
+      // 并保留尚未翻译的识别结果，用户可以再次点击批量翻译继续。
+    } else {
+      _markWaiting(BatchItemStatus.cancelled);
+    }
+    if (_paused && !_running) _paused = false;
     _notify();
-    final Future<void> close = transcriber.busy
+    final Future<void> close = !_translating && transcriber.busy
         ? transcriber.cancelCurrentTask()
         : Future<void>.value();
     final Future<void>? run = _runFuture;
@@ -191,6 +274,24 @@ class BatchTranscriptionController extends ChangeNotifier {
     );
     _notify();
     return start();
+  }
+
+  /// 将翻译失败的条目标记为待翻译；实际请求由页面在确认 provider 后发起。
+  void retryTranslation(int index) {
+    if (index < 0 || index >= _items.length) {
+      throw RangeError.index(index, _items);
+    }
+    final BatchItem item = _items[index];
+    if (item.status != BatchItemStatus.translationFailed) {
+      throw StateError('只有翻译失败的批量条目可以重试');
+    }
+    if (_running) throw StateError('批量处理进行中，暂时不能重试');
+    _items[index] = item.copyWith(
+      status: BatchItemStatus.completed,
+      clearProgress: true,
+      clearError: true,
+    );
+    _notify();
   }
 
   Future<void> _runQueue() async {
@@ -263,7 +364,104 @@ class BatchTranscriptionController extends ChangeNotifier {
     } finally {
       _currentIndex = null;
       _running = false;
+      _translating = false;
       _runFuture = null;
+      _cancelRequested = false;
+      _notify();
+    }
+  }
+
+  Future<void> _runTranslationQueue(
+    TranslationProvider provider, {
+    required String targetLanguage,
+    required int batchSize,
+    required int maxRetries,
+    required Duration retryDelay,
+  }) async {
+    final Set<int> attempted = <int>{};
+    try {
+      while (!_cancelRequested) {
+        final int? next = _nextTranslatableIndex(attempted);
+        if (next == null) return;
+        attempted.add(next);
+        _currentIndex = next;
+        final BatchItem item = _items[next];
+        final TranscriptionResult? source = item.result;
+        if (source == null) {
+          _items[next] = item.copyWith(
+            status: BatchItemStatus.translationFailed,
+            clearProgress: true,
+            errorText: '缺少可翻译的识别结果',
+          );
+          _notify();
+          continue;
+        }
+        _items[next] = item.copyWith(
+          status: BatchItemStatus.translating,
+          progress: 0,
+          clearError: true,
+        );
+        _notify();
+        try {
+          final TranscriptionResult translated = await translateResult(
+            source,
+            provider,
+            to: targetLanguage,
+            batchSize: batchSize,
+            maxRetries: maxRetries,
+            retryDelay: retryDelay,
+            onProgress: (int done, int total) {
+              if (_cancelRequested ||
+                  !_translating ||
+                  _currentIndex != next ||
+                  _items[next].status != BatchItemStatus.translating) {
+                return;
+              }
+              _items[next] = _items[next].copyWith(
+                progress: total > 0 ? done / total : 1,
+              );
+              _notify();
+            },
+          );
+          if (_cancelRequested) {
+            _items[next] = _items[next].copyWith(
+              status: BatchItemStatus.completed,
+              clearProgress: true,
+              clearError: true,
+            );
+            _notify();
+            return;
+          }
+          _items[next] = _items[next].copyWith(
+            status: BatchItemStatus.translated,
+            progress: 1,
+            result: translated,
+            clearError: true,
+          );
+        } on Object catch (error) {
+          if (_cancelRequested) {
+            _items[next] = _items[next].copyWith(
+              status: BatchItemStatus.completed,
+              clearProgress: true,
+              clearError: true,
+            );
+            _notify();
+            return;
+          }
+          _items[next] = _items[next].copyWith(
+            status: BatchItemStatus.translationFailed,
+            clearProgress: true,
+            errorText: _humanize(error),
+          );
+        }
+        _notify();
+      }
+    } finally {
+      _currentIndex = null;
+      _running = false;
+      _translating = false;
+      _runFuture = null;
+      _cancelRequested = false;
       _notify();
     }
   }
@@ -271,6 +469,18 @@ class BatchTranscriptionController extends ChangeNotifier {
   int? _nextQueuedIndex() {
     for (int i = 0; i < _items.length; i++) {
       if (_items[i].status == BatchItemStatus.queued) return i;
+    }
+    return null;
+  }
+
+  int? _nextTranslatableIndex(Set<int> attempted) {
+    for (int i = 0; i < _items.length; i++) {
+      if (attempted.contains(i)) continue;
+      final BatchItemStatus status = _items[i].status;
+      if (status == BatchItemStatus.completed ||
+          status == BatchItemStatus.translationFailed) {
+        return i;
+      }
     }
     return null;
   }
@@ -305,6 +515,11 @@ class BatchTranscriptionController extends ChangeNotifier {
 
   void _notify() {
     if (!_disposed) notifyListeners();
+  }
+
+  String _humanize(Object error) {
+    final String raw = error is StateError ? error.message : '$error';
+    return raw.replaceFirst(RegExp(r'^(Bad state: |Exception: )+'), '');
   }
 
   @override
