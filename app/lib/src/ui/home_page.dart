@@ -550,6 +550,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           pickFiles: _pickBatchFiles,
           onTranslate: _translateBatch,
           onExport: _exportBatch,
+          onDiagnostics: _showBatchPerformanceReport,
         ),
       ),
     );
@@ -853,6 +854,88 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('导出诊断报告失败：$error')));
+    }
+  }
+
+  Future<void> _showBatchPerformanceReport() async {
+    final BatchPerformanceReport? report = _batch.performanceReport;
+    if (report == null || !mounted) return;
+    final String? action = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('批量性能汇总'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(child: SelectableText(report.toText())),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+          FilledButton(
+            key: const Key('exportBatchPerformanceReport'),
+            onPressed: () => Navigator.of(context).pop('save'),
+            child: const Text('导出 JSON'),
+          ),
+        ],
+      ),
+    );
+    if (action != 'save' || !mounted) return;
+    try {
+      final String? saved = await _saveFile(
+        'batch.performance.json',
+        report.toJsonString(),
+        dialogTitle: '导出批量性能汇总',
+      );
+      if (!mounted || saved == null) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('批量性能汇总已导出到 $saved')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导出批量性能汇总失败：$error')));
+    }
+  }
+
+  Future<void> _showLivePerformanceReport() async {
+    final LivePerformanceReport? report = widget.live?.performanceReport;
+    if (report == null || !mounted) return;
+    final String? action = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('实时性能报告'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(child: SelectableText(report.toText())),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+          FilledButton(
+            key: const Key('exportLivePerformanceReport'),
+            onPressed: () => Navigator.of(context).pop('save'),
+            child: const Text('导出 JSON'),
+          ),
+        ],
+      ),
+    );
+    if (action != 'save' || !mounted) return;
+    try {
+      final String? saved = await _saveFile(
+        'live.performance.json',
+        report.toJsonString(),
+        dialogTitle: '导出实时性能报告',
+      );
+      if (!mounted || saved == null) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('实时性能报告已导出到 $saved')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导出实时性能报告失败：$error')));
     }
   }
 
@@ -1221,6 +1304,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 : _LiveView(
                     controller: live,
                     onExport: _exportLive,
+                    onDiagnostics: _showLivePerformanceReport,
                     onTranslationChanged: (bool enabled) {
                       unawaited(_setLiveTranslation(enabled));
                     },
@@ -1579,11 +1663,13 @@ class _LiveView extends StatelessWidget {
   const _LiveView({
     required this.controller,
     required this.onExport,
+    required this.onDiagnostics,
     required this.onTranslationChanged,
   });
 
   final LiveController controller;
   final VoidCallback onExport;
+  final VoidCallback onDiagnostics;
   final ValueChanged<bool> onTranslationChanged;
 
   @override
@@ -1626,6 +1712,13 @@ class _LiveView extends StatelessWidget {
                 icon: const Icon(Icons.clear_all),
                 label: const Text('清空'),
               ),
+              if (controller.performanceReport != null)
+                OutlinedButton.icon(
+                  key: const Key('livePerformanceDiagnostics'),
+                  onPressed: controller.busy ? null : onDiagnostics,
+                  icon: const Icon(Icons.speed_outlined),
+                  label: const Text('性能诊断'),
+                ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[

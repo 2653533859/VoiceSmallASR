@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
@@ -169,6 +170,11 @@ class BatchTranscriptionController extends ChangeNotifier {
   bool _disposed = false;
   int? _currentIndex;
   Future<void>? _runFuture;
+  final Map<String, PerformanceReport> _performanceReports =
+      <String, PerformanceReport>{};
+  Duration? _modelPreparationElapsed;
+  DateTime? _performanceGeneratedAt;
+  bool _hasRun = false;
 
   List<BatchItem> get items => List<BatchItem>.unmodifiable(_items);
 
@@ -179,6 +185,30 @@ class BatchTranscriptionController extends ChangeNotifier {
   bool get paused => _paused;
 
   int? get currentIndex => _currentIndex;
+
+  /// 最近一次批量识别的聚合性能报告；尚未运行队列时为 null。
+  BatchPerformanceReport? get performanceReport {
+    if (!_hasRun) return null;
+    final int failedCount = _items
+        .where(
+          (BatchItem item) =>
+              item.status == BatchItemStatus.failed ||
+              item.status == BatchItemStatus.translationFailed,
+        )
+        .length;
+    final int cancelledCount = _items
+        .where((BatchItem item) => item.status == BatchItemStatus.cancelled)
+        .length;
+    return BatchPerformanceReport(
+      generatedAt: _performanceGeneratedAt ??= DateTime.now(),
+      totalCount: _items.length,
+      completedCount: completedCount,
+      failedCount: failedCount,
+      cancelledCount: cancelledCount,
+      modelPreparationElapsed: _modelPreparationElapsed,
+      reports: _performanceReports.values,
+    );
+  }
 
   BatchItem? get currentItem {
     final int? index = _currentIndex;
@@ -217,6 +247,7 @@ class BatchTranscriptionController extends ChangeNotifier {
   /// 追加文件并去除空路径和重复项。
   void enqueue(Iterable<String> paths) {
     if (_running) throw StateError('批量处理进行中，暂时不能添加文件');
+    final int initialCount = _items.length;
     final Set<String> existing = _items
         .map((BatchItem item) => item.path)
         .toSet();
@@ -225,7 +256,13 @@ class BatchTranscriptionController extends ChangeNotifier {
       if (path.isEmpty || !existing.add(path)) continue;
       _items.add(BatchItem(path: path));
     }
-    if (paths.isNotEmpty) _notify();
+    if (_items.length != initialCount) {
+      _hasRun = false;
+      _performanceReports.clear();
+      _modelPreparationElapsed = null;
+      _performanceGeneratedAt = null;
+      _notify();
+    }
   }
 
   /// 开始或继续队列；同一时间只允许一个运行循环。
@@ -241,6 +278,7 @@ class BatchTranscriptionController extends ChangeNotifier {
       }
     }
     _running = true;
+    _hasRun = true;
     _paused = false;
     _pauseRequested = false;
     _cancelRequested = false;
@@ -350,6 +388,7 @@ class BatchTranscriptionController extends ChangeNotifier {
       clearResult: true,
       clearError: true,
     );
+    _performanceReports.remove(item.path);
     _notify();
     return start();
   }
@@ -380,6 +419,10 @@ class BatchTranscriptionController extends ChangeNotifier {
     if (_items.isEmpty) return;
     _items.clear();
     _currentIndex = null;
+    _hasRun = false;
+    _performanceReports.clear();
+    _modelPreparationElapsed = null;
+    _performanceGeneratedAt = null;
     _notify();
   }
 
@@ -398,6 +441,10 @@ class BatchTranscriptionController extends ChangeNotifier {
     _items
       ..clear()
       ..addAll(normalized);
+    _hasRun = false;
+    _performanceReports.clear();
+    _modelPreparationElapsed = null;
+    _performanceGeneratedAt = null;
     _notify();
   }
 
@@ -432,7 +479,9 @@ class BatchTranscriptionController extends ChangeNotifier {
   Future<void> _runQueue() async {
     try {
       // 先准备模型，使取消发生在模型准备阶段时也能在这里安全收尾。
+      final Stopwatch preparationWatch = Stopwatch()..start();
       await transcriber.prepare();
+      _modelPreparationElapsed ??= preparationWatch.elapsed;
       if (_cancelRequested) {
         await transcriber.cancelCurrentTask();
         _markWaiting(BatchItemStatus.cancelled);
@@ -480,6 +529,7 @@ class BatchTranscriptionController extends ChangeNotifier {
         if (result == null ||
             error != null ||
             transcriber.filePath != item.path) {
+          _performanceReports.remove(item.path);
           _items[next] = _items[next].copyWith(
             status: BatchItemStatus.failed,
             clearProgress: true,
@@ -487,6 +537,8 @@ class BatchTranscriptionController extends ChangeNotifier {
             clearResult: true,
           );
         } else {
+          final PerformanceReport? report = transcriber.performanceReport;
+          if (report != null) _performanceReports[item.path] = report;
           _items[next] = _items[next].copyWith(
             status: BatchItemStatus.completed,
             progress: 1,

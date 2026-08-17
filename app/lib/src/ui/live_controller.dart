@@ -6,12 +6,15 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/asr_engine.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
+import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 
@@ -82,6 +85,9 @@ class LiveController extends ChangeNotifier {
   String? _errorText;
   bool _disposed = false;
   bool _translationEnabled = false;
+  Stopwatch? _performanceWatch;
+  int _audioSamples = 0;
+  LivePerformanceReport? _performanceReport;
 
   LiveStage get stage => _stage;
 
@@ -97,6 +103,9 @@ class LiveController extends ChangeNotifier {
   Segment? get partial => _partial;
 
   String? get errorText => _errorText;
+
+  /// 最近一次成功收尾的实时字幕性能报告；正在录音或尚未录音时为 null。
+  LivePerformanceReport? get performanceReport => _performanceReport;
 
   /// 是否在定稿字幕后自动请求第三方翻译 API。
   bool get translationEnabled => _translationEnabled;
@@ -144,6 +153,8 @@ class LiveController extends ChangeNotifier {
   Future<void> start() async {
     if (_stage != LiveStage.idle) return;
     _resetTranslationProvider();
+    _performanceReport = null;
+    _audioSamples = 0;
     _stage = LiveStage.starting;
     _errorText = null;
     notifyListeners();
@@ -159,9 +170,13 @@ class LiveController extends ChangeNotifier {
       // 先开会话再开设备：反过来的话，最早的几块音频会没人接。
       final Stream<Float32List> audio = await _mic.start();
       _audio = audio.listen(
-        (Float32List chunk) => _session?.accept(chunk),
+        (Float32List chunk) {
+          _audioSamples += chunk.length;
+          _session?.accept(chunk);
+        },
         onError: _onStreamError,
       );
+      _performanceWatch = Stopwatch()..start();
       _stage = LiveStage.recording;
     } on Object catch (error) {
       _errorText = _humanize(error);
@@ -169,6 +184,9 @@ class LiveController extends ChangeNotifier {
       _translationGeneration++;
       await _awaitTranslationQueue();
       _closeTranslationProvider();
+      _performanceWatch = null;
+      _audioSamples = 0;
+      _performanceReport = null;
       _stage = LiveStage.idle;
     }
     notifyListeners();
@@ -185,10 +203,24 @@ class LiveController extends ChangeNotifier {
       _errorText = _humanize(error);
     }
     _partial = null;
+    final Stopwatch? performanceWatch = _performanceWatch;
+    performanceWatch?.stop();
+    if (performanceWatch != null) {
+      _performanceReport = LivePerformanceReport(
+        generatedAt: DateTime.now(),
+        platform: Platform.operatingSystem,
+        language: languageOf(),
+        audioDuration: _audioSamples / kSampleRate,
+        sampleCount: _audioSamples,
+        segmentCount: _finals.length,
+        elapsed: performanceWatch.elapsed,
+      );
+    }
     // 使尚未开始的排队请求失效；当前正在进行的请求最多只需等待一次超时。
     _translationGeneration++;
     await _awaitTranslationQueue();
     _closeTranslationProvider();
+    _performanceWatch = null;
     _stage = LiveStage.idle;
     notifyListeners();
   }
@@ -199,6 +231,9 @@ class LiveController extends ChangeNotifier {
     _finals.clear();
     _partial = null;
     _errorText = null;
+    _performanceReport = null;
+    _performanceWatch = null;
+    _audioSamples = 0;
     _retryingTranslations.clear();
     _failedTranslations.clear();
     notifyListeners();
@@ -355,10 +390,16 @@ class LiveController extends ChangeNotifier {
 
   /// 显式收尾。`dispose()` 是同步的，测试与退出流程用这个。
   Future<void> shutdown() async {
+    final bool wasActive = _stage != LiveStage.idle;
     await _teardown();
     _translationGeneration++;
     await _awaitTranslationQueue();
     _closeTranslationProvider();
+    if (wasActive) {
+      _performanceWatch = null;
+      _audioSamples = 0;
+      _performanceReport = null;
+    }
     _stage = LiveStage.idle;
   }
 

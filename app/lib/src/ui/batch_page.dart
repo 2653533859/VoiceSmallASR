@@ -15,12 +15,14 @@ class BatchPage extends StatefulWidget {
     required this.pickFiles,
     this.onTranslate,
     this.onExport,
+    this.onDiagnostics,
   });
 
   final BatchTranscriptionController controller;
   final PickBatchFiles pickFiles;
   final Future<void> Function()? onTranslate;
   final Future<void> Function(String format)? onExport;
+  final Future<void> Function()? onDiagnostics;
 
   @override
   State<BatchPage> createState() => _BatchPageState();
@@ -149,6 +151,15 @@ class _BatchPageState extends State<BatchPage> {
                       icon: const Icon(Icons.save_alt),
                       label: const Text('批量导出'),
                     ),
+                    if (batch.performanceReport != null)
+                      OutlinedButton.icon(
+                        key: const Key('batchPerformanceDiagnostics'),
+                        onPressed: batch.running || widget.onDiagnostics == null
+                            ? null
+                            : widget.onDiagnostics,
+                        icon: const Icon(Icons.speed_outlined),
+                        label: const Text('性能诊断'),
+                      ),
                     Text('已完成 ${batch.completedCount}/${batch.items.length}'),
                     Text('已翻译 ${batch.translatedCount}/${batch.items.length}'),
                   ],

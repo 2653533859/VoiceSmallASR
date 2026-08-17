@@ -218,6 +218,14 @@ void main() {
       find.textContaining('已导出到 /Users/me/Desktop/live.srt'),
       findsOneWidget,
     );
+
+    await tester.tap(find.byKey(const Key('livePerformanceDiagnostics')));
+    await pumpUi(tester);
+    await tester.tap(find.byKey(const Key('exportLivePerformanceReport')));
+    await pumpUi(tester);
+    expect(saved, hasLength(2));
+    expect(saved.last.$1, 'live.performance.json');
+    expect(saved.last.$2, contains('sample_count'));
   });
 
   testWidgets('清空把列表和状态一起收掉', (WidgetTester tester) async {

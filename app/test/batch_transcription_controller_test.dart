@@ -59,6 +59,13 @@ void main() {
     ]);
     expect(batch.completedCount, 2);
     expect(batch.running, isFalse);
+    expect(batch.performanceReport?.totalCount, 2);
+    expect(batch.performanceReport?.completedCount, 2);
+    expect(batch.performanceReport?.reports, hasLength(2));
+    expect(
+      batch.performanceReport?.toJsonString(),
+      contains('transcription_elapsed_ms'),
+    );
   });
 
   test('恢复队列会去重，并把处理中和翻译中条目降级为可继续状态', () async {

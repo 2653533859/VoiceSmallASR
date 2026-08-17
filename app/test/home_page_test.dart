@@ -159,6 +159,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('已完成 2/2'), findsOneWidget);
     expect(controller.result, isNotNull);
+    await tester.tap(find.byKey(const Key('batchPerformanceDiagnostics')));
+    await tester.pumpAndSettle();
+    expect(find.text('批量性能汇总'), findsOneWidget);
+    expect(find.textContaining('RTF：'), findsOneWidget);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('批量翻译复用配置的 provider 并显示翻译完成状态', (WidgetTester tester) async {

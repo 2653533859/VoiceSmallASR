@@ -4,6 +4,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/asr_engine.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
@@ -171,6 +172,7 @@ void main() {
     addTearDown(f.dispose);
     await f.live.start();
 
+    f.mic.push(Float32List(kSampleRate));
     f.session.emit(const Segment(text: '第一句。', start: 0.0, end: 1.0, index: 0));
     // 停录时 flush 补出来的尾句 —— 往往正是用户最后说的那句话
     f.session.tail = const Segment(
@@ -188,6 +190,10 @@ void main() {
     expect(f.live.stage, LiveStage.idle);
     expect(f.live.finals.map((Segment s) => s.text), <String>['第一句。', '最后一句。']);
     expect(f.live.statusText, '已停止　共 2 句');
+    expect(f.live.performanceReport?.sampleCount, kSampleRate);
+    expect(f.live.performanceReport?.audioDuration, closeTo(1.0, 1e-9));
+    expect(f.live.performanceReport?.segmentCount, 2);
+    expect(f.live.performanceReport?.toJsonString(), contains('sample_count'));
   });
 
   test('停止时清掉没定稿的局部结果，避免半句留在屏幕上', () async {
@@ -295,9 +301,11 @@ void main() {
     expect(f.live.finals, hasLength(1));
 
     await f.live.stop();
+    expect(f.live.performanceReport, isNotNull);
     f.live.clear();
     expect(f.live.finals, isEmpty);
     expect(f.live.hasResult, isFalse);
+    expect(f.live.performanceReport, isNull);
     expect(f.live.statusText, '');
   });
 
