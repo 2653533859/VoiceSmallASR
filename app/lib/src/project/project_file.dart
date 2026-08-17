@@ -3,7 +3,11 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
@@ -77,6 +81,33 @@ class ProjectFileStore {
 
   Future<VsasrProject> load(String path) async {
     final String content = await File(path).readAsString();
+    return _decode(content);
+  }
+
+  /// 从文件选择器或 SAF 读取的字节解析项目，不要求底层存在本地路径。
+  VsasrProject loadBytes(Uint8List bytes) => _decode(utf8.decode(bytes));
+
+  /// 在应用支持目录写入一份稳定副本，供 Android 最近项目跨进程重启恢复。
+  /// [identity] 只用于生成文件名，不会写入项目内容。
+  Future<String> cacheForRecentProject(
+    VsasrProject project, {
+    required String identity,
+  }) async {
+    final Directory support = await getApplicationSupportDirectory();
+    final Directory directory = Directory(
+      p.join(support.path, 'recent_projects'),
+    );
+    await directory.create(recursive: true);
+    final String digest = sha256
+        .convert(utf8.encode(identity))
+        .toString()
+        .substring(0, 32);
+    final String path = p.join(directory.path, '$digest.vsasr.json');
+    await save(path, project);
+    return path;
+  }
+
+  VsasrProject _decode(String content) {
     try {
       return VsasrProject.fromJson(jsonDecode(content));
     } on FormatException {

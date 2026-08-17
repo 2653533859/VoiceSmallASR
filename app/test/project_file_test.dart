@@ -48,6 +48,9 @@ void main() {
     const ProjectFileStore store = ProjectFileStore();
     await store.save(path, project);
     final VsasrProject loaded = await store.load(path);
+    final VsasrProject loadedFromBytes = store.loadBytes(
+      await File(path).readAsBytes(),
+    );
 
     expect(loaded.mediaPath, project.mediaPath);
     expect(loaded.config.language, 'yue');
@@ -55,6 +58,7 @@ void main() {
     expect(loaded.result.segments.first.text, '原文');
     expect(loaded.result.segments.first.translation, '译文');
     expect(loaded.result.segments.first.words.single.text, '原');
+    expect(loadedFromBytes.result.segments.first.translation, '译文');
     expect(await File(path).readAsString(), contains('voicesmallasr.project'));
   });
 

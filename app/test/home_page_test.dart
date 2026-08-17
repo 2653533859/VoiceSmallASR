@@ -4,6 +4,8 @@
 library;
 
 import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -53,7 +55,7 @@ void main() {
     WidgetTester tester,
     TranscribeController controller, {
     PickFile? pickFile,
-    PickFile? pickProjectFile,
+    PickProjectFile? pickProjectFile,
     LoadProjectFile? loadProjectFile,
     SaveFile? saveFile,
     AppSettingsRepository? settings,
@@ -152,7 +154,8 @@ void main() {
     await show(
       tester,
       controller,
-      pickProjectFile: () async => projectPath,
+      pickProjectFile: () async =>
+          const PickedProjectFile(name: 'demo.vsasr.json', path: projectPath),
       loadProjectFile: (String path) async {
         expect(path, projectPath);
         return project;
@@ -167,6 +170,39 @@ void main() {
     expect(controller.filePath, '/tmp/restored.wav');
     expect(controller.language, 'en');
     expect(find.text('已打开项目：demo.vsasr.json'), findsOneWidget);
+  });
+
+  testWidgets('没有本地路径时也可以从 SAF 字节打开项目', (WidgetTester tester) async {
+    final VsasrProject project = VsasrProject(
+      mediaPath: '/tmp/saf.wav',
+      config: AsrConfig(language: 'zh'),
+      result: const TranscriptionResult(
+        language: 'zh',
+        duration: 1,
+        segments: <Segment>[
+          Segment(text: 'SAF 字节字幕', start: 0, end: 1, language: 'zh'),
+        ],
+      ),
+    );
+    final Uint8List bytes = Uint8List.fromList(
+      utf8.encode(jsonEncode(project.toJson())),
+    );
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      pickProjectFile: () async =>
+          PickedProjectFile(name: 'saf.vsasr.json', bytes: bytes),
+    );
+
+    await tester.tap(find.text('打开项目'));
+    for (int i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+
+    expect(find.text('SAF 字节字幕'), findsOneWidget);
+    expect(controller.filePath, '/tmp/saf.wav');
   });
 
   testWidgets('保存项目会交给保存器并保留项目 JSON', (WidgetTester tester) async {

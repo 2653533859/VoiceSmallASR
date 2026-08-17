@@ -31,6 +31,18 @@ typedef PickFile = Future<String?> Function();
 /// 保存字幕：给文件名与内容，返回落地位置的描述；用户取消时返回 null。
 typedef SaveFile = Future<String?> Function(String fileName, String content);
 
+/// 文件选择器返回的项目文件。Android SAF 可能只有可读字节，没有本地路径。
+class PickedProjectFile {
+  const PickedProjectFile({required this.name, this.path, this.bytes});
+
+  final String name;
+  final String? path;
+  final Uint8List? bytes;
+}
+
+/// 选择项目文件，测试可注入本地路径或内存字节。
+typedef PickProjectFile = Future<PickedProjectFile?> Function();
+
 /// 加载项目文件。测试可注入内存实现，生产环境默认使用 [ProjectFileStore]。
 typedef LoadProjectFile = Future<VsasrProject> Function(String path);
 
@@ -64,7 +76,7 @@ class HomePage extends StatefulWidget {
 
   /// 文件选择与保存。测试注入替身，默认走 `file_picker`。
   final PickFile? pickFile;
-  final PickFile? pickProjectFile;
+  final PickProjectFile? pickProjectFile;
   final LoadProjectFile? loadProjectFile;
   final SaveFile? saveFile;
 
@@ -125,12 +137,8 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 项目文件的默认读取器使用 dart:io；不要把 Android SAF 等不可直接读取的
-  /// content:// URI 放进最近项目，否则菜单项一定会在下次打开时失败。
+  /// 项目文件的默认读取器使用 dart:io；外部 URI 会先复制到应用支持目录。
   String? _normalizeRecentProjectPath(String path) {
-    // file_picker Android 的 SAF 保存结果可能只有 provider path，无法由
-    // dart:io 在下一次启动时恢复；等跨平台 URI 读取适配后再启用持久化。
-    if (Platform.isAndroid) return null;
     final String value = path.trim();
     if (value.isEmpty) return null;
     if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value)) return value;
@@ -144,6 +152,31 @@ class _HomePageState extends State<HomePage> {
       }
     }
     return null;
+  }
+
+  Future<String?> _projectPathForRecent({
+    required VsasrProject project,
+    required String? externalPath,
+    required String identity,
+  }) async {
+    if (Platform.isAndroid &&
+        externalPath != null &&
+        _recentProjects.contains(externalPath)) {
+      return externalPath;
+    }
+    if (!Platform.isAndroid && externalPath != null) {
+      final String? normalized = _normalizeRecentProjectPath(externalPath);
+      if (normalized != null) return normalized;
+    }
+    try {
+      return await const ProjectFileStore().cacheForRecentProject(
+        project,
+        identity: identity,
+      );
+    } on Object {
+      // 最近项目只是辅助入口，缓存失败不应阻断项目打开或保存。
+      return null;
+    }
   }
 
   Future<String?> _pickFile() async {
@@ -182,35 +215,60 @@ class _HomePageState extends State<HomePage> {
     await widget.controller.transcribeFile(path);
   }
 
-  Future<String?> _pickProjectFile() async {
-    final PickFile? injected = widget.pickProjectFile;
+  Future<PickedProjectFile?> _pickProjectFile() async {
+    final PickProjectFile? injected = widget.pickProjectFile;
     if (injected != null) return injected();
     final PlatformFile? picked = await FilePicker.pickFile(
       dialogTitle: '打开 VoiceSmallASR 项目',
       type: FileType.custom,
       allowedExtensions: <String>['json'],
     );
-    return picked?.path;
+    if (picked == null) return null;
+    final String? path = picked.path;
+    return PickedProjectFile(
+      name: picked.name,
+      path: path,
+      bytes: path == null ? await picked.readAsBytes() : null,
+    );
   }
 
   Future<void> _openProject() async {
-    final String? path = await _pickProjectFile();
-    if (path == null) return;
-    await _openProjectAt(path);
+    final PickedProjectFile? selected = await _pickProjectFile();
+    if (selected == null) return;
+    await _openSelectedProject(selected);
   }
 
   Future<void> _openRecentProject(String path) => _openProjectAt(path);
 
   Future<void> _openProjectAt(String path) async {
+    await _openSelectedProject(
+      PickedProjectFile(name: p.basename(path), path: path),
+    );
+  }
+
+  Future<void> _openSelectedProject(PickedProjectFile selected) async {
     try {
-      final LoadProjectFile load =
-          widget.loadProjectFile ?? const ProjectFileStore().load;
-      final VsasrProject project = await load(path);
+      final VsasrProject project;
+      final Uint8List? bytes = selected.bytes;
+      if (bytes != null) {
+        project = const ProjectFileStore().loadBytes(bytes);
+      } else {
+        final String? path = selected.path;
+        if (path == null) throw const FormatException('项目文件没有可读取的路径');
+        final LoadProjectFile load =
+            widget.loadProjectFile ?? const ProjectFileStore().load;
+        project = await load(path);
+      }
       await widget.controller.loadProject(project);
-      await _rememberRecentProject(path);
+      final String? recentPath = await _projectPathForRecent(
+        project: project,
+        externalPath: selected.path,
+        identity: selected.path ?? selected.name,
+      );
+      if (recentPath != null) await _rememberRecentProject(recentPath);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('已打开项目：${p.basename(path)}')));
+          .showSnackBar(SnackBar(content: Text('已打开项目：${selected.name}')));
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -230,7 +288,12 @@ class _HomePageState extends State<HomePage> {
         dialogTitle: '保存 VoiceSmallASR 项目',
       );
       if (saved != null) {
-        await _rememberRecentProject(saved);
+        final String? recentPath = await _projectPathForRecent(
+          project: project,
+          externalPath: saved,
+          identity: saved,
+        );
+        if (recentPath != null) await _rememberRecentProject(recentPath);
       }
       if (saved != null && mounted) {
         ScaffoldMessenger.of(context)
