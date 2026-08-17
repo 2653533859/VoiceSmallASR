@@ -12,6 +12,9 @@
 /// `test_wavs/yue.wav`。真实麦克风测试需要额外设置
 /// `VSASR_DEVICE_TEST_MIC_SECONDS=15`，并在录音期间对着设备说话。
 /// Android 上不能依赖 shell 环境变量时，用同名 `--dart-define` 传入参数。
+// 首次下载约 155 MB 模型时，国内镜像的持续速度可能让 setUpAll 超过
+// test_api 默认的 12 分钟 synthetic-test 超时；验收入口允许更长的准备时间。
+@Timeout(Duration(minutes: 30))
 library;
 
 import 'dart:async';
@@ -62,9 +65,20 @@ void main() {
     models = ModelManager();
     final bool wasReady = await models.isReady();
     final Stopwatch watch = Stopwatch()..start();
+    String lastProgressStage = '';
+    int lastProgressBucket = -1;
     paths = await models.ensure(
       allowDownload: true,
       progress: (String stage, int done, int total) {
+        final int bucket = total > 0 ? done ~/ (1024 * 1024) : done;
+        final bool shouldLog =
+            stage != lastProgressStage ||
+            total <= 0 ||
+            bucket != lastProgressBucket ||
+            (total > 0 && done >= total);
+        if (!shouldLog) return;
+        lastProgressStage = stage;
+        lastProgressBucket = bucket;
         final String suffix = total > 0 ? ' $done/$total' : '';
         _log('$stage$suffix');
       },

@@ -19,6 +19,10 @@
 `VSASR_DEVICE_THREADS`、`VSASR_DEVICE_LANGUAGE` 和
 `VSASR_DEVICE_MAX_LIVE_RTF`，但报告中必须保留实际配置和理由。
 
+验收入口的首次模型准备设置了 30 分钟库级超时，以覆盖慢速镜像的完整下载；下载进度按
+约 1 MiB 或阶段变化输出，避免每个网络 chunk 都刷屏。该超时和日志策略只用于显式设备验收，
+不影响普通 `flutter test`。
+
 ## Android 真机
 
 准备：打开 USB 调试，确认设备可见；首次运行允许网络和麦克风权限。
@@ -45,6 +49,34 @@ flutter test integration_test/device_acceptance_test.dart -d <android-device-id>
 测试日志会打印报告位置和 JSON 内容；不指定报告路径时，报告写入应用模型目录。
 至少应保存以下信息：`device_label`（建议填写设备型号）、Android 版本、线程数、模型准备耗时、模型目录占用、进程 RSS
 当前值/峰值、文件 RTF、麦克风 RTF 和是否出现持续积压。若只运行模拟器，必须在记录中标注“非真机结果”。
+
+### API 35 ARM64 模拟器基线（非真机）
+
+2026-08-18 在 `emulator-5554`（`sdk_gphone64_arm64`，Android 15 / API 35，软件渲染）运行
+同一验收入口，未传入视频和麦克风参数，因此这两项明确跳过。模型下载、解压和完整性校验通过，
+文件识别测试也通过：
+
+| 指标 | 结果 |
+| --- | --- |
+| 配置 | `auto`，2 线程 |
+| 模型准备 | 83,609 ms；模型目录 241,150,289 bytes |
+| 完整性 | `model.verified=true`；测试后 241,151,019 bytes |
+| 模型准备后 RSS | 当前 422,744,064 bytes；峰值 468,307,968 bytes |
+| 文件 | `yue.wav`，82,368 samples，5.148 s |
+| 解码 / 识别耗时 | 11 ms / 137 ms |
+| 文件 RTF | `0.026612` |
+| 识别结果 | `呢几个字都表达唔到，我想讲嘅意思。` |
+
+可复用命令：
+
+```bash
+cd app
+flutter test integration_test/device_acceptance_test.dart -d emulator-5554 \
+  --dart-define=VSASR_DEVICE_LABEL=Android-API35-emulator
+```
+
+这份数据只说明 API 35 模拟器上的功能和基线性能，不移除 M10 的 Android 真机性能、内存、
+实时 RTF 待验收项，也不能推断中低端真机或厂商 Codec 表现。
 
 ## Windows 用户桌面
 
