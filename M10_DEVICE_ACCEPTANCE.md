@@ -165,6 +165,12 @@ flutter test integration_test/device_acceptance_test.dart -d windows
 局部结果 4 条。该 run 同时通过桌面 smoke、硬字幕 smoke、Release 构建、运行时依赖和模型排除检查，
 仍不能替代 Windows 用户桌面的干净目录安装和首次启动手工清单。
 
+随后推送提交 `ba07d04` 的 Windows workflow run
+[`32078081707`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32078081707) 增加并通过安装包 smoke：
+把未签名安装包静默安装到空目录，验证 `vsasr_app.exe`、四个运行时 DLL 和模型文件排除，再用隔离的
+`APPDATA`/`LOCALAPPDATA` 启动已安装程序并保持运行 8 秒。该结果证明 CI 产物可以实际安装和启动，
+但 `windows-2022` runner 仍不等于用户自己的 Windows 桌面，手工清单继续保留。
+
 ## 结果判定
 
 自动化报告满足以下条件后，才可把对应子项从 M10 的待验收列表移除：
