@@ -106,6 +106,30 @@ void main() {
       '2.500',
     );
   });
+
+  testWidgets('编辑器支持搜索替换字幕文本', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubtitleEditorPage(initialResult: result, onSave: (_) {}),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('subtitleReplace')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('subtitleReplaceQuery')),
+      '句',
+    );
+    await tester.enterText(
+      find.byKey(const Key('subtitleReplaceWith')),
+      '段',
+    );
+    await tester.tap(find.byKey(const Key('subtitleReplaceConfirm')));
+    await tester.pump();
+
+    expect(find.text('第一段'), findsOneWidget);
+    expect(find.text('第二段'), findsOneWidget);
+  });
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {

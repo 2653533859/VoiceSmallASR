@@ -151,6 +151,45 @@ class SubtitleEditorController extends ChangeNotifier {
     _commit(segments);
   }
 
+  /// 在所有字幕文本中替换 [query]，返回实际替换次数。
+  ///
+  /// 文本发生变化的字幕会清除旧译文和 token 时间戳，未匹配到内容时不新增
+  /// 撤销记录。
+  int replaceText({
+    required String query,
+    required String replacement,
+    bool caseSensitive = true,
+  }) {
+    if (query.isEmpty) {
+      throw const SubtitleEditException('搜索内容不能为空');
+    }
+    final RegExp pattern = RegExp(
+      RegExp.escape(query),
+      caseSensitive: caseSensitive,
+    );
+    int replacements = 0;
+    final List<Segment> segments = _result.segments
+        .map((Segment segment) {
+          final int count = pattern.allMatches(segment.text).length;
+          if (count == 0) return segment;
+          final String nextText = segment.text.replaceAll(pattern, replacement);
+          if (nextText == segment.text) return segment;
+          replacements += count;
+          return Segment(
+            text: nextText,
+            start: segment.start,
+            end: segment.end,
+            language: segment.language,
+            isFinal: segment.isFinal,
+            index: segment.index,
+          );
+        })
+        .toList(growable: false);
+    if (replacements == 0) return 0;
+    _commit(segments);
+    return replacements;
+  }
+
   void undo() {
     if (_undo.isEmpty) return;
     _redo.add(_result);

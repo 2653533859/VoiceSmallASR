@@ -85,6 +85,48 @@ void main() {
     expect(editor.canUndo, isFalse);
   });
 
+  test('搜索替换会更新所有字幕并清除过期译文与 token', () {
+    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+
+    final int replacements = editor.replaceText(
+      query: 'o',
+      replacement: 'O',
+    );
+
+    expect(replacements, 2);
+    expect(editor.result.segments[0].text, 'hellO');
+    expect(editor.result.segments[1].text, 'wOrld');
+    expect(editor.result.segments.first.translation, isNull);
+    expect(editor.result.segments.first.words, isEmpty);
+    editor.undo();
+    expect(editor.result.segments.first.text, 'hello');
+  });
+
+  test('搜索替换支持不区分大小写', () {
+    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+
+    expect(
+      editor.replaceText(
+        query: 'HELLO',
+        replacement: '你好',
+        caseSensitive: false,
+      ),
+      1,
+    );
+    expect(editor.result.segments.first.text, '你好');
+  });
+
+  test('搜索替换未命中或搜索内容为空时不污染撤销记录', () {
+    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+
+    expect(editor.replaceText(query: 'missing', replacement: 'x'), 0);
+    expect(editor.canUndo, isFalse);
+    expect(
+      () => editor.replaceText(query: '', replacement: 'x'),
+      throwsA(isA<SubtitleEditException>()),
+    );
+  });
+
   test('重复应用相同内容不会新增撤销记录', () {
     final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
 

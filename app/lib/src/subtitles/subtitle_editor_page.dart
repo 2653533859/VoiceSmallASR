@@ -149,6 +149,77 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
     _runEdit(() => _editor.shiftTimeOffset(seconds));
   }
 
+  Future<void> _replaceText() async {
+    String query = '';
+    String replacement = '';
+    bool caseSensitive = true;
+    final _ReplaceRequest? request = await showDialog<_ReplaceRequest>(
+      context: context,
+      builder: (BuildContext context) => StatefulBuilder(
+        builder: (
+          BuildContext context,
+          void Function(void Function()) setDialogState,
+        ) {
+          return AlertDialog(
+            title: const Text('搜索替换字幕文本'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                TextFormField(
+                  key: const Key('subtitleReplaceQuery'),
+                  onChanged: (String value) => setDialogState(() => query = value),
+                  decoration: const InputDecoration(labelText: '搜索内容'),
+                ),
+                TextFormField(
+                  key: const Key('subtitleReplaceWith'),
+                  onChanged: (String value) =>
+                      setDialogState(() => replacement = value),
+                  decoration: const InputDecoration(labelText: '替换为（可为空）'),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: caseSensitive,
+                  onChanged: (bool? value) => setDialogState(
+                    () => caseSensitive = value ?? true,
+                  ),
+                  title: const Text('区分大小写'),
+                ),
+              ],
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                key: const Key('subtitleReplaceConfirm'),
+                onPressed: query.isEmpty
+                    ? null
+                    : () => Navigator.pop(
+                        context,
+                        _ReplaceRequest(
+                          query: query,
+                          replacement: replacement,
+                          caseSensitive: caseSensitive,
+                        ),
+                      ),
+                child: const Text('替换全部'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (!mounted || request == null) return;
+    _runEdit(
+      () => _editor.replaceText(
+        query: request.query,
+        replacement: request.replacement,
+        caseSensitive: request.caseSensitive,
+      ),
+    );
+  }
+
   void _seek(double seconds) {
     final VideoPlaybackController? player = widget.player;
     if (player == null) return;
@@ -171,6 +242,7 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
                 onUndo: _editor.undo,
                 onRedo: _editor.redo,
                 onOffset: () => unawaited(_shiftTime()),
+                onReplace: () => unawaited(_replaceText()),
                 onSave: _save,
               ),
               Expanded(
@@ -211,6 +283,7 @@ class _EditorToolbar extends StatelessWidget {
     required this.onUndo,
     required this.onRedo,
     required this.onOffset,
+    required this.onReplace,
     required this.onSave,
   });
 
@@ -219,6 +292,7 @@ class _EditorToolbar extends StatelessWidget {
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback onOffset;
+  final VoidCallback onReplace;
   final VoidCallback onSave;
 
   @override
@@ -246,6 +320,12 @@ class _EditorToolbar extends StatelessWidget {
               tooltip: '批量偏移时间',
               onPressed: onOffset,
               icon: const Icon(Icons.schedule),
+            ),
+            IconButton(
+              key: const Key('subtitleReplace'),
+              tooltip: '搜索替换',
+              onPressed: onReplace,
+              icon: const Icon(Icons.find_replace),
             ),
             Expanded(
               child: errorText == null
@@ -416,4 +496,16 @@ class _SplitRequest {
 
   final int offset;
   final double time;
+}
+
+class _ReplaceRequest {
+  const _ReplaceRequest({
+    required this.query,
+    required this.replacement,
+    required this.caseSensitive,
+  });
+
+  final String query;
+  final String replacement;
+  final bool caseSensitive;
 }
