@@ -64,6 +64,25 @@ flutter test integration_test/device_acceptance_test.dart -d <android-device-id>
 至少应保存以下信息：`device_label`（建议填写设备型号）、Android 版本、线程数、模型准备耗时、模型目录占用、进程 RSS
 当前值/峰值、文件 RTF、麦克风 RTF 和是否出现持续积压。若只运行模拟器，必须在记录中标注“非真机结果”。
 
+### Android release APK 安装启动补充基线（非真机）
+
+2026-08-18 在 API 35 ARM64 `emulator-5554` 上构建并安装个人使用 release APK：
+`versionName=1.0.2`、`versionCode=999`、APK 大小约 178.6 MB。使用
+[`scripts/android_apk_install_smoke.sh`](scripts/android_apk_install_smoke.sh) 清除旧应用数据后安装，
+通过 `apksigner` 确认 v2 签名，确认 APK 不包含模型文件，再直接启动 `.MainActivity`；应用进程保持运行 8 秒，
+冷启动验收通过。该脚本只证明 release 包在当前 API 35 模拟器可安装和启动，不替代 Android 真机性能、内存、
+麦克风和厂商 Codec 验收。
+
+可复用命令（从仓库根目录执行）：
+
+```bash
+cd app
+flutter build apk --release --build-name 1.0.2 --build-number 999
+cd ..
+ADB_BIN=adb ./scripts/android_apk_install_smoke.sh \
+  app/build/app/outputs/flutter-apk/app-release.apk emulator-5554
+```
+
 ### API 35 ARM64 模拟器基线（非真机）
 
 2026-08-18 在 `emulator-5554`（`sdk_gphone64_arm64`，Android 15 / API 35，软件渲染）运行

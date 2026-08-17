@@ -25,6 +25,7 @@
 - M7 Android 个人使用构建已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，未提供签名变量时使用 debug signing，APK 可用于个人安装和测试。
 - Android 可选外部签名配置已接入 `app/android/app/build.gradle.kts`：显式提供四个 `VSASR_ANDROID_*` 环境变量时使用外部 keystore，变量不完整或文件不存在会直接失败；JDK 17 与构建链路已验证，本机已用隔离的临时 keystore 构建 APK，`apksigner` v2 校验通过；个人使用不要求开发者 keystore。
 - Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；2026-08-16 重跑 7/7，粤语识别 RTF `0.027`；模拟器使用软件渲染，真机性能仍未验证。
+- Android release APK 安装启动基线已补齐：2026-08-18 在 API 35 ARM64 `emulator-5554` 实际安装并冷启动 `versionName=1.0.2`、`versionCode=999` 的约 178.6 MB APK，v2 签名和模型排除通过，清除旧数据后进程稳定运行 8 秒；复用脚本 `scripts/android_apk_install_smoke.sh`，该结果仍不等于 Android 真机性能/内存/RTF 或厂商 Codec 验收。
 - M4 真实验收入口仍可按需扩展：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材；真实第三方 API 网络验收因需要用户自己的服务商密钥，暂不作为当前个人使用交付门禁。
 - Windows M7 构建已完成：GitHub Actions run `31912544699` 在 `windows-2022` runner 上通过 MSVC 编译 Flutter Release，并用 `scripts/build_windows_unsigned.ps1` + Inno Setup 生成未签名安装包；CI 自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，并拒绝模型文件；Release 目录约 111 MiB，安装包约 31 MiB。
 - Windows 完整模型 e2e 已验收：GitHub Actions run `31919855391` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试，粤语 wav 识别 RTF `0.064`；同一 workflow 的 Windows smoke、产物校验和 artifact 上传也通过。`.github/workflows/windows-build.yml` 的手动 `run_full_e2e=true` 会恢复模型缓存，必要时通过三源 fallback 下载并做最小字节数校验，再用 `VSASR_MODEL_DIR` 指向外部模型目录运行测试。
