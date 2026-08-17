@@ -28,11 +28,11 @@ $installerArguments = @(
     "/SUPPRESSMSGBOXES",
     "/NORESTART",
     "/SP-",
-    "/DIR=$installPath"
+    "/DIR=`"$installPath`""
 )
-& $installerPath @installerArguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Windows 安装包执行失败，退出码 $LASTEXITCODE"
+$installerProcess = Start-Process -FilePath $installerPath -ArgumentList $installerArguments -Wait -PassThru
+if ($installerProcess.ExitCode -ne 0) {
+    throw "Windows 安装包执行失败，退出码 $($installerProcess.ExitCode)"
 }
 
 $exePath = Join-Path $installPath "vsasr_app.exe"
