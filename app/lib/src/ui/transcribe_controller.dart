@@ -6,14 +6,17 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/asr_engine.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
@@ -81,6 +84,7 @@ class TranscribeController extends ChangeNotifier {
   String? _filePath;
   TranscriptionResult? _result;
   Duration? _elapsed;
+  PerformanceReport? _performanceReport;
   int _projectRevision = 0;
   int _cancelGeneration = 0;
 
@@ -130,6 +134,7 @@ class TranscribeController extends ChangeNotifier {
     _filePath = project.mediaPath;
     _result = project.result;
     _elapsed = null;
+    _performanceReport = null;
     _progress = null;
     _errorText = null;
     _statusText = '项目已打开：${project.result.length} 段字幕';
@@ -143,6 +148,7 @@ class TranscribeController extends ChangeNotifier {
     final String value = path.trim();
     if (value.isEmpty) throw ArgumentError('媒体文件路径不能为空');
     _filePath = value;
+    _performanceReport = null;
     _errorText = null;
     _statusText = '媒体文件已重新定位';
     _markProjectChanged();
@@ -160,6 +166,7 @@ class TranscribeController extends ChangeNotifier {
     }
     _result = imported;
     _elapsed = null;
+    _performanceReport = null;
     _progress = null;
     _errorText = null;
     _statusText = '字幕已导入：${imported.length} 段';
@@ -183,6 +190,9 @@ class TranscribeController extends ChangeNotifier {
 
   /// 最近一次识别耗时。
   Duration? get elapsed => _elapsed;
+
+  /// 最近一次成功文件转写的详细性能诊断；导入/打开项目不会伪造该报告。
+  PerformanceReport? get performanceReport => _performanceReport;
 
   /// 识别语言（`auto`/`zh`/`en`/`ja`/`ko`/`yue`）。
   String get language => _config.language;
@@ -335,6 +345,7 @@ class TranscribeController extends ChangeNotifier {
   }) async {
     if (busy || _sameConfig(_config, config)) return;
     _config = config;
+    _performanceReport = null;
     if (markProjectChange && _result != null) _markProjectChanged();
     notifyListeners();
     final Transcriber? old = _worker;
@@ -361,11 +372,15 @@ class TranscribeController extends ChangeNotifier {
     _filePath = path;
     _result = null;
     _elapsed = null;
+    _performanceReport = null;
     _errorText = null;
     notifyListeners();
 
+    Duration? modelPreparationElapsed;
     if (_worker == null) {
+      final Stopwatch preparationWatch = Stopwatch()..start();
       await prepare();
+      modelPreparationElapsed = preparationWatch.elapsed;
       if (generation != _cancelGeneration) return;
       if (_worker == null) return; // prepare 已经把错误写进 _errorText
     }
@@ -376,15 +391,18 @@ class TranscribeController extends ChangeNotifier {
       _statusText = '正在解码音频…';
       _progress = null;
       notifyListeners();
+      final Stopwatch decodeWatch = Stopwatch()..start();
       // 解码留在主 isolate：平台通道只在 root isolate 可用，
       // 而原生侧本身已经在后台线程解码，不会卡界面。
       final Float32List samples = await _decoder.decodeFile(path);
+      final Duration decodeElapsed = decodeWatch.elapsed;
       if (generation != _cancelGeneration) return;
 
       _stage = JobStage.transcribing;
       _statusText = '正在识别…';
       _progress = 0;
       notifyListeners();
+      final Stopwatch transcriptionWatch = Stopwatch()..start();
       final TranscriptionResult result = await _worker!.transcribe(
         samples,
         onProgress: (int done, int total) {
@@ -393,9 +411,31 @@ class TranscribeController extends ChangeNotifier {
           notifyListeners();
         },
       );
+      final Duration transcriptionElapsed = transcriptionWatch.elapsed;
       if (generation != _cancelGeneration) return;
       _result = result;
       _elapsed = watch.elapsed;
+      _performanceReport = PerformanceReport(
+        generatedAt: DateTime.now(),
+        fileName: p.basename(path),
+        platform: Platform.operatingSystem,
+        language: _config.language,
+        audioDuration: result.duration,
+        sampleCount: samples.length,
+        segmentCount: result.length,
+        elapsed: _elapsed!,
+        decodeElapsed: decodeElapsed,
+        transcriptionElapsed: transcriptionElapsed,
+        modelPreparationElapsed: modelPreparationElapsed,
+        modelBytes: _modelBytes > 0 ? _modelBytes : null,
+        numThreads: _config.numThreads,
+        useItn: _config.useItn,
+        partialInterval: _config.partialInterval,
+        vadThreshold: _config.vad.threshold,
+        minSilenceDuration: _config.vad.minSilenceDuration,
+        minSpeechDuration: _config.vad.minSpeechDuration,
+        maxSpeechDuration: _config.vad.maxSpeechDuration,
+      );
       _statusText = '识别完成：${result.length} 段';
       _progress = 1;
       _markProjectChanged();

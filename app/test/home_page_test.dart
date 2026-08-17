@@ -361,6 +361,12 @@ void main() {
     // 底部统计与状态行都会提到段数，这里只认底部那条完整统计
     expect(find.textContaining('1 段　音频 2.00s'), findsOneWidget);
     expect(find.text('识别完成：1 段'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('performanceDiagnostics')));
+    await tester.pumpAndSettle();
+    expect(find.text('性能诊断报告'), findsOneWidget);
+    expect(find.textContaining('RTF：'), findsOneWidget);
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('打开项目文件后恢复字幕、媒体路径和配置', (WidgetTester tester) async {
@@ -744,6 +750,14 @@ void main() {
       find.textContaining('已导出到 /Users/me/Desktop/zh.srt'),
       findsOneWidget,
     );
+
+    await tester.tap(find.byKey(const Key('performanceDiagnostics')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('exportPerformanceReport')));
+    await tester.pumpAndSettle();
+    expect(saved, hasLength(2));
+    expect(saved.last.$1, 'zh.performance.json');
+    expect(saved.last.$2, contains('decode_elapsed_ms'));
   });
 
   testWidgets('没有结果时导出按钮是禁用的', (WidgetTester tester) async {

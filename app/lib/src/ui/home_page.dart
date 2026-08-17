@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/project/batch_translation_cache.dart';
 import 'package:vsasr_app/src/ui/batch_queue_store.dart';
@@ -811,6 +812,50 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _showPerformanceReport() async {
+    final PerformanceReport? report = widget.controller.performanceReport;
+    if (report == null || !mounted) return;
+    final String? action = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('性能诊断报告'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(child: SelectableText(report.toText())),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+          FilledButton(
+            key: const Key('exportPerformanceReport'),
+            onPressed: () => Navigator.of(context).pop('save'),
+            child: const Text('导出 JSON'),
+          ),
+        ],
+      ),
+    );
+    if (action != 'save' || !mounted) return;
+    final String source = widget.controller.filePath ?? 'transcription';
+    final String fileName =
+        '${p.basenameWithoutExtension(source)}.performance.json';
+    try {
+      final String? saved = await _saveFile(
+        fileName,
+        report.toJsonString(),
+        dialogTitle: '导出性能诊断报告',
+      );
+      if (!mounted || saved == null) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('诊断报告已导出到 $saved')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导出诊断报告失败：$error')));
+    }
+  }
+
   Future<void> _exportBatch(String format) async {
     final String normalizedFormat = format.trim().toLowerCase();
     if (!kSubtitleFormats.contains(normalizedFormat)) {
@@ -1151,6 +1196,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onTranslate: _translate,
             onImport: _importSubtitle,
             onBatch: _openBatch,
+            onDiagnostics: _showPerformanceReport,
             batchBusy: batchBusy,
           );
         } else {
@@ -1167,6 +1213,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               onTranslate: _translate,
               onImport: _importSubtitle,
               onBatch: _openBatch,
+              onDiagnostics: _showPerformanceReport,
               batchBusy: batchBusy,
             ),
             live: live == null
@@ -1366,6 +1413,7 @@ class _TranscribeView extends StatelessWidget {
     required this.onTranslate,
     required this.onImport,
     required this.onBatch,
+    required this.onDiagnostics,
     this.batchBusy = false,
   });
 
@@ -1380,6 +1428,7 @@ class _TranscribeView extends StatelessWidget {
   final VoidCallback onTranslate;
   final VoidCallback onImport;
   final VoidCallback onBatch;
+  final VoidCallback onDiagnostics;
   final bool batchBusy;
 
   @override
@@ -1455,6 +1504,15 @@ class _TranscribeView extends StatelessWidget {
                 icon: const Icon(Icons.save_alt),
                 label: const Text('导出字幕'),
               ),
+              if (controller.performanceReport != null)
+                OutlinedButton.icon(
+                  key: const Key('performanceDiagnostics'),
+                  onPressed: controller.busy || batchBusy
+                      ? null
+                      : onDiagnostics,
+                  icon: const Icon(Icons.speed_outlined),
+                  label: const Text('性能诊断'),
+                ),
               OutlinedButton.icon(
                 key: const Key('importSubtitle'),
                 onPressed: controller.busy || batchBusy ? null : onImport,

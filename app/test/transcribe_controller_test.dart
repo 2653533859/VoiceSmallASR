@@ -93,6 +93,7 @@ void main() {
 
   test('转写走完解码与识别两个阶段，结果与耗时都落地', () async {
     final FakeDecoder decoder = FakeDecoder(samples: 2 * kSampleRate);
+    writeFakeModel(workspace.path);
     final FakeTranscriber transcriber = FakeTranscriber(language: 'yue');
     final List<JobStage> stages = <JobStage>[];
     final TranscribeController c = TranscribeController(
@@ -120,6 +121,11 @@ void main() {
     expect(c.progress, 1);
     expect(c.statusText, '识别完成：1 段');
     expect(c.elapsed, isNotNull);
+    expect(c.performanceReport?.fileName, 'a.wav');
+    expect(c.performanceReport?.sampleCount, 2 * kSampleRate);
+    expect(c.performanceReport?.segmentCount, 1);
+    expect(c.performanceReport?.realTimeFactor, isNotNull);
+    expect(c.performanceReport?.toJsonString(), contains('decode_elapsed_ms'));
     expect(c.errorText, isNull);
     await c.shutdown();
   });
@@ -162,9 +168,11 @@ void main() {
 
     await c.transcribeFile('/tmp/a.wav');
     expect(c.result?.segments.single.language, 'auto');
+    expect(c.performanceReport, isNotNull);
 
     await c.setLanguage('yue');
     expect(c.language, 'yue');
+    expect(c.performanceReport, isNull);
     await c.transcribeFile('/tmp/a.wav');
     expect(launched, <String>['auto', 'yue']);
     expect(c.result?.segments.single.language, 'yue');
