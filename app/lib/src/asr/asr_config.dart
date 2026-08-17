@@ -44,6 +44,52 @@ class VadConfig {
   /// silero-vad 要求 16 kHz 下窗口为 512 采样点。
   final int windowSize;
 
+  factory VadConfig.fromJson(Object? value) {
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('config.vad 必须是 JSON 对象');
+    }
+    final double threshold = _configDouble(
+      value['threshold'],
+      'config.vad.threshold',
+      fallback: 0.5,
+    );
+    final double minSilenceDuration = _configDouble(
+      value['min_silence_duration'],
+      'config.vad.min_silence_duration',
+      fallback: 0.35,
+    );
+    final double minSpeechDuration = _configDouble(
+      value['min_speech_duration'],
+      'config.vad.min_speech_duration',
+      fallback: 0.25,
+    );
+    final double maxSpeechDuration = _configDouble(
+      value['max_speech_duration'],
+      'config.vad.max_speech_duration',
+      fallback: 20.0,
+    );
+    final int windowSize = _configInt(
+      value['window_size'],
+      'config.vad.window_size',
+      fallback: 512,
+    );
+    if (threshold < 0 ||
+        threshold > 1 ||
+        minSilenceDuration < 0 ||
+        minSpeechDuration < 0 ||
+        maxSpeechDuration <= 0 ||
+        windowSize <= 0) {
+      throw const FormatException('config.vad 包含越界值');
+    }
+    return VadConfig(
+      threshold: threshold,
+      minSilenceDuration: minSilenceDuration,
+      minSpeechDuration: minSpeechDuration,
+      maxSpeechDuration: maxSpeechDuration,
+      windowSize: windowSize,
+    );
+  }
+
   VadConfig copyWith({
     double? threshold,
     double? minSilenceDuration,
@@ -95,6 +141,45 @@ class AsrConfig {
 
   final VadConfig vad;
 
+  factory AsrConfig.fromJson(Object? value) {
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('config 必须是 JSON 对象');
+    }
+    return AsrConfig(
+      language: _configString(
+        value['language'],
+        'config.language',
+        fallback: 'auto',
+      ),
+      useItn: _configBool(value['use_itn'], 'config.use_itn', fallback: true),
+      numThreads: _configInt(
+        value['num_threads'],
+        'config.num_threads',
+        fallback: 2,
+      ),
+      partialInterval: _configDouble(
+        value['partial_interval'],
+        'config.partial_interval',
+        fallback: 0.6,
+      ),
+      vad: VadConfig.fromJson(value['vad'] ?? const <String, Object?>{}),
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'language': language,
+    'use_itn': useItn,
+    'num_threads': numThreads,
+    'partial_interval': partialInterval,
+    'vad': <String, dynamic>{
+      'threshold': vad.threshold,
+      'min_silence_duration': vad.minSilenceDuration,
+      'min_speech_duration': vad.minSpeechDuration,
+      'max_speech_duration': vad.maxSpeechDuration,
+      'window_size': vad.windowSize,
+    },
+  };
+
   /// 转换为 sherpa-onnx 期望的取值（`auto` 对应空串）。
   String get senseVoiceLanguage => language == 'auto' ? '' : language;
 
@@ -113,4 +198,31 @@ class AsrConfig {
       vad: vad ?? this.vad,
     );
   }
+}
+
+String _configString(Object? value, String field, {required String fallback}) {
+  if (value == null) return fallback;
+  if (value is String) return value;
+  throw FormatException('$field 必须是字符串');
+}
+
+bool _configBool(Object? value, String field, {required bool fallback}) {
+  if (value == null) return fallback;
+  if (value is bool) return value;
+  throw FormatException('$field 必须是布尔值');
+}
+
+double _configDouble(Object? value, String field, {required double fallback}) {
+  if (value == null) return fallback;
+  if (value is num && value.isFinite) return value.toDouble();
+  throw FormatException('$field 必须是有限数字');
+}
+
+int _configInt(Object? value, String field, {required int fallback}) {
+  if (value == null) return fallback;
+  if (value is int) return value;
+  if (value is num && value.isFinite && value == value.round()) {
+    return value.toInt();
+  }
+  throw FormatException('$field 必须是整数');
 }

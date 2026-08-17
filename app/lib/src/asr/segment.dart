@@ -11,6 +11,15 @@ library;
 class Word {
   const Word({required this.text, required this.start, required this.end});
 
+  factory Word.fromJson(Object? value) {
+    final Map<String, dynamic> map = _jsonMap(value, 'word');
+    return Word(
+      text: _jsonString(map['text'], 'word.text'),
+      start: _jsonDouble(map['start'], 'word.start'),
+      end: _jsonDouble(map['end'], 'word.end'),
+    );
+  }
+
   final String text;
   final double start;
   final double end;
@@ -36,6 +45,39 @@ class Segment {
     this.index = -1,
     this.translation,
   });
+
+  factory Segment.fromJson(Object? value) {
+    final Map<String, dynamic> map = _jsonMap(value, 'segment');
+    final Object? rawWords = map['words'];
+    final List<Word> words = rawWords == null
+        ? const <Word>[]
+        : _jsonList(
+            rawWords,
+            'segment.words',
+          ).map<Word>(Word.fromJson).toList(growable: false);
+    final Object? rawTranslation = map['translation'];
+    if (rawTranslation != null && rawTranslation is! String) {
+      throw FormatException('segment.translation 必须是字符串或 null');
+    }
+    final Object? rawLanguage = map['language'];
+    if (rawLanguage != null && rawLanguage is! String) {
+      throw FormatException('segment.language 必须是字符串或 null');
+    }
+    final Object? rawIsFinal = map['is_final'];
+    if (rawIsFinal != null && rawIsFinal is! bool) {
+      throw FormatException('segment.is_final 必须是布尔值或 null');
+    }
+    return Segment(
+      text: _jsonString(map['text'], 'segment.text'),
+      start: _jsonDouble(map['start'], 'segment.start'),
+      end: _jsonDouble(map['end'], 'segment.end'),
+      words: words,
+      language: rawLanguage as String? ?? '',
+      isFinal: rawIsFinal as bool? ?? true,
+      index: _jsonInt(map['index'], 'segment.index', fallback: -1),
+      translation: rawTranslation as String?,
+    );
+  }
 
   final String text;
   final double start;
@@ -101,6 +143,19 @@ class TranscriptionResult {
     this.language = 'auto',
   });
 
+  factory TranscriptionResult.fromJson(Object? value) {
+    final Map<String, dynamic> map = _jsonMap(value, 'result');
+    final List<Segment> segments = _jsonList(
+      map['segments'],
+      'result.segments',
+    ).map<Segment>(Segment.fromJson).toList(growable: false);
+    return TranscriptionResult(
+      segments: segments,
+      duration: _jsonDouble(map['duration'], 'result.duration'),
+      language: _jsonString(map['language'], 'result.language'),
+    );
+  }
+
   final List<Segment> segments;
 
   /// 音频总时长（秒）。
@@ -139,3 +194,32 @@ class TranscriptionResult {
 
 /// 保留三位小数（毫秒级），避免 JSON 里出现 float 长尾数。
 double _round3(double value) => (value * 1000).round() / 1000;
+
+Map<String, dynamic> _jsonMap(Object? value, String field) {
+  if (value is Map<String, dynamic>) return value;
+  throw FormatException('$field 必须是 JSON 对象');
+}
+
+List<Object?> _jsonList(Object? value, String field) {
+  if (value is List<Object?>) return value;
+  throw FormatException('$field 必须是 JSON 数组');
+}
+
+String _jsonString(Object? value, String field) {
+  if (value is String) return value;
+  throw FormatException('$field 必须是字符串');
+}
+
+double _jsonDouble(Object? value, String field) {
+  if (value is num && value.isFinite) return value.toDouble();
+  throw FormatException('$field 必须是有限数字');
+}
+
+int _jsonInt(Object? value, String field, {int? fallback}) {
+  if (value == null && fallback != null) return fallback;
+  if (value is int) return value;
+  if (value is num && value.isFinite && value == value.round()) {
+    return value.toInt();
+  }
+  throw FormatException('$field 必须是整数');
+}

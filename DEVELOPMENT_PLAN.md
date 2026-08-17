@@ -11,7 +11,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，107 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的三端安装包和 GitHub Release，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（164 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行验证；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的三端安装包和 GitHub Release，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目文件数据层首项已完成**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（166 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行验证；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -193,14 +193,14 @@ VoiceSmallASR/
   - 支持文本、起止时间、合并、拆分；文本变化清除过期译文和 token 时间戳，时间变化清除过期 token 时间戳
   - 首页和视频页接入字幕校对入口，编辑页可定位播放器时间点，保存后回写主转写结果
   - 导出前统一校验时间轴，拒绝负时间、无效区间、重叠/倒序和超出音频时长的字幕
-  - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 164 项通过
+  - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 166 项通过
 
 - **应用内翻译工作流（M4，2026-08-16）**：
   - 主转写页和视频播放页新增翻译入口，从系统安全存储读取第三方翻译 API Key，设置页可配置 endpoint/模型，provider 可注入测试替身
   - 实时字幕页新增“实时翻译”开关，定稿字幕进入串行翻译队列，译文异步显示在原文下方；停止/销毁时使未开始的排队请求失效，避免网络异常逐条阻塞收尾
   - 翻译期间锁定转写状态并显示批量进度；所有批次成功后才一次性写回译文，失败时保留原识别结果
   - 转写列表显示译文，后续 SRT/VTT/TXT/JSON 导出和视频字幕叠加复用同一份结果
-  - 新增 4 项状态机/界面回归测试；全量 `flutter test` 已增至 164 项
+  - 新增 4 项状态机/界面回归测试；全量 `flutter test` 已增至 166 项
 
 ### 环境
 
@@ -247,7 +247,7 @@ Run 31919855391                完整模型 e2e 7 项、桌面 smoke、产物校
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **164 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **166 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；个人使用的无签名包已满足目标，普通 `flutter build macos --debug` 的开发证书仅在需要正式签名运行/发布时才需要。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ✅ 个人使用构建完成 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -376,6 +376,14 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] Windows 最新提交已由 CI run `32008744063` 通过 Flutter analyze、Release 构建、桌面 smoke、产物校验和 artifact 上传；完整模型 E2E 由 run `31919855391` 通过
 - [ ] Android 真机性能、内存和 RTF：本机 `flutter devices` 仅发现 macOS 与 Chrome，没有连接真机或无线设备
 - [ ] Windows 用户桌面干净目录安装、首次启动和真实设备差异：当前只有 Windows runner 结果，尚未有可操作的用户桌面
+
+### M11 · 项目保存与字幕导入（数据层首项完成）
+
+- [x] 定义版本化项目 JSON schema，保存媒体路径引用、识别配置、字幕分段、译文和 token 时间戳
+- [x] 项目文件读写使用同目录临时文件，并在读写前后校验 schema、版本和字幕时间轴
+- [x] 控制器支持生成项目快照和恢复项目配置/当前结果
+- [ ] 首页接入保存项目、打开项目和最近项目
+- [ ] 自动保存、异常恢复和 SRT/VTT/JSON 字幕导入
 
 ## 5. 决策记录与待决策事项
 
@@ -608,7 +616,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 164 项应全绿（不需要模型、不需要设备）
+flutter test                   # 166 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"

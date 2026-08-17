@@ -14,6 +14,7 @@ import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 
@@ -107,6 +108,26 @@ class TranscribeController extends ChangeNotifier {
 
   /// 最近一次识别结果。
   TranscriptionResult? get result => _result;
+
+  /// 当前结果的可持久化项目快照。
+  VsasrProject get projectSnapshot {
+    final TranscriptionResult? current = _result;
+    if (current == null) throw StateError('还没有可保存的识别结果');
+    return VsasrProject(mediaPath: _filePath, config: _config, result: current);
+  }
+
+  /// 从项目文件恢复当前字幕和识别配置；媒体文件仍由调用方按路径重新打开。
+  Future<void> loadProject(VsasrProject project) async {
+    if (busy) throw StateError('识别进行中，暂时不能打开项目');
+    await applyConfig(project.config);
+    _filePath = project.mediaPath;
+    _result = project.result;
+    _elapsed = null;
+    _progress = null;
+    _errorText = null;
+    _statusText = '项目已打开：${project.result.length} 段字幕';
+    notifyListeners();
+  }
 
   /// 接收字幕校对页保存后的结果。
   ///
