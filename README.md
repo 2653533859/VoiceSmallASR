@@ -251,14 +251,14 @@ VoiceSmallASR/
 因此识别结果一致，Python 端可作为对照基准。
 
 当前进度：**M1（文件转写 + 字幕导出）、M2（麦克风实时字幕）、M3（视频播放 + 字幕叠加）、M5（字幕校对编辑）与 M11（项目管理 + 外部字幕导入）已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时字幕/视频字幕翻译工作流已接入，M8 发布质量基线代码已落地** —— 引擎层、音频解码、
-后台识别 isolate、流式识别、视频播放与字幕联动都已接入，M6 首期设置页、模型管理与离线模式已接入，M9 已支持目标语言持久化、API 连接测试、第三方数据发送提示和实时字幕单条重试，M11 已完成项目文件数据层、首页保存/打开、最近项目、Android SAF、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 导入和视频外部字幕加载，M12 已接入多文件批量转写、批量翻译、安全导出、本地文本缓存与队列恢复，M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史以及手工和自动说话人分离，`flutter test` 233 项、Python 测试 107 项、macOS 端到端 7 项和 Android API 35 模拟器端到端 7 项通过；模拟器粤语识别 RTF 为 0.027。自动分离和硬字幕的真实验收脚本已加入，实际移动/桌面验收待相应设备和无签名可运行环境。
+后台识别 isolate、流式识别、视频播放与字幕联动都已接入，M6 首期设置页、模型管理与离线模式已接入，M9 已支持目标语言持久化、API 连接测试、第三方数据发送提示和实时字幕单条重试，M11 已完成项目文件数据层、首页保存/打开、最近项目、Android SAF、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 导入和视频外部字幕加载，M12 已接入多文件批量转写、批量翻译、安全导出、本地文本缓存与队列恢复，M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史以及手工和自动说话人分离，`flutter test` 234 项、Python 测试 107 项、macOS 端到端 7 项和 Android API 35 模拟器端到端 7 项通过；模拟器粤语识别 RTF 为 0.027，Android API 35 模拟器硬字幕真实编码通过。自动分离和硬字幕的真实验收脚本已加入；当前 Android 真机性能、Windows 用户桌面和桌面带 libass 的 FFmpeg 仍待验收。
 macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输出**逐字一致**
 （`呢几个字都表达唔到，我想讲嘅意思。`），RTF 约 0.06；实时识别把三段素材拼成「三句话」喂进去，
 每句都定稿且时间戳连续不重叠。
 后续计划包括 Android 真机性能和 Windows 用户桌面运行验证；个人使用不要求执行真实第三方 API 网络验收。
 当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`，并已在本机成功构建 Android release APK/AAB；个人使用时未提供签名变量即可使用 Android debug signing 构建 APK，正式发布/商店签名不在本项目范围内。Android signing 配置仍支持 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD` 和 `VSASR_ANDROID_KEY_PASSWORD` 四个环境变量，并已用临时 keystore 验证可选的外部签名链路。
 macOS 无签名包可以完成个人使用所需的编译与打包；如果 `flutter_secure_storage` 因 Keychain Sharing 不可用，应用会把 API Key 仅保存在当前会话内，退出后需要重新输入，不写入普通配置或明文文件。
-第三方 API provider 和应用内翻译流程已接入，但个人使用可不配置 API Key；设置页支持翻译术语表（每行 `原词=译词`）和服务商预设，预设保存 endpoint、模型、目标语言和术语表组合但不保存 API Key；术语表会应用到文件、实时、视频和批量翻译，变化会隔离批量缓存；实时字幕页可打开“实时翻译”，首次使用前会提示字幕将发送到第三方服务，同一场录音会复用 provider，停止时不会逐条等待已排队请求，失败字幕可单条重试；视频播放页可点击“翻译字幕”，译文会显示在视频叠加层和字幕列表中，并可调整字幕样式、导出视频配套字幕文件；桌面视频页还可通过本机 FFmpeg 生成硬字幕 MP4，需使用包含 `libass`/`ass` 滤镜的 FFmpeg，并可用 `VSASR_FFMPEG_PATH` 指定路径，Android 暂不支持内置编码。真实网络验收仅在以后需要验证在线翻译时使用，密钥不会写入仓库。
+第三方 API provider 和应用内翻译流程已接入，但个人使用可不配置 API Key；设置页支持翻译术语表（每行 `原词=译词`）和服务商预设，预设保存 endpoint、模型、目标语言和术语表组合但不保存 API Key；术语表会应用到文件、实时、视频和批量翻译，变化会隔离批量缓存；实时字幕页可打开“实时翻译”，首次使用前会提示字幕将发送到第三方服务，同一场录音会复用 provider，停止时不会逐条等待已排队请求，失败字幕可单条重试；视频播放页可点击“翻译字幕”，译文会显示在视频叠加层和字幕列表中，并可调整字幕样式、导出视频配套字幕文件；桌面视频页通过本机 FFmpeg 生成硬字幕 MP4，需使用包含 `libass`/`ass` 滤镜的 FFmpeg，并可用 `VSASR_FFMPEG_PATH` 指定路径；Android 视频页通过系统 MediaCodec/OpenGL 生成硬字幕 MP4，支持 AAC 音轨直通和 Android SAF 输出，iOS 暂不支持。真实网络验收仅在以后需要验证在线翻译时使用，密钥不会写入仓库。
 Windows Release 与 Inno Setup 安装包已由 `.github/workflows/windows-build.yml` 在 Windows runner 上构建通过，CI 同时检查运行时 DLL 和模型文件排除，并通过无模型桌面 smoke 验证 AAC 解码与 MP4 播放；手动 `run_full_e2e=true` 的完整模型 e2e 已在 run `31919855391` 通过 7 项测试，用户桌面验证仍待完成。
 `.github/workflows/release.yml` 已完成三端 GitHub Release：`v1.0.1` 已在云端生成 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包，可从 [GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.1) 下载；后续发布会先通过 Python/Flutter 质量门禁，检查三端产物不含模型，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`。
 

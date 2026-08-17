@@ -1,6 +1,6 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-17　　当前版本：1.0.1
+> 更新日期：2026-08-18　　当前版本：1.0.1
 
 后续版本的稳定化、发布治理和产品功能计划见 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)。
 
@@ -11,7 +11,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，107 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的三端安装包和 GitHub Release，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史和自动说话人分离已完成**：文件转写、实时字幕、视频播放与字幕联动、外部字幕加载、批量转写/翻译/导出队列、字幕校对编辑（233 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。自动说话人分离和桌面硬字幕编码已加入独立模型/FFmpeg 依赖管理、后台推理或本机编码以及显式验收脚本；个人使用范围内剩余 Android 真机性能、Windows 用户桌面运行、Android 硬字幕编码和真实移动/桌面验收；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的三端安装包和 GitHub Release，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史和自动说话人分离已完成**：文件转写、实时字幕、视频播放与字幕联动、外部字幕加载、批量转写/翻译/导出队列、字幕校对编辑（234 项单测 + Android API 35 模拟器端到端 7 项，硬字幕真实编码验收 + 粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。自动说话人分离和桌面/Android 硬字幕编码已加入独立模型/FFmpeg 或系统 MediaCodec 依赖、后台推理或原生编码以及显式验收脚本；个人使用范围内剩余 Android 真机性能、Windows 用户桌面运行、非 AAC/缺少 libass 的兼容性验收；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -57,14 +57,15 @@ VoiceSmallASR/
 │   │   │   ├── microphone.dart      ← 对应 audio.py 的 iter_microphone（record 包）
 │   │   │   └── audio_decoder.dart   ← 对应 audio.py 的 ffmpeg 路径（转给原生解码）
 │   │   ├── subtitles/subtitles.dart ← 对应 subtitles.py（多双语字幕）
-│   │   ├── video/                   media_kit 播放器、字幕时间轴与桌面硬字幕编码
-│   │   │   └── hard_subtitle_encoder.dart  本机 FFmpeg/ASS 硬字幕导出（桌面首期）
+│   │   ├── video/                   media_kit 播放器、字幕时间轴与硬字幕编码入口
+│   │   │   └── hard_subtitle_encoder.dart  桌面 FFmpeg/ASS 与 Android MediaCodec 编码抽象
 │   │   └── ui/                      界面层（Python 端对应物是 cli.py）
 │   │       ├── app.dart             MaterialApp 外壳
 │   │       ├── transcribe_controller.dart  状态机：模型→解码→识别→导出
 │   │       ├── live_controller.dart 状态机：麦克风→识别→临时/定稿段
 │   │       └── home_page.dart       下载页 / 两个页签 / 分段列表 / 导出对话框
 │   ├── android/…/MainActivity.kt            原生解码（MediaExtractor + MediaCodec）
+│   ├── android/…/HardSubtitleEncoder.kt    MediaCodec/OpenGL 硬字幕编码与 MediaMuxer 输出
 │   ├── macos/Runner/MainFlutterWindow.swift 原生解码（AVAssetReader）
 │   └── windows/runner/audio_decoder.cpp     原生解码（IMFSourceReader）
 ├── examples/                   Python 集成示例
@@ -415,7 +416,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 持续性能日志：文件、批量和实时报告写入应用私有目录的版本化 JSON，最多保留 100 条，支持查看/清空和损坏条目跳过
 - [x] 手工说话人标签：`Segment`/项目 JSON 支持可选标签；字幕编辑器可编辑、清空并在合并/拆分时传播；SRT/VTT/TXT 使用 `[speaker:标签]` 标记，视频叠加和列表显示标签
 - [x] 自动说话人分离：独立下载/校验 pyannote segmentation 与 3D-Speaker embedding 模型，后台 isolate 运行并按时间重叠映射 `SPEAKER_00` 等标签；首页支持自动估计或指定人数，新增单测和显式真实模型验收脚本。桌面/移动端真模型验收仍受本机无签名集成运行、Android 真机和 Windows 用户桌面环境限制
-- [x] 硬字幕视频编码（桌面首期）：视频页调用本机 FFmpeg 的 ASS 滤镜，复用字幕样式生成带原文、译文和说话人标签的 MP4；输出路径、进度、错误提示和依赖检查已接入，Android 暂不支持内置编码，后续补齐跨平台方案
+- [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，复用字幕样式生成带原文、译文和说话人标签的 MP4；Android 支持 AAC 音轨直通和 API 26+ SAF 输出，新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本；真实设备和兼容性验收待环境具备
 
 ## 5. 决策记录与待决策事项
 

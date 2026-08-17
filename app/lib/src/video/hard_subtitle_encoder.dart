@@ -1,13 +1,14 @@
 /// 使用系统 FFmpeg 将字幕烧录进视频文件。
 ///
 /// 项目不把 FFmpeg 二进制打进安装包：桌面用户需要自行安装 `ffmpeg`，
-/// 或通过 `VSASR_FFMPEG_PATH` 指定可执行文件路径。Android 不提供进程级
-/// FFmpeg，因此由 UI 层在启动编码前给出明确提示。
+/// 或通过 `VSASR_FFMPEG_PATH` 指定可执行文件路径。Android 走系统
+/// MediaCodec/MediaMuxer，不依赖进程级 FFmpeg。
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
@@ -32,6 +33,55 @@ abstract interface class HardSubtitleEncoder {
     required SubtitleStyle style,
     HardSubtitleProgress? onProgress,
   });
+}
+
+/// 使用 Android 系统 MediaCodec/MediaMuxer 生成硬字幕视频。
+///
+/// 输出路径可以是 Android SAF 返回的 `content://` URI；原生侧通过文件描述符
+/// 写出，不需要把整段视频读进 Dart 内存。
+class AndroidHardSubtitleEncoder implements HardSubtitleEncoder {
+  static const MethodChannel _channel = MethodChannel('vsasr/hard_subtitle');
+
+  @override
+  Future<void> encode({
+    required String inputPath,
+    required String outputPath,
+    required TranscriptionResult result,
+    required SubtitleStyle style,
+    HardSubtitleProgress? onProgress,
+  }) async {
+    if (inputPath.trim().isEmpty || outputPath.trim().isEmpty) {
+      throw const HardSubtitleEncodeException('输入和输出视频路径不能为空');
+    }
+    if (!File(inputPath).existsSync()) {
+      throw HardSubtitleEncodeException('输入视频不存在：$inputPath');
+    }
+    ensureValidSubtitleTimeline(result.segments, duration: result.duration);
+    onProgress?.call(0.0);
+    try {
+      await _channel.invokeMethod<void>('encode', <String, Object?>{
+        'inputPath': inputPath,
+        'outputPath': outputPath,
+        'segments': result.segments
+            .map(
+              (Segment segment) => <String, Object?>{
+                'start': segment.start,
+                'end': segment.end,
+                'text': segment.text,
+                'translation': segment.translation,
+                'speaker': segment.speaker,
+              },
+            )
+            .toList(growable: false),
+        'style': style.toJson(),
+      });
+      onProgress?.call(1.0);
+    } on PlatformException catch (error) {
+      throw HardSubtitleEncodeException(error.message ?? 'Android 硬字幕编码失败');
+    } on MissingPluginException {
+      throw const HardSubtitleEncodeException('当前 Android 构建未包含硬字幕编码模块');
+    }
+  }
 }
 
 /// 基于本机 FFmpeg 的桌面硬字幕编码器。

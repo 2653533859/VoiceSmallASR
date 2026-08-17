@@ -208,10 +208,11 @@ class _VideoPageState extends State<VideoPage> {
       mimeType: 'video/mp4',
     );
     if (saved == null) return null;
-    if (!saved.isScheme('file')) {
+    if (!saved.isScheme('file') &&
+        !(Platform.isAndroid && saved.isScheme('content'))) {
       throw const HardSubtitleEncodeException('当前平台只能把硬字幕视频保存到本地文件路径');
     }
-    return saved.toFilePath();
+    return saved.isScheme('file') ? saved.toFilePath() : saved.toString();
   }
 
   Future<void> _encodeHardSubtitles(TranscriptionResult result) async {
@@ -221,10 +222,9 @@ class _VideoPageState extends State<VideoPage> {
         _encodingHardSubtitles) {
       return;
     }
-    if (Platform.isAndroid || Platform.isIOS) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('硬字幕视频编码目前需要桌面版 FFmpeg，Android 暂不支持')),
-      );
+    if (Platform.isIOS) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('iOS 暂不支持硬字幕视频编码')));
       return;
     }
     final String fileName =
@@ -237,7 +237,10 @@ class _VideoPageState extends State<VideoPage> {
         _hardSubtitleProgress = 0;
       });
       final HardSubtitleEncoder encoder =
-          widget.hardSubtitleEncoder ?? FfmpegHardSubtitleEncoder();
+          widget.hardSubtitleEncoder ??
+          (Platform.isAndroid
+              ? AndroidHardSubtitleEncoder()
+              : FfmpegHardSubtitleEncoder());
       await encoder.encode(
         inputPath: inputPath,
         outputPath: outputPath,

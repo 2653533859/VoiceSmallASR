@@ -20,6 +20,10 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         AudioDecoderChannel.register(flutterEngine.dartExecutor.binaryMessenger)
+        HardSubtitleEncoderChannel.register(
+            flutterEngine.dartExecutor.binaryMessenger,
+            applicationContext,
+        )
     }
 }
 

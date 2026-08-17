@@ -1,10 +1,18 @@
-/// 真实 FFmpeg 硬字幕编码验收。
+/// 真实硬字幕视频编码验收：桌面使用 FFmpeg，Android 使用 MediaCodec。
 ///
 /// 默认跳过，不依赖系统 FFmpeg。运行时提供一个本地视频文件：
 ///
 /// ```bash
 /// VSASR_HARD_SUBTITLE_TEST_VIDEO=/path/to/input.mp4 \
 /// flutter test integration_test/hard_subtitle_acceptance_test.dart -d macos
+/// ```
+///
+/// Android 使用系统 MediaCodec；输入文件必须是应用可读的本地路径：
+///
+/// ```bash
+/// VSASR_HARD_SUBTITLE_TEST_VIDEO=/path/in/app-readable-storage/input.mp4 \
+/// flutter test integration_test/hard_subtitle_acceptance_test.dart -d android-device \
+///   --dart-define=VSASR_HARD_SUBTITLE_TEST_VIDEO=/path/in/app-readable-storage/input.mp4
 /// ```
 library;
 
@@ -19,9 +27,15 @@ import 'package:vsasr_app/src/video/hard_subtitle_encoder.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  test('真实 FFmpeg 生成带字幕的 mp4', () async {
-    final String? input = Platform.environment['VSASR_HARD_SUBTITLE_TEST_VIDEO']
-        ?.trim();
+  test('真实编码生成带字幕的 mp4', () async {
+    const String definedInput = String.fromEnvironment(
+      'VSASR_HARD_SUBTITLE_TEST_VIDEO',
+    );
+    final String? input =
+        (definedInput.trim().isNotEmpty
+                ? definedInput
+                : Platform.environment['VSASR_HARD_SUBTITLE_TEST_VIDEO'])
+            ?.trim();
     if (input == null || input.isEmpty) {
       markTestSkipped('未提供 VSASR_HARD_SUBTITLE_TEST_VIDEO');
       return;
@@ -36,7 +50,10 @@ void main() {
       }
     });
 
-    await FfmpegHardSubtitleEncoder().encode(
+    final HardSubtitleEncoder encoder = Platform.isAndroid
+        ? AndroidHardSubtitleEncoder()
+        : FfmpegHardSubtitleEncoder();
+    await encoder.encode(
       inputPath: input,
       outputPath: output,
       result: const TranscriptionResult(
