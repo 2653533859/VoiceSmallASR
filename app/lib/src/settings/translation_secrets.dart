@@ -48,11 +48,24 @@ class TranslationSecrets {
     : _store = store ?? FlutterSecureSecretStore();
 
   final SecretStore _store;
+  String? _sessionApiKey;
+  bool _sessionOnly = false;
+
+  /// 无签名 macOS 包无法使用 Keychain Sharing 时，API Key 只保留在当前进程内。
+  ///
+  /// 这个回退不把密钥写入普通配置或明文文件；应用退出后需要重新输入。
+  bool get sessionOnly => _sessionOnly;
 
   Future<String?> readApiKey() async {
-    final String? value = await _store.read(kTranslationApiKeyStorageKey);
-    final String key = (value ?? '').trim();
-    return key.isEmpty ? null : key;
+    try {
+      final String? value = await _store.read(kTranslationApiKeyStorageKey);
+      final String key = (value ?? '').trim();
+      _sessionOnly = false;
+      return key.isEmpty ? _sessionApiKey : key;
+    } on Object {
+      _sessionOnly = true;
+      return _sessionApiKey;
+    }
   }
 
   Future<void> saveApiKey(String apiKey) async {
@@ -60,13 +73,26 @@ class TranslationSecrets {
     if (key.isEmpty) {
       throw ArgumentError.value(apiKey, 'apiKey', 'API Key 不能为空');
     }
-    await _store.write(kTranslationApiKeyStorageKey, key);
-    await _store.delete(kLegacyDeepLApiKeyStorageKey);
+    try {
+      await _store.write(kTranslationApiKeyStorageKey, key);
+      await _store.delete(kLegacyDeepLApiKeyStorageKey);
+      _sessionApiKey = null;
+      _sessionOnly = false;
+    } on Object {
+      _sessionApiKey = key;
+      _sessionOnly = true;
+    }
   }
 
   Future<void> deleteApiKey() async {
-    await _store.delete(kTranslationApiKeyStorageKey);
-    await _store.delete(kLegacyDeepLApiKeyStorageKey);
+    _sessionApiKey = null;
+    try {
+      await _store.delete(kTranslationApiKeyStorageKey);
+      await _store.delete(kLegacyDeepLApiKeyStorageKey);
+    } on Object {
+      // 无签名 macOS 的 Keychain 可能不可用；当前会话密钥已经清除即可。
+      _sessionOnly = true;
+    }
   }
 
   @Deprecated('请使用 readApiKey')

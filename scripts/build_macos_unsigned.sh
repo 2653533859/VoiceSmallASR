@@ -6,6 +6,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$REPO_ROOT/app"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist/macos}"
 FLUTTER_BIN="${FLUTTER_BIN:-$(command -v flutter || true)}"
+BUILD_NAME="${BUILD_NAME:-$(sed -n 's/^version: \([0-9][0-9.]*\).*/\1/p' "$APP_DIR/pubspec.yaml" | head -n 1)}"
+BUILD_NUMBER="${BUILD_NUMBER:-2}"
 
 if [[ -z "$FLUTTER_BIN" || ! -x "$FLUTTER_BIN" ]]; then
   echo "找不到 Flutter。请设置 FLUTTER_BIN=/path/to/flutter/bin/flutter" >&2
@@ -31,7 +33,9 @@ mkdir -p "$DIST_DIR" "$STAGING_DIR"
 (
   cd "$APP_DIR"
   "$FLUTTER_BIN" pub get
-  "$FLUTTER_BIN" build macos --config-only
+  "$FLUTTER_BIN" build macos --config-only \
+    --build-name "$BUILD_NAME" \
+    --build-number "$BUILD_NUMBER"
 )
 
 (

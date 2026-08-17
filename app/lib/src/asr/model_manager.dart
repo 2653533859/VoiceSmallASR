@@ -9,6 +9,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:archive/archive_io.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -16,7 +17,8 @@ import 'package:path_provider/path_provider.dart';
 /// SenseVoice-Small int8：中/英/粤/日/韩，开启 ITN 时带标点。
 ///
 /// 固定用 2024-07-17 版而非 2025-09-09：后者不支持标点，无法用于字幕。
-const String kAsrModelName = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17';
+const String kAsrModelName =
+    'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17';
 
 /// 识别模型压缩包（约 155 MB，解压后 240 MB）。
 const String kAsrArchiveName = '$kAsrModelName.tar.bz2';
@@ -30,6 +32,14 @@ const String kVadModelName = 'silero_vad.onnx';
 /// 比对的校验形同虚设，只能靠这个下限拦住「下了一半断线」的文件。
 const int kAsrArchiveMinBytes = 100 * 1024 * 1024; // 压缩包实测约 155 MB
 const int kVadModelMinBytes = 512 * 1024; // 实测 643854 字节
+
+/// 解压后的固定模型文件 SHA-256。下载源只负责传输，最终加载前仍要校验内容。
+const String kAsrModelSha256 =
+    'c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51';
+const String kTokensSha256 =
+    'f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc';
+const String kVadModelSha256 =
+    '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6';
 
 /// 连接或响应流连续无数据这么久就切换下一个下载源。
 const Duration kModelDownloadTimeout = Duration(seconds: 60);
@@ -67,12 +77,15 @@ class ModelPaths {
   final String vadModel;
 
   bool get exists =>
-      File(asrModel).existsSync() && File(tokens).existsSync() && File(vadModel).existsSync();
+      File(asrModel).existsSync() &&
+      File(tokens).existsSync() &&
+      File(vadModel).existsSync();
 }
 
 /// 模型管理器：解析路径、检查就绪、按需下载。
 class ModelManager {
-  ModelManager({this.baseUrls = kModelBaseUrls, String? root}) : _cachedRoot = root;
+  ModelManager({this.baseUrls = kModelBaseUrls, String? root})
+    : _cachedRoot = root;
 
   final List<String> baseUrls;
 
@@ -87,7 +100,8 @@ class ModelManager {
     final String? cached = _cachedRoot;
     if (cached != null) return cached;
     final Directory support = await getApplicationSupportDirectory();
-    final String? environmentRoot = Platform.environment['VSASR_MODEL_DIR']?.trim();
+    final String? environmentRoot = Platform.environment['VSASR_MODEL_DIR']
+        ?.trim();
     final String root = environmentRoot == null || environmentRoot.isEmpty
         ? p.join(support.path, 'models')
         : environmentRoot;
@@ -110,12 +124,22 @@ class ModelManager {
   /// 模型是否已完整存在于本地。
   Future<bool> isReady() async => (await resolvePaths()).exists;
 
+  /// 校验模型文件内容，防止截断、损坏或代理源返回错误文件。
+  Future<void> verifyIntegrity(ModelPaths paths) async {
+    await _verifyFile(paths.asrModel, kAsrModelSha256);
+    await _verifyFile(paths.tokens, kTokensSha256);
+    await _verifyFile(paths.vadModel, kVadModelSha256);
+  }
+
   /// 已占用的磁盘空间（字节），用于设置页展示。
   Future<int> usedBytes() async {
     final Directory dir = Directory(await resolveRoot());
     if (!dir.existsSync()) return 0;
     int total = 0;
-    await for (final FileSystemEntity entity in dir.list(recursive: true, followLinks: false)) {
+    await for (final FileSystemEntity entity in dir.list(
+      recursive: true,
+      followLinks: false,
+    )) {
       if (entity is File) total += await entity.length();
     }
     return total;
@@ -125,6 +149,19 @@ class ModelManager {
   Future<void> deleteAll() async {
     final Directory dir = Directory(await resolveRoot());
     if (dir.existsSync()) await dir.delete(recursive: true);
+  }
+
+  Future<void> _removeInvalidFiles(ModelPaths paths) async {
+    final Directory asrDir = Directory(p.dirname(paths.asrModel));
+    if (asrDir.existsSync()) await asrDir.delete(recursive: true);
+    final File vad = File(paths.vadModel);
+    if (vad.existsSync()) await vad.delete();
+    final File archive = File(p.join(paths.root, '_archives', kAsrArchiveName));
+    if (archive.existsSync()) await archive.delete();
+    final Directory archiveDir = archive.parent;
+    if (archiveDir.existsSync() && archiveDir.listSync().isEmpty) {
+      await archiveDir.delete();
+    }
   }
 
   /// 依次尝试各下载源，任一成功即返回；全部失败则抛出最后一个错误。
@@ -138,7 +175,15 @@ class ModelManager {
     for (int i = 0; i < baseUrls.length; i++) {
       final String url = '${baseUrls[i]}/$fileName';
       try {
-        await _download(url, dest, fileName, i + 1, baseUrls.length, progress, minBytes);
+        await _download(
+          url,
+          dest,
+          fileName,
+          i + 1,
+          baseUrls.length,
+          progress,
+          minBytes,
+        );
         return;
       } catch (error) {
         lastError = error;
@@ -174,7 +219,9 @@ class ModelManager {
       final IOSink sink = tmp.openWrite();
       final String stage = '下载 $label（源 $sourceIndex/$sourceCount）';
       try {
-        await response.stream.timeout(kModelDownloadTimeout).forEach((List<int> chunk) {
+        await response.stream.timeout(kModelDownloadTimeout).forEach((
+          List<int> chunk,
+        ) {
           sink.add(chunk);
           done += chunk.length;
           progress?.call(stage, done, total);
@@ -212,7 +259,17 @@ class ModelManager {
     ModelProgress? progress,
   }) async {
     final ModelPaths paths = await resolvePaths();
-    if (paths.exists) return paths;
+    if (paths.exists) {
+      try {
+        await verifyIntegrity(paths);
+        return paths;
+      } on Object catch (error) {
+        if (!allowDownload) {
+          throw StateError('模型完整性校验失败：$error');
+        }
+        await _removeInvalidFiles(paths);
+      }
+    }
     if (!allowDownload) {
       throw StateError('模型不完整且已禁止下载。请把模型放到 ${paths.root}');
     }
@@ -221,8 +278,11 @@ class ModelManager {
     await root.create(recursive: true);
 
     // 识别模型：压缩包下载 + 解压
-    if (!File(paths.asrModel).existsSync() || !File(paths.tokens).existsSync()) {
-      final File archive = File(p.join(paths.root, '_archives', kAsrArchiveName));
+    if (!File(paths.asrModel).existsSync() ||
+        !File(paths.tokens).existsSync()) {
+      final File archive = File(
+        p.join(paths.root, '_archives', kAsrArchiveName),
+      );
       if (!archive.existsSync()) {
         await _downloadWithFallback(
           kAsrArchiveName,
@@ -254,14 +314,37 @@ class ModelManager {
     // VAD：单文件，直接下载
     final File vad = File(paths.vadModel);
     if (!vad.existsSync()) {
-      await _downloadWithFallback(kVadModelName, vad, progress, minBytes: kVadModelMinBytes);
+      await _downloadWithFallback(
+        kVadModelName,
+        vad,
+        progress,
+        minBytes: kVadModelMinBytes,
+      );
     }
 
     final ModelPaths result = await resolvePaths();
     if (!result.exists) {
       throw StateError('模型准备失败，请检查 ${result.root} 的内容与磁盘空间');
     }
+    try {
+      await verifyIntegrity(result);
+    } on Object catch (error) {
+      await _removeInvalidFiles(result);
+      throw StateError('模型完整性校验失败：$error');
+    }
     progress?.call('模型就绪', 1, 1);
     return result;
+  }
+}
+
+Future<void> _verifyFile(String path, String expected) async {
+  final File file = File(path);
+  if (!await file.exists()) {
+    throw StateError('缺少模型文件：$path');
+  }
+  final crypto.Digest digest = await crypto.sha256.bind(file.openRead()).first;
+  final String actual = digest.toString();
+  if (actual != expected) {
+    throw StateError('模型文件校验失败：$path');
   }
 }

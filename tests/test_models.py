@@ -226,6 +226,27 @@ def test_corrupt_archive_is_deleted_so_next_run_can_retry(monkeypatch, tmp_path:
     assert not archive.exists()
 
 
+def test_integrity_failure_deletes_stale_archive_before_retry(monkeypatch, tmp_path: Path) -> None:
+    """坏的解压文件不能让同一个坏压缩包在重试时被重复使用。"""
+    asr = tmp_path / models.ASR_MODEL.name
+    asr.mkdir(parents=True)
+    (asr / "model.int8.onnx").write_bytes(b"bad")
+    (asr / "tokens.txt").write_bytes(b"bad")
+    (tmp_path / models.VAD_MODEL.name).write_bytes(b"bad")
+    archive = tmp_path / "_archives" / models.ASR_MODEL.archive_name
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"stale archive")
+
+    def stop_before_redownload(spec, dest, progress):
+        assert spec is models.ASR_MODEL
+        assert not archive.exists()
+        raise RuntimeError("stop after cache cleanup")
+
+    monkeypatch.setattr(models, "_download_with_fallback", stop_before_redownload)
+    with pytest.raises(RuntimeError, match="stop after cache cleanup"):
+        models.ensure(tmp_path)
+
+
 def test_resolve_paths_layout(tmp_path: Path) -> None:
     paths = models.resolve_paths(tmp_path)
     assert paths.asr_model == tmp_path / models.ASR_MODEL.name / "model.int8.onnx"
@@ -244,6 +265,16 @@ def test_is_ready_true_when_all_files_present(tmp_path: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.touch()
     assert models.is_ready(tmp_path) is True
+
+
+def test_verify_integrity_rejects_tampered_model(tmp_path: Path) -> None:
+    paths = models.resolve_paths(tmp_path)
+    for target in (paths.asr_model, paths.tokens, paths.vad_model):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"tampered")
+
+    with pytest.raises(OSError, match="模型文件校验失败"):
+        models.verify_integrity(paths)
 
 
 def test_offline_mode_gives_actionable_error(tmp_path: Path) -> None:

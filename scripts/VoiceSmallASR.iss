@@ -1,5 +1,8 @@
 #define MyAppName "VoiceSmallASR"
-#define MyAppVersion "1.0.0"
+#ifndef AppVersion
+  #define AppVersion "1.0.2"
+#endif
+#define MyAppVersion AppVersion
 #define MyAppPublisher "VoiceSmallASR"
 #define MyAppExeName "vsasr_app.exe"
 

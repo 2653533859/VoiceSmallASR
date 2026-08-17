@@ -1,6 +1,8 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-17　　当前版本：1.0.0
+> 更新日期：2026-08-17　　当前版本：1.0.1
+
+后续版本的稳定化、发布治理和产品功能计划见 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)。
 
 ## 1. 现状速览
 
@@ -8,8 +10,8 @@
 
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
-| **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时字幕/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB、Windows Release/安装包和三端 GitHub Release，Android 可选外部签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行验证；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
+| **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，107 项测试通过 | CLI 工具、服务端集成、批处理 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的三端安装包和 GitHub Release，M8 发布质量基线代码已落地**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（160 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行验证；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -63,7 +65,7 @@ VoiceSmallASR/
 │   ├── macos/Runner/MainFlutterWindow.swift 原生解码（AVAssetReader）
 │   └── windows/runner/audio_decoder.cpp     原生解码（IMFSourceReader）
 ├── examples/                   Python 集成示例
-├── tests/                      Python 测试（105 项）
+├── tests/                      Python 测试（107 项）
 └── DEVELOPMENT_PLAN.md         本文档
 ```
 
@@ -81,7 +83,7 @@ VoiceSmallASR/
 - **模型下载三源 fallback**（GitHub → ghfast.top → gh-proxy.com），与 Flutter 端 `kModelBaseUrls`
   同源同序；任一源不通或返回截断内容都自动换下一个，全部失败时报"已尝试 N 个源"
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
-- 105 项测试，单元测试与模型集成测试分层
+- 107 项测试，单元测试与模型集成测试分层
 
 ### Flutter 端（M1、M2、M3、M5 完成，M4 基础、批量流程、双语导出、第三方 API provider、文件/实时字幕/视频字幕翻译工作流已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，相关测试通过）
 
@@ -191,14 +193,14 @@ VoiceSmallASR/
   - 支持文本、起止时间、合并、拆分；文本变化清除过期译文和 token 时间戳，时间变化清除过期 token 时间戳
   - 首页和视频页接入字幕校对入口，编辑页可定位播放器时间点，保存后回写主转写结果
   - 导出前统一校验时间轴，拒绝负时间、无效区间、重叠/倒序和超出音频时长的字幕
-  - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 149 项通过
+  - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 160 项通过
 
 - **应用内翻译工作流（M4，2026-08-16）**：
   - 主转写页和视频播放页新增翻译入口，从系统安全存储读取第三方翻译 API Key，设置页可配置 endpoint/模型，provider 可注入测试替身
   - 实时字幕页新增“实时翻译”开关，定稿字幕进入串行翻译队列，译文异步显示在原文下方；停止/销毁时使未开始的排队请求失效，避免网络异常逐条阻塞收尾
   - 翻译期间锁定转写状态并显示批量进度；所有批次成功后才一次性写回译文，失败时保留原识别结果
   - 转写列表显示译文，后续 SRT/VTT/TXT/JSON 导出和视频字幕叠加复用同一份结果
-  - 新增 4 项状态机/界面回归测试；全量 `flutter test` 已增至 149 项
+  - 新增 4 项状态机/界面回归测试；全量 `flutter test` 已增至 160 项
 
 ### 环境
 
@@ -245,7 +247,7 @@ Run 31919855391                完整模型 e2e 7 项、桌面 smoke、产物校
 | 事项 | 说明 | 状态 |
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
-| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **149 项通过** | ✅ 完成 |
+| 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **160 项通过** | ✅ 完成 |
 | Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；个人使用的无签名包已满足目标，普通 `flutter build macos --debug` 的开发证书仅在需要正式签名运行/发布时才需要。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ✅ 个人使用构建完成 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
@@ -337,7 +339,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 - [x] 语言、线程数、VAD 断句灵敏度、临时结果间隔；设置保存到 `shared_preferences`
 - [x] 模型下载/删除/占用空间、离线模式开关
-- [x] API Key 安全存储基础：`flutter_secure_storage` 适配器、固定存储键、非空校验、读取/删除和 macOS Keychain entitlements
+- [x] API Key 安全存储基础：`flutter_secure_storage` 适配器、固定存储键、非空校验、读取/删除和 macOS Keychain entitlements；无签名环境不可用时退回当前会话存储
 - [x] 设置页接入第三方翻译 API 配置（endpoint、模型和 API key 不落普通明文配置）
 - [x] 验收：保存后立即应用并重启启动时恢复；控制器重启和持久化分别有测试覆盖
 
@@ -349,7 +351,16 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] Windows exe + 安装包（GitHub Actions run `31912544699` 已通过；自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，Release 目录约 111 MiB，`VoiceSmallASR-unsigned-setup.exe` 约 31 MiB，未签名）
 - [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；个人使用不要求开发者证书，App Store/公证发布另行配置
 - [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB，Windows CI 也自动拒绝 `.onnx`、`.tar`、`.bz2` 和 `tokens.txt`
-- [x] 三端 GitHub Release —— `.github/workflows/release.yml` 已在云端完成 `v1.0.0` 发布（run `31978719431`），包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包：[GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.0)
+- [x] 三端 GitHub Release —— `.github/workflows/release.yml` 已在云端完成 `v1.0.1` 发布，包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包：[GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.1)
+
+### M8 · 发布质量基线（v1.0.2，代码已落地）
+
+- [x] Python/Flutter 质量门禁：pytest、Ruff、Flutter analyze、Flutter 全量测试；失败时阻止 Release job
+- [x] Release Tag 注入 Android、macOS、Windows 应用版本，并检查 Tag 与 `app/pubspec.yaml` 一致
+- [x] 三端最终产物排除模型文件：Android APK/AAB、macOS App/ZIP/DMG、Windows Release 目录
+- [x] Release job 生成 `SHA256SUMS.txt` 和 `BUILD_INFO.txt`，上传到 GitHub Release
+- [x] 模型完整性校验失败时清理旧压缩包，允许下一次从下载源重新获取
+- [ ] 推送 `v1.0.2` Tag，完成一次云端全流程 Release 验收
 
 ## 5. 决策记录与待决策事项
 
@@ -432,9 +443,8 @@ API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.de
   不加则 file_picker 选中的文件读不出来。两个 entitlements 文件（Debug/Release）都要改。
 - **`flutter_secure_storage` 的 macOS Keychain Sharing 需要签名能力**：Debug/Release 两个
   entitlements 都要加 `keychain-access-groups`；没有开发证书时可用
-  `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` 验证编译并生成个人使用的无签名包，
-  但无法用普通 `flutter build macos --debug` 完成带 Keychain Sharing 的签名包。若个人使用需要 macOS
-  持久化第三方翻译 API Key，仍需另行提供可用的签名运行环境；这不影响不依赖该能力的本地识别功能。
+  `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` 验证编译并生成个人使用的无签名包。
+  当前应用检测到安全存储不可用时会退回仅当前会话的 API Key，不写入普通配置；需要跨重启持久化时仍需签名运行环境。
 - **Android 的 `INTERNET` 权限在 release 包里会消失**：Flutter 模板只在
   `debug/` 与 `profile/` 的 manifest 里声明它（那是给 hot reload 用的），
   `main/AndroidManifest.xml` 不写就等于 release 包没有网络权限。
@@ -574,7 +584,7 @@ API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.de
 # Python 端
 uv sync --extra mic
 uv run vsasr download          # 首次下载模型（约 155 MB 压缩包，三源自动 fallback）
-uv run pytest                  # 105 项应全绿；未下模型时是 87 passed / 18 skipped
+uv run pytest                  # 107 项应全绿；未下模型时集成测试会自动跳过
 
 # Flutter 端（国内先设 SDK 镜像，否则引擎产物下载慢到不可用）
 export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
@@ -583,7 +593,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"
 cd app
 flutter pub get
 flutter analyze                # 应为 No issues found
-flutter test                   # 149 项应全绿（不需要模型、不需要设备）
+flutter test                   # 160 项应全绿（不需要模型、不需要设备）
 
 # macOS 构建前必做一步：把 pub 抹掉的 framework 符号链接补回去（见 §6），
 # 否则 codesign 报 "code object is not signed at all"
@@ -645,7 +655,7 @@ unzip -q flutter.zip -d ~/development
 
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
-| GitHub 模型下载在国内不通，镜像也失效 | 用户装完 App 拿不到模型，功能完全不可用 | 🟡 已降级：三源已实测可达（macOS 机器，见 §6），两端均已实现 fallback + 截断校验；剩余未知是国内网络下的实际可达性，需在国内机器复测。若届时全挂，再接 ModelScope / 国内对象存储作为第四源（需单独取址逻辑） |
+| GitHub 模型下载在国内不通，镜像也失效 | 用户装完 App 拿不到模型，功能完全不可用 | 🟡 已降级：三源已实现 fallback、截断校验和解压后 SHA-256 校验；剩余未知是国内网络下的实际可达性，需在国内机器复测。若届时全挂，再接 ModelScope / 国内对象存储作为第四源（需单独取址逻辑） |
 | 音频解码方案落空 | M1/M3 返工 | 🟡 已收敛：改为三端各写原生解码并已全部落地（见 §5 已决策 1），Dart 侧分发逻辑有 33 项单测兜底；macOS、Android 模拟器和 Windows CI 完整模型 e2e 已运行验证，用户桌面差异和 Android 真机性能仍待实测 |
 | Android 中低端机跑 int8 SenseVoice 太慢 | 实时字幕体验不可用 | 先在真机实测 RTF；必要时降低线程数、增大 VAD 分段、或只在桌面端提供实时功能 |
 | 无 Mac 设备 | macOS 端始终无法验证与分发 | 🟡 设备与工具链已具备：Flutter 3.47.0 + Xcode 26.6 + CocoaPods 1.17.0；个人使用的无签名模式编译通过，带 Keychain Sharing 的签名包仅在需要正式签名运行/发布时配置 |

@@ -280,7 +280,15 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text('API 地址和模型名保存到普通设置；API Key 只保存到系统安全存储。'),
+                if (widget.repository.translationSecrets.sessionOnly)
+                  Text(
+                    '当前系统安全存储不可用，API Key 只保存在本次运行内；退出应用后需要重新输入。',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.tertiary,
+                    ),
+                  )
+                else
+                  const Text('API 地址和模型名保存到普通设置；API Key 只保存到系统安全存储。'),
                 const Divider(height: 24),
                 Text('实时识别', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),

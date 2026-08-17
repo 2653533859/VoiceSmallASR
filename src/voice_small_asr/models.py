@@ -9,6 +9,7 @@ github.com 常超时，因此备了两个 GitHub Release 公共代理镜像。
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import shutil
 import tarfile
@@ -83,6 +84,11 @@ VAD_MODEL = ModelSpec(
     min_bytes=512 * 1024,  # 实测 643854 字节
 )
 
+# 解压后的固定模型文件 SHA-256。最终加载前校验内容，避免把截断或错误响应当作缓存。
+ASR_MODEL_SHA256 = "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"
+TOKENS_SHA256 = "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
+VAD_MODEL_SHA256 = "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+
 
 @dataclass(frozen=True, slots=True)
 class ModelPaths:
@@ -112,6 +118,32 @@ def is_ready(model_dir: Path | None = None) -> bool:
     """模型是否已完整存在于本地。"""
     paths = resolve_paths(model_dir)
     return all(p.is_file() for p in (paths.asr_model, paths.tokens, paths.vad_model))
+
+
+def verify_integrity(paths: ModelPaths) -> None:
+    """校验模型文件内容，防止损坏或代理源返回错误文件。"""
+    expected = {
+        paths.asr_model: ASR_MODEL_SHA256,
+        paths.tokens: TOKENS_SHA256,
+        paths.vad_model: VAD_MODEL_SHA256,
+    }
+    for path, wanted in expected.items():
+        if not path.is_file():
+            raise OSError(f"缺少模型文件：{path}")
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
+        if actual != wanted:
+            raise OSError(f"模型文件校验失败：{path}")
+
+
+def _remove_invalid_cache(root: Path, paths: ModelPaths) -> None:
+    """删除坏的解压目录、VAD 和压缩包，确保下一次会重新下载。"""
+    shutil.rmtree(paths.asr_model.parent, ignore_errors=True)
+    paths.vad_model.unlink(missing_ok=True)
+    (root / "_archives" / ASR_MODEL.archive_name).unlink(missing_ok=True)
 
 
 def _download(
@@ -209,7 +241,14 @@ def ensure(
     """确保模型就绪并返回路径；缺失时按需下载。"""
     root = Path(model_dir) if model_dir is not None else default_model_dir()
     if is_ready(root):
-        return resolve_paths(root)
+        paths = resolve_paths(root)
+        try:
+            verify_integrity(paths)
+            return paths
+        except OSError as exc:
+            if not allow_download:
+                raise OSError(f"模型完整性校验失败：{exc}") from exc
+            _remove_invalid_cache(root, paths)
     if not allow_download:
         raise FileNotFoundError(
             f"模型不完整且已禁止下载。请把模型放到 {root}，"
@@ -240,4 +279,10 @@ def ensure(
         shutil.rmtree(archives, ignore_errors=True)
     if not is_ready(root):
         raise RuntimeError(f"模型准备失败，请检查 {root} 的内容与磁盘空间")
-    return resolve_paths(root)
+    paths = resolve_paths(root)
+    try:
+        verify_integrity(paths)
+    except OSError as exc:
+        _remove_invalid_cache(root, paths)
+        raise OSError(f"模型完整性校验失败：{exc}") from exc
+    return paths

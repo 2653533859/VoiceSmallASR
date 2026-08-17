@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$Flutter = "flutter"
+    [string]$Flutter = "flutter",
+    [string]$BuildName = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +10,15 @@ $appDir = Join-Path $repoRoot "app"
 $releaseDir = Join-Path $appDir "build\windows\x64\runner\Release"
 $outputDir = Join-Path $repoRoot "dist\windows"
 $issFile = Join-Path $repoRoot "scripts\VoiceSmallASR.iss"
+
+if ([string]::IsNullOrWhiteSpace($BuildName)) {
+    $pubspec = Get-Content (Join-Path $appDir "pubspec.yaml") -Raw
+    $match = [regex]::Match($pubspec, '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)')
+    if (-not $match.Success) {
+        throw "无法从 app/pubspec.yaml 读取应用版本"
+    }
+    $BuildName = $match.Groups[1].Value
+}
 
 function Invoke-Checked {
     param(
@@ -24,7 +34,9 @@ function Invoke-Checked {
 Push-Location $appDir
 try {
     Invoke-Checked -File $Flutter -Arguments @("pub", "get")
-    Invoke-Checked -File $Flutter -Arguments @("build", "windows", "--release")
+    Invoke-Checked -File $Flutter -Arguments @(
+        "build", "windows", "--release", "--build-name", $BuildName
+    )
 }
 finally {
     Pop-Location
@@ -43,6 +55,7 @@ if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 Invoke-Checked -File $iscc -Arguments @(
     "/DAppBuildDir=$releaseDir",
+    "/DAppVersion=$BuildName",
     "/O$outputDir",
     $issFile
 )

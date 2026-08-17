@@ -59,7 +59,7 @@ class LiveController extends ChangeNotifier {
   LiveSession? _session;
   StreamSubscription<Segment>? _segments;
   StreamSubscription<Float32List>? _audio;
-  Future<void> _translationQueue = Future<void>.value();
+  Future<void>? _translationQueue;
   int _translationGeneration = 0;
   TranslationProvider? _translationProvider;
   Object? _translationProviderError;
@@ -139,7 +139,7 @@ class LiveController extends ChangeNotifier {
       _errorText = _humanize(error);
       await _teardown();
       _translationGeneration++;
-      await _translationQueue;
+      await _awaitTranslationQueue();
       _closeTranslationProvider();
       _stage = LiveStage.idle;
     }
@@ -159,7 +159,7 @@ class LiveController extends ChangeNotifier {
     _partial = null;
     // 使尚未开始的排队请求失效；当前正在进行的请求最多只需等待一次超时。
     _translationGeneration++;
-    await _translationQueue;
+    await _awaitTranslationQueue();
     _closeTranslationProvider();
     _stage = LiveStage.idle;
     notifyListeners();
@@ -202,7 +202,8 @@ class LiveController extends ChangeNotifier {
   }
 
   void _queueTranslation(Segment segment, int generation) {
-    _translationQueue = _translationQueue.then<void>((_) async {
+    final Future<void> previous = _translationQueue ?? Future<void>.value();
+    _translationQueue = previous.then<void>((_) async {
       try {
         await _translateFinal(segment, generation);
       } on Object catch (error) {
@@ -292,7 +293,7 @@ class LiveController extends ChangeNotifier {
   Future<void> shutdown() async {
     await _teardown();
     _translationGeneration++;
-    await _translationQueue;
+    await _awaitTranslationQueue();
     _closeTranslationProvider();
     _stage = LiveStage.idle;
   }
@@ -317,6 +318,12 @@ class LiveController extends ChangeNotifier {
       _translationProviderErrorStack = stack;
       Error.throwWithStackTrace(error, stack);
     }
+  }
+
+  Future<void> _awaitTranslationQueue() async {
+    final Future<void>? pending = _translationQueue;
+    _translationQueue = null;
+    if (pending != null) await pending;
   }
 
   void _resetTranslationProvider() {

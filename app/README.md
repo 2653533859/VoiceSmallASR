@@ -11,11 +11,11 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 | 层 | 状态 |
 | --- | --- |
 | 引擎层（`lib/src/asr/`） | ✅ 已移植，与 Python 端一一对应（含 VAD 驱动的流式识别） |
-| 音频解码（`lib/src/audio/`） | ✅ Dart 侧完成；macOS 原生解码已端到端验证，Android API 35 模拟器已端到端验证，Windows 已写但未编译 |
+| 音频解码（`lib/src/audio/`） | ✅ Dart 侧完成；macOS、Android API 35 模拟器和 Windows CI 已端到端验证，Android 真机与 Windows 用户桌面仍待实测 |
 | 麦克风采集（`lib/src/audio/microphone.dart`） | ✅ `record` 取 16 kHz 单声道 PCM16 → float32 |
 | 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道 |
 | 字幕导出（`lib/src/subtitles/`） | ✅ 含双语字幕 |
-| 翻译层（`lib/src/translation/`） | 🚧 M4 基础抽象、批量/重试/进度、双语导出、DeepL provider 与文件转写页翻译入口已完成；M6 设置页、模型管理与离线模式已接入，真实网络验收待完成 |
+| 翻译层（`lib/src/translation/`） | ✅ 第三方 OpenAI-compatible provider、批量/重试/进度、双语导出、文件/实时/视频字幕翻译已完成；真实网络验收按个人使用范围主动跳过 |
 | 界面（`lib/src/ui/`） | ✅ M1、M2、M3、M5 完成：文件转写、实时字幕、视频播放、字幕联动、字幕校对编辑 |
 
 ## 开发
@@ -26,7 +26,7 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 
 flutter pub get
 flutter analyze     # 验收标准：No issues found
-flutter test        # 149 项，不依赖模型与设备
+flutter test        # 160 项，不依赖模型与设备
 
 # Android release 构建（需要 Android SDK/JDK；当前 release 使用 debug signing 做验证）
 flutter build apk --release
@@ -47,7 +47,7 @@ flutter test integration_test/e2e_test.dart -d macos
 改写成镜像地址并重新解析依赖，那样的 lock 不应提交。
 
 构建/运行各平台的前置条件：macOS 需 Xcode + CocoaPods（media_kit 的 macOS 插件当前不支持 Swift Package Manager；
-本机已装；无签名模式的 Xcode 构建通过，带 Keychain Sharing 的 `flutter build macos --debug` 需要开发证书）；
+本机已装；无签名模式的 Xcode 构建通过，Keychain Sharing 不可用时 API Key 会退回当前会话存储）；
 Windows 需开发者模式 + Visual Studio C++ 工具链；
 Android 需真机或模拟器。
 

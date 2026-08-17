@@ -27,6 +27,13 @@ void main() {
   });
   tearDown(() => workspace.deleteSync(recursive: true));
 
+  /// 只推进有限帧，避免页面或插件留下的常驻动画让 pumpAndSettle 永不返回。
+  Future<void> pumpUi(WidgetTester tester) async {
+    for (int i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  }
+
   /// 装好「文件转写 + 实时字幕」两个控制器，直接落在实时字幕页签上。
   Future<(LiveController, FakeMicrophone)> show(
     WidgetTester tester, {
@@ -54,12 +61,14 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MaterialApp(home: HomePage(controller: controller, live: live, saveFile: saveFile)),
+      MaterialApp(
+        home: HomePage(controller: controller, live: live, saveFile: saveFile),
+      ),
     );
     await tester.pump(); // refreshModel
     await tester.pump();
     await tester.tap(find.text('实时字幕'));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
     return (live, microphone);
   }
 
@@ -93,7 +102,7 @@ void main() {
     final (LiveController live, _) = await show(tester);
 
     await tester.tap(find.text('开始录音'));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     expect(live.recording, isTrue);
     expect(find.text('停止'), findsOneWidget);
@@ -109,21 +118,27 @@ void main() {
   testWidgets('临时结果原地刷新，定稿后带序号与时间戳落在列表里', (WidgetTester tester) async {
     await show(tester);
     await tester.tap(find.text('开始录音'));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     final FakeLiveSession session = transcriber.live!;
-    session.emit(const Segment(text: '今日天', start: 0.0, end: 1.0, isFinal: false));
-    await tester.pumpAndSettle();
+    session.emit(
+      const Segment(text: '今日天', start: 0.0, end: 1.0, isFinal: false),
+    );
+    await pumpUi(tester);
     // 临时结果带省略号，提示这行还没定
     expect(find.text('今日天 …'), findsOneWidget);
 
-    session.emit(const Segment(text: '今日天气', start: 0.0, end: 1.4, isFinal: false));
-    await tester.pumpAndSettle();
+    session.emit(
+      const Segment(text: '今日天气', start: 0.0, end: 1.4, isFinal: false),
+    );
+    await pumpUi(tester);
     expect(find.text('今日天 …'), findsNothing); // 原地替换，不是追加
     expect(find.text('今日天气 …'), findsOneWidget);
 
-    session.emit(const Segment(text: '今日天气几好。', start: 0.0, end: 1.8, index: 0));
-    await tester.pumpAndSettle();
+    session.emit(
+      const Segment(text: '今日天气几好。', start: 0.0, end: 1.8, index: 0),
+    );
+    await pumpUi(tester);
     expect(find.text('今日天气几好。'), findsOneWidget);
     expect(find.textContaining(' …'), findsNothing);
     expect(find.text('1'), findsOneWidget); // 序号从 1 显示
@@ -136,7 +151,7 @@ void main() {
     expect(tester.widget<DropdownButton<String>>(picker).onChanged, isNotNull);
 
     await tester.tap(find.text('开始录音'));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
     expect(tester.widget<DropdownButton<String>>(picker).onChanged, isNull);
 
     await stopRecording(tester);
@@ -147,7 +162,10 @@ void main() {
     await show(tester);
 
     OutlinedButton buttonOf(String label) => tester.widget<OutlinedButton>(
-      find.ancestor(of: find.text(label), matching: find.byType(OutlinedButton)),
+      find.ancestor(
+        of: find.text(label),
+        matching: find.byType(OutlinedButton),
+      ),
     );
     expect(buttonOf('导出字幕').onPressed, isNull);
     expect(buttonOf('清空').onPressed, isNull);
@@ -164,34 +182,41 @@ void main() {
     );
 
     await tester.tap(find.text('开始录音'));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
     final FakeLiveSession session = transcriber.live!;
     session.emit(const Segment(text: '第一句。', start: 0.0, end: 1.0, index: 0));
-    session.emit(const Segment(text: '没定的半句', start: 1.2, end: 1.6, isFinal: false));
-    await tester.pumpAndSettle();
+    session.emit(
+      const Segment(text: '没定的半句', start: 1.2, end: 1.6, isFinal: false),
+    );
+    await pumpUi(tester);
     await stopRecording(tester);
 
     await tester.tap(find.text('导出字幕'));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
     await tester.tap(find.textContaining('SRT — '));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     expect(saved.single.$1, 'live.srt');
     expect(saved.single.$2, contains('第一句。'));
     expect(saved.single.$2, isNot(contains('没定的半句')));
-    expect(find.textContaining('已导出到 /Users/me/Desktop/live.srt'), findsOneWidget);
+    expect(
+      find.textContaining('已导出到 /Users/me/Desktop/live.srt'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('清空把列表和状态一起收掉', (WidgetTester tester) async {
     await show(tester);
     await tester.tap(find.text('开始录音'));
-    await tester.pumpAndSettle();
-    transcriber.live!.emit(const Segment(text: '第一句。', start: 0.0, end: 1.0, index: 0));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
+    transcriber.live!.emit(
+      const Segment(text: '第一句。', start: 0.0, end: 1.0, index: 0),
+    );
+    await pumpUi(tester);
     await stopRecording(tester);
 
     await tester.tap(find.text('清空'));
-    await tester.pumpAndSettle();
+    await pumpUi(tester);
 
     expect(find.text('第一句。'), findsNothing);
     expect(find.text('点「开始录音」，边说边出字幕'), findsOneWidget);
@@ -200,7 +225,9 @@ void main() {
   testWidgets('没有麦克风权限时把中文说明显示在错误框里', (WidgetTester tester) async {
     await show(
       tester,
-      mic: FakeMicrophone(failure: const MicrophoneException('没有麦克风权限，请在系统设置里允许')),
+      mic: FakeMicrophone(
+        failure: const MicrophoneException('没有麦克风权限，请在系统设置里允许'),
+      ),
     );
 
     await tester.tap(find.text('开始录音'));

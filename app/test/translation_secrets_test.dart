@@ -46,6 +46,22 @@ void main() {
     expect(store.values[kTranslationApiKeyStorageKey], 'new-provider-key');
     expect(store.values.containsKey(kLegacyDeepLApiKeyStorageKey), isFalse);
   });
+
+  test('系统安全存储不可用时只在当前会话保留 API Key', () async {
+    final TranslationSecrets secrets = TranslationSecrets(
+      store: _FailingSecretStore(),
+    );
+
+    expect(await secrets.readApiKey(), isNull);
+    expect(secrets.sessionOnly, isTrue);
+
+    await secrets.saveApiKey('session-key');
+    expect(await secrets.readApiKey(), 'session-key');
+    expect(secrets.sessionOnly, isTrue);
+
+    await secrets.deleteApiKey();
+    expect(await secrets.readApiKey(), isNull);
+  });
 }
 
 class _FakeSecretStore implements SecretStore {
@@ -65,4 +81,17 @@ class _FakeSecretStore implements SecretStore {
   Future<void> delete(String key) async {
     values.remove(key);
   }
+}
+
+class _FailingSecretStore implements SecretStore {
+  StateError _failure() => StateError('Keychain Sharing unavailable');
+
+  @override
+  Future<String?> read(String key) async => throw _failure();
+
+  @override
+  Future<void> write(String key, String value) async => throw _failure();
+
+  @override
+  Future<void> delete(String key) async => throw _failure();
 }

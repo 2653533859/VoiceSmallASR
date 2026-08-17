@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "要创建或更新的 Release tag，例如 v1.0.0"
+        description: "要创建或更新的 Release tag，例如 v1.0.2"
         required: true
         type: string
 
@@ -19,6 +19,53 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Check release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="${RELEASE_TAG#v}"
+          app_version="$(sed -n 's/^version: \([0-9][0-9.]*\).*/\1/p' app/pubspec.yaml | head -n 1)"
+          test "$release_version" = "$app_version"
+
+      - name: Run Python checks
+        run: |
+          uv sync --locked
+          uv run pytest
+          uv run ruff check .
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Run Flutter checks
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test --no-pub
+
   android:
     name: Android APK and AAB
     runs-on: ubuntu-24.04
@@ -47,8 +94,9 @@ jobs:
       - name: Build personal-use APK and AAB
         working-directory: app
         run: |
-          flutter build apk --release
-          flutter build appbundle --release
+          release_version="${RELEASE_TAG#v}"
+          flutter build apk --release --build-name "$release_version" --build-number "$GITHUB_RUN_NUMBER"
+          flutter build appbundle --release --build-name "$release_version" --build-number "$GITHUB_RUN_NUMBER"
           mkdir -p dist/android
           cp build/app/outputs/apk/release/app-release.apk "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk"
           cp build/app/outputs/bundle/release/app-release.aab "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.aab"
@@ -61,10 +109,14 @@ jobs:
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK is not configured}}"
           build_tools_dir="$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools_dir/apksigner" verify --verbose "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk"
-          if unzip -l "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk" | grep -Eiq '\.(onnx|tar|bz2)$|tokens\.txt'; then
-            echo "Android APK contains model files" >&2
-            exit 1
-          fi
+          for asset in \
+            "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk" \
+            "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.aab"; do
+            if unzip -l "$asset" | grep -Eiq '\.(onnx|tar|bz2)$|tokens\.txt'; then
+              echo "Android asset contains model files: $asset" >&2
+              exit 1
+            fi
+          done
           test -s "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.aab"
 
       - name: Upload Android release assets
@@ -91,12 +143,24 @@ jobs:
 
       - name: Build personal-use macOS app and DMG
         run: |
-          FLUTTER_BIN="$(command -v flutter)" ./scripts/build_macos_unsigned.sh
+          BUILD_NAME="${RELEASE_TAG#v}" BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
+            FLUTTER_BIN="$(command -v flutter)" ./scripts/build_macos_unsigned.sh
           ditto -c -k --sequesterRsrc --keepParent \
             dist/macos/VoiceSmallASR.app \
             "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip"
           cp dist/macos/VoiceSmallASR-unsigned.dmg \
             "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg"
+          ./scripts/verify_model_exclusion.sh dist/macos/VoiceSmallASR.app
+          if unzip -l "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip" | grep -Eiq '\.(onnx|tar|bz2)$|tokens\.txt'; then
+            echo "macOS ZIP contains model files" >&2
+            exit 1
+          fi
+          mount_point="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly \
+            -mountpoint "$mount_point" \
+            "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg" >/dev/null
+          trap 'hdiutil detach "$mount_point" >/dev/null 2>&1 || true' EXIT
+          ./scripts/verify_model_exclusion.sh "$mount_point"
           hdiutil imageinfo "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg" >/dev/null
 
       - name: Upload macOS release assets
@@ -128,7 +192,8 @@ jobs:
       - name: Build personal-use Windows installer
         shell: pwsh
         run: |
-          ./scripts/build_windows_unsigned.ps1 -Flutter flutter
+          $version = $env:RELEASE_TAG -replace '^v', ''
+          ./scripts/build_windows_unsigned.ps1 -Flutter flutter -BuildName $version
           $asset = "dist\windows\VoiceSmallASR-$env:RELEASE_TAG-windows-unsigned-setup.exe"
           Copy-Item "dist\windows\VoiceSmallASR-unsigned-setup.exe" $asset
 
@@ -141,6 +206,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "缺少 Windows 可执行文件：$exe" }
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "缺少 Windows 安装包：$installer" }
           if ((Get-Item -LiteralPath $installer).Length -le 0) { throw "Windows 安装包为空：$installer" }
+          $modelFiles = Get-ChildItem -LiteralPath $releaseDir -Recurse -File | Where-Object { $_.Name -match '(?i)(\.onnx$|^tokens\.txt$|\.tar\.bz2$)' }
+          if ($modelFiles) {
+            throw "Windows 应用目录包含不应打包的模型文件：$($modelFiles.FullName -join ', ')"
+          }
 
       - name: Upload Windows release asset
         uses: actions/upload-artifact@v4
@@ -151,7 +220,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [android, macos, windows]
+    needs: [quality, android, macos, windows]
     runs-on: ubuntu-24.04
 
     steps:
@@ -173,6 +242,25 @@ jobs:
           test -s "dist/release/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip"
           test -s "dist/release/VoiceSmallASR-${RELEASE_TAG}-windows-unsigned-setup.exe"
 
+      - name: Generate checksums and build information
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist/release
+          sha256sum VoiceSmallASR-${RELEASE_TAG}-* > SHA256SUMS.txt
+          cat > BUILD_INFO.txt <<EOF
+          VoiceSmallASR release: ${RELEASE_TAG}
+          Commit: ${GITHUB_SHA}
+          Workflow: ${GITHUB_WORKFLOW}
+          Run ID: ${GITHUB_RUN_ID}
+          Run number: ${GITHUB_RUN_NUMBER}
+          Built at (UTC): $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          Signing: unsigned/personal use; Android uses debug signing
+          Model files: excluded from all release application packages
+          EOF
+          test -s SHA256SUMS.txt
+          test -s BUILD_INFO.txt
+
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -189,5 +277,7 @@ jobs:
             dist/release/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg \
             dist/release/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip \
             dist/release/VoiceSmallASR-${RELEASE_TAG}-windows-unsigned-setup.exe \
+            dist/release/SHA256SUMS.txt \
+            dist/release/BUILD_INFO.txt \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
