@@ -76,6 +76,10 @@ void main() {
       'generated_at': DateTime.now().toUtc().toIso8601String(),
       'platform': Platform.operatingSystem,
       'operating_system_version': Platform.operatingSystemVersion,
+      'process_memory': <String, Object?>{
+        'source': 'dart:io ProcessInfo',
+        'unit': 'bytes',
+      },
       'model': <String, Object?>{
         'was_ready_before': wasReady,
         'preparation_elapsed_ms': watch.elapsedMilliseconds,
@@ -83,6 +87,7 @@ void main() {
         'bytes': await models.usedBytes(),
       },
     };
+    _recordProcessMemory(report, 'after_model_prepare');
     await _writeReport(report, paths.root);
   });
 
@@ -109,14 +114,17 @@ void main() {
     decodeWatch.stop();
     expect(samples, isNotEmpty);
 
+    _recordProcessMemory(report, 'before_file_worker');
     final TranscriptionWorker worker = await TranscriptionWorker.start(
       config: _deviceConfig(),
       allowDownload: false,
     );
+    _recordProcessMemory(report, 'after_file_worker_start');
     try {
       final Stopwatch transcriptionWatch = Stopwatch()..start();
       final TranscriptionResult result = await worker.transcribe(samples);
       transcriptionWatch.stop();
+      _recordProcessMemory(report, 'after_file_transcription');
       final double? rtf = result.duration <= 0
           ? null
           : transcriptionWatch.elapsedMilliseconds / 1000 / result.duration;
@@ -134,7 +142,12 @@ void main() {
       expect(result.duration, greaterThan(0));
       expect(rtf, isNotNull);
     } finally {
-      await worker.dispose();
+      try {
+        await worker.dispose();
+      } finally {
+        _recordProcessMemory(report, 'after_file_worker_dispose');
+        await _writeReport(report, paths.root);
+      }
     }
   });
 
@@ -150,11 +163,13 @@ void main() {
     final File video = File(videoPath);
     expect(video.existsSync(), isTrue, reason: '视频不存在：$videoPath');
 
+    _recordProcessMemory(report, 'before_video_decode');
     final Stopwatch decodeWatch = Stopwatch()..start();
     final Float32List samples = await const PlatformAudioDecoder().decodeFile(
       videoPath,
     );
     decodeWatch.stop();
+    _recordProcessMemory(report, 'after_video_decode');
     expect(samples, isNotEmpty, reason: '视频没有可供原生解码的音轨');
 
     final VideoPlaybackController player = VideoPlaybackController();
@@ -170,6 +185,7 @@ void main() {
         reason: '播放器没有从真实 MP4 读取到视频时长',
       );
       openWatch.stop();
+      _recordProcessMemory(report, 'after_video_open');
       final Duration duration = player.duration;
       await player.playOrPause();
       await _waitUntil(
@@ -187,6 +203,8 @@ void main() {
       await _writeReport(report, paths.root);
     } finally {
       player.dispose();
+      _recordProcessMemory(report, 'after_video_player_dispose');
+      await _writeReport(report, paths.root);
     }
   });
 
@@ -202,10 +220,12 @@ void main() {
     final double maxRtf =
         _positiveSetting(_definedMaxLiveRtf, 'VSASR_DEVICE_MAX_LIVE_RTF') ??
         1.25;
+    _recordProcessMemory(report, 'before_microphone_worker');
     final TranscriptionWorker worker = await TranscriptionWorker.start(
       config: _deviceConfig(),
       allowDownload: false,
     );
+    _recordProcessMemory(report, 'after_microphone_worker_start');
     final LiveSession session = await worker.startLive();
     final MicrophoneSource microphone = MicrophoneSource();
     final List<Segment> segments = <Segment>[];
@@ -244,9 +264,14 @@ void main() {
       try {
         await session.finish();
       } finally {
+        _recordProcessMemory(report, 'after_microphone_session_finish');
         watch.stop();
         await segmentSubscription.cancel();
-        await worker.dispose();
+        try {
+          await worker.dispose();
+        } finally {
+          _recordProcessMemory(report, 'after_microphone_worker_dispose');
+        }
       }
     }
 
@@ -287,6 +312,24 @@ double? _positiveSetting(String defined, String name) {
   final String? value = _setting(defined, name);
   final double? parsed = value == null ? null : double.tryParse(value);
   return parsed == null || parsed <= 0 ? null : parsed;
+}
+
+void _recordProcessMemory(Map<String, Object?> report, String stage) {
+  final Map<String, Object?> memory =
+      report['process_memory']! as Map<String, Object?>;
+  memory[stage] = <String, Object?>{
+    'current_rss_bytes': _safeProcessMemory(() => ProcessInfo.currentRss),
+    'max_rss_bytes': _safeProcessMemory(() => ProcessInfo.maxRss),
+  };
+}
+
+int? _safeProcessMemory(int Function() read) {
+  try {
+    final int bytes = read();
+    return bytes > 0 ? bytes : null;
+  } on Object {
+    return null;
+  }
 }
 
 AsrConfig _deviceConfig() {

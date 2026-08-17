@@ -9,6 +9,7 @@
 测试会执行并写出 `device_acceptance_report.json`：
 
 - 模型：缺失时实际下载，随后执行固定 SHA-256 完整性校验，并记录下载/准备耗时和模型目录占用。
+- 内存：通过 `dart:io ProcessInfo` 记录模型准备、文件识别、视频播放和麦克风会话各阶段的当前 RSS，以及进程峰值 RSS；不支持该 API 时记录为 `null`。
 - 文件转写：默认使用模型包内的 `test_wavs/yue.wav`，记录原生解码耗时、识别耗时和文件 RTF。
 - 视频：设置 `VSASR_DEVICE_TEST_VIDEO` 后，记录视频音轨解码、播放器打开耗时和真实播放推进。
 - 麦克风：设置 `VSASR_DEVICE_TEST_MIC_SECONDS` 后，真实申请权限并采集麦克风，记录采样时长、实时 RTF 和是否持续积压。
@@ -40,8 +41,8 @@ flutter test integration_test/device_acceptance_test.dart -d <android-device-id>
 ```
 
 测试日志会打印报告位置和 JSON 内容；不指定报告路径时，报告写入应用模型目录。
-至少应保存以下信息：设备型号、Android 版本、线程数、模型准备耗时、文件 RTF、麦克风 RTF
-和是否出现持续积压。若只运行模拟器，必须在记录中标注“非真机结果”。
+至少应保存以下信息：设备型号、Android 版本、线程数、模型准备耗时、模型目录占用、进程 RSS
+当前值/峰值、文件 RTF、麦克风 RTF 和是否出现持续积压。若只运行模拟器，必须在记录中标注“非真机结果”。
 
 ## Windows 用户桌面
 
@@ -72,7 +73,7 @@ flutter test integration_test/device_acceptance_test.dart -d windows
 自动化报告满足以下条件后，才可把对应子项从 M10 的待验收列表移除：
 
 1. `model.verified` 为 `true`，且模型准备过程没有复用截断或校验错误的缓存。
-2. 文件转写有有效音频时长和 RTF；模型准备耗时、模型占用和线程数已记录。
+2. 文件转写有有效音频时长和 RTF；模型准备耗时、模型目录占用、进程 RSS 和线程数已记录。RSS 是进程驻留集大小，用于同一设备上的阶段对比，不等同于模型精确分配量。
 3. Windows 用户桌面手工清单全部完成；Android 真机至少完成模型、麦克风和实时 RTF 记录。
 4. 视频项不跳过时，报告包含真实 MP4 的音轨解码和播放器推进结果。
 

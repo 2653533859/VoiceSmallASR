@@ -379,8 +379,8 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 ### M10 · 真实设备与下载安全验收（环境审计）
 
 - [x] Windows CI 桌面与硬字幕验收：run `32048430484` 通过 Flutter analyze、`ffmpeg-full`/`ass` 检查、Release 构建、桌面 smoke、真实硬字幕 MP4 编码 smoke、产物校验和 artifact 上传；完整模型 E2E 由 run `31919855391` 通过
-- [x] 真机/用户桌面验收入口：`app/integration_test/device_acceptance_test.dart` 自动下载并校验模型，记录文件 RTF、视频播放和可选真实麦克风实时 RTF；执行步骤和结果判定见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)，提交 `344034e` 的 Windows 回归 run `32050804305` 已通过，真实设备数据仍待采集
-- [ ] Android 真机性能、内存和 RTF：本机 `flutter devices` 仅发现 macOS 与 Chrome，没有连接真机或无线设备
+- [x] 真机/用户桌面验收入口：`app/integration_test/device_acceptance_test.dart` 自动下载并校验模型，记录模型目录占用、各阶段进程 RSS 当前值/峰值、文件 RTF、视频播放和可选真实麦克风实时 RTF；执行步骤和结果判定见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)，提交 `344034e` 的 Windows 回归 run `32050804305` 已通过，真实设备数据仍待采集
+- [ ] Android 真机性能、内存和 RTF：验收入口已能记录 `dart:io ProcessInfo` 的 RSS，但本机 `flutter devices` 仅发现 macOS 与 Chrome，没有连接真机或无线设备
 - [ ] Windows 用户桌面干净目录安装、首次启动和真实设备差异：当前只有 Windows runner 结果，尚未有可操作的用户桌面
 
 ### M11 · 项目保存与字幕导入（已完成）
