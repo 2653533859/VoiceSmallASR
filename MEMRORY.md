@@ -15,7 +15,7 @@
 - M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数、第三方翻译 endpoint/模型/API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
 - M13 翻译术语表已完成：设置页支持每行 `原词=译词` 的可选术语表，保存和 provider 构造时校验非法格式/重复原词；文件、实时、视频和批量翻译都会注入术语提示，批量缓存 scope 包含术语表内容。
 - M13 服务商预设已完成：设置页可保存、选择和删除 endpoint、模型、目标语言和术语表组合；预设以普通设置 JSON 持久化，不包含 API Key；加载时跳过损坏或重复条目，并支持自定义目标语言。
-- M13 字幕样式、视频配套字幕导出与桌面/Android 硬字幕编码已完成：视频页可调整字号、文字色、背景色和上/中/下位置并持久化；可按视频文件名导出 SRT/VTT/JSON/TXT 配套字幕文件；桌面调用本机 FFmpeg/ASS，Android 调用 MediaCodec + OpenGL + MediaMuxer 生成带原文、译文和说话人标签的 MP4，Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出。新增 MethodChannel 单测、视频页回归测试和跨平台真实验收脚本；AAC 直通与 MP3 转 AAC 已在 API 35 ARM64 模拟器真实通过，真实 Android 设备、其他编解码器和桌面 libass FFmpeg 仍待验收。
+- M13 字幕样式、视频配套字幕导出与桌面/Android 硬字幕编码已完成：视频页可调整字号、文字色、背景色和上/中/下位置并持久化；可按视频文件名导出 SRT/VTT/JSON/TXT 配套字幕文件；桌面调用本机 FFmpeg/ASS，Android 调用 MediaCodec + OpenGL + MediaMuxer 生成带原文、译文和说话人标签的 MP4，Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出。新增 MethodChannel 单测、视频页回归测试和跨平台真实验收脚本；AAC 直通与 MP3 转 AAC 已在 API 35 ARM64 模拟器真实通过，Windows CI run `32048430484` 已用 `ffmpeg-full` 通过 `ass/libass` 硬字幕 smoke，真实 Android 设备、其他编解码器、Windows 用户桌面和 macOS/本机 FFmpeg 兼容性仍待验收。
 - M13 文件转写性能诊断已完成：转写控制器分别记录模型准备、解码、识别和总耗时，生成含 RTF、采样点、模型占用、平台和 ASR/VAD 配置的报告；首页支持查看并导出 JSON。模型占用统计未完成时显示“未统计”，不误报为 0。
 - M13 批量与实时性能汇总及持续性能历史已完成：批量队列聚合文件数、成功/失败/取消、音频时长、模型准备/解码/识别耗时和 RTF；实时会话记录采样点、音频时长、会话耗时和 RTF；文件、批量和实时报告均支持查看/导出 JSON，并以版本化 JSON 写入应用私有目录，最多保留 100 条，支持清空和跳过损坏条目。
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
@@ -26,10 +26,11 @@
 - M4 真实验收入口仍可按需扩展：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材；真实第三方 API 网络验收因需要用户自己的服务商密钥，暂不作为当前个人使用交付门禁。
 - Windows M7 构建已完成：GitHub Actions run `31912544699` 在 `windows-2022` runner 上通过 MSVC 编译 Flutter Release，并用 `scripts/build_windows_unsigned.ps1` + Inno Setup 生成未签名安装包；CI 自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，并拒绝模型文件；Release 目录约 111 MiB，安装包约 31 MiB。
 - Windows 完整模型 e2e 已验收：GitHub Actions run `31919855391` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试，粤语 wav 识别 RTF `0.064`；同一 workflow 的 Windows smoke、产物校验和 artifact 上传也通过。`.github/workflows/windows-build.yml` 的手动 `run_full_e2e=true` 会恢复模型缓存，必要时通过三源 fallback 下载并做最小字节数校验，再用 `VSASR_MODEL_DIR` 指向外部模型目录运行测试。
+- Windows 硬字幕 CI 验收已完成：run `32048430484` 在 `windows-2022` 上安装 `ffmpeg-full`，确认 `ass/libass` 滤镜可用，并通过真实 `tone.mp4` 的桌面 smoke、硬字幕编码 smoke、Release 构建、运行时 DLL 和模型排除检查；此前 run `32047737222`/`32048080173` 暴露并修复了 essentials FFmpeg 不含 libass 和检查表达式不稳的问题。
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
 - 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，随后在 run `32046411140` 构建并发布 `v1.0.2`，包含 Android APK/AAB、Windows 未签名安装包、macOS 未签名 DMG/APP 压缩包、`SHA256SUMS.txt` 和 `BUILD_INFO.txt`；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2。
-- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已完成环境审计但真机/用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
+- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
 
 ## 已验证结果
 
@@ -41,6 +42,7 @@
 - Windows M7 构建：run `31912544699` 的 `vsasr_app.exe`（141,312 bytes）和 `VoiceSmallASR-unsigned-setup.exe`（32,809,700 bytes）均为 x86-64 PE 文件；Release 目录约 111 MiB，包含 sherpa/ONNX、media_kit 原生 DLL，CI 自动确认未打入 `.onnx`、`.tar`、`.bz2` 或 `tokens.txt` 模型文件。
 - Windows 桌面 smoke：run `31914757787` 的 2 项测试通过，验证 Media Foundation AAC 解码，以及 media_kit MP4 打开、读取时长和播放；该 smoke 不加载 ASR 模型。
 - Windows 完整模型 e2e：run `31919855391` 的 7 项测试通过，验证模型目录、WAV/m4a 解码、粤语 wav/m4a 识别、真实 mp4 播放/跳转/抽音轨识别和实时识别；粤语 wav RTF `0.064`。
+- Windows 硬字幕 CI：run `32048430484` 的 `ass/libass` 能力检查、无模型桌面 smoke、真实硬字幕 MP4 编码 smoke、产物校验和 artifact 上传全部通过。
 - Android API 35 模拟器 e2e：2026-08-16 重跑 7 项全部通过，真实模型识别结果与 Python 基线一致，RTF `0.027`；该结果仅作为模拟器基线，不代表真机性能。
 - 播放器：`media_kit 1.2.6` + `media_kit_video 2.0.1` + `media_kit_libs_video 1.0.7` 已接入；macOS 无签名编译通过，插件当前由 CocoaPods 集成。
 - M3 测试覆盖：播放器状态/生命周期、字幕时间边界、视频页加载/叠加/点击跳转；7 项集成测试包含真实 `en.mp4` 播放、跳转、抽音轨和识别。
@@ -64,7 +66,7 @@
 - v1.0.2 稳定化修复：实时字幕测试改为有限帧推进，实时控制器无翻译任务时不等待空队列；无签名 macOS 安全存储不可用时 API Key 仅保留当前会话；Python/Flutter 模型缓存增加解压后 SHA-256 校验；Release workflow 增加 Python/Flutter 质量门禁并从 Tag 注入三端版本。
 - M8 发布质量基线已落地：`scripts/verify_model_exclusion.sh` 及各平台 workflow 检查最终产物不含模型，macOS 额外挂载 DMG 检查；Release job 生成 `SHA256SUMS.txt`/`BUILD_INFO.txt`。模型完整性失败会清理旧压缩包，避免重复复用坏缓存。
 - M9 翻译体验已完成：增加第三方数据发送提示、实时字幕单条翻译重试，并确保实时翻译关闭时不会因重试按钮隐式联网。
-- M10 环境审计：本机没有 Android 真机或无线设备；最新 Windows Release run `32008744063` 通过构建、analyze、桌面 smoke 和产物校验，Windows 完整模型 E2E 仍引用 run `31919855391`，用户桌面验收未完成。
+- M10 环境审计：本机没有 Android 真机或无线设备；Windows 最新 CI run `32048430484` 已通过 analyze、`ffmpeg-full`/`ass` 检查、桌面 smoke、硬字幕编码 smoke、构建和产物校验，完整模型 E2E 仍由 run `31919855391` 提供依据；Android 真机性能和 Windows 用户桌面验收未完成。
 - M11 项目与外部字幕：新增版本化项目 JSON、配置/字幕/译文/时间轴校验、同目录临时文件保存和控制器快照恢复；首页已支持保存/打开项目与最近项目列表（最多 8 个路径），Android SAF 项目支持字节解析和应用支持目录缓存；新增识别/编辑/配置/翻译后的防抖自动保存、会话锁和启动恢复入口；项目媒体缺失时可重新选择并更新引用；新增 SRT/VTT/JSON 导入、视频外部字幕加载，并复用编辑/翻译/导出链路。
 - M12 队列、批量翻译、安全导出、文本缓存与队列恢复：新增批量处理页和顺序多文件转写，支持去重、每文件进度、暂停/继续、取消和失败重试；批量翻译复用同一个 provider 和现有分批/重试逻辑，逐文件显示翻译状态，单项失败不阻塞后续文件，取消通过操作代次阻止迟到译文写回；批量导出支持 SRT/VTT/JSON/TXT，按原媒体文件名生成建议名，同批次重名自动追加序号，用户取消保存后停止后续导出；新增应用私有目录翻译缓存，按媒体路径、源结果、目标语言、endpoint/model 和术语表指纹匹配，命中前确认复用，损坏/不匹配/缺少译文按未命中处理且缓存写入失败不影响翻译；新增批量队列版本化快照、防抖自动保存、退出前强制保存、异常退出恢复/放弃和进行中状态降级；Android SAF 无本地路径时明确拒绝而不静默丢条目；截至当前全量 Flutter 测试 234 项。
 - M13 字幕批量时间偏移：字幕编辑器新增整份字幕的正负秒数平移，段级和 token 级时间戳同步移动；复用既有时间轴校验，越过音频边界会拒绝且不改变结果；编辑器页面提供批量偏移入口，支持撤销，新增 3 项回归测试。
@@ -72,7 +74,7 @@
 - M13 阅读速度检查：字幕编辑器按可配置字符/秒阈值检查原文和译文中较长的一行，报告超阈值条目但不改变结果；新增 4 项控制器/页面回归测试，并修复窄窗口工具栏横向溢出。
 - M13 翻译术语表：设置页支持每行 `原词=译词` 的可选术语表，保存时校验空值、非法格式和重复原词；文件、实时、视频和批量翻译都会注入术语提示，批量缓存 scope 包含术语表；新增 provider、设置持久化和设置页回归测试。
 - M13 服务商预设：设置页支持保存、选择和删除 endpoint、模型、目标语言和术语表组合；预设不包含 API Key，损坏条目跳过，自定义目标语言可恢复；新增模型序列化、持久化和设置页回归测试。
-- M13 字幕样式、视频配套字幕导出与桌面/Android 硬字幕编码：视频页新增样式配置和持久化，以及按视频文件名导出 SRT/VTT/JSON/TXT 的入口；桌面可调用本机 FFmpeg/ASS，Android 通过 MediaCodec + OpenGL + MediaMuxer 生成 MP4，AAC 音轨直通，系统可解码的非 AAC 音轨先转 AAC；新增编码器 MethodChannel 单测、视频页回归测试和跨平台真实编码验收脚本；API 35 ARM64 模拟器已通过 AAC 与 MP3 输入，真实设备、其他编解码器和桌面 libass 兼容性验收仍待环境具备。
+- M13 字幕样式、视频配套字幕导出与桌面/Android 硬字幕编码：视频页新增样式配置和持久化，以及按视频文件名导出 SRT/VTT/JSON/TXT 的入口；桌面可调用本机 FFmpeg/ASS，Android 通过 MediaCodec + OpenGL + MediaMuxer 生成 MP4，AAC 音轨直通，系统可解码的非 AAC 音轨先转 AAC；新增编码器 MethodChannel 单测、视频页回归测试和跨平台真实编码验收脚本；API 35 ARM64 模拟器已通过 AAC 与 MP3 输入，Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` 硬字幕 smoke，真实设备、其他编解码器、Windows 用户桌面和 macOS/本机 FFmpeg 兼容性验收仍待环境具备。
 - M13 文件转写性能诊断：新增性能报告值对象和首页入口，记录模型准备、解码、识别、RTF、采样点、平台、模型占用与 ASR/VAD 配置；支持查看和导出 JSON，新增控制器与首页回归测试。
 - M13 批量与实时性能汇总：新增批量聚合报告和实时会话报告，两个页面均支持查看/导出 JSON；新增批量、实时控制器和页面回归测试。
 - M13 持续性能历史：新增版本化性能日志存储，文件、批量和实时报告写入应用私有目录，最多保留 100 条；首页/实时字幕页支持查看和清空历史，损坏条目单独跳过；新增存储、首页和实时字幕回归测试。
@@ -81,7 +83,7 @@
 ## 尚未验证的环境
 
 - Android 原生 Kotlin 解码和硬字幕编码已完成编译；解码与硬字幕编码均已在 API 35 ARM64 模拟器端到端运行验证，但尚未在真实 Android 设备运行。
-- Windows 原生 C++ 解码已在 MSVC/Windows SDK 上编译，并在 CI 桌面 smoke 与完整模型 e2e 中通过 AAC/视频音轨识别；用户桌面运行仍未验证。
+- Windows 原生 C++ 解码已在 MSVC/Windows SDK 上编译，并在 CI 桌面 smoke、完整模型 e2e 和硬字幕 smoke 中通过 AAC/视频音轨识别与 MP4 编码；用户桌面运行仍未验证。
 - Android 模拟器的 media_kit 视频播放已通过端到端验证；Windows CI smoke 已通过 media_kit MP4 打开、读取时长和播放，用户桌面差异仍未验证。
 - Android 实时字幕的中低端设备性能尚未测量。
 

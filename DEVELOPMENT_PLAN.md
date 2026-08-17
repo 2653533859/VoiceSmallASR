@@ -11,7 +11,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，107 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的三端安装包和 GitHub Release，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史和自动说话人分离已完成**：文件转写、实时字幕、视频播放与字幕联动、外部字幕加载、批量转写/翻译/导出队列、字幕校对编辑（234 项单测 + Android API 35 模拟器端到端 7 项，硬字幕真实编码验收 + 粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。自动说话人分离和桌面/Android 硬字幕编码已加入独立模型/FFmpeg 或系统 MediaCodec 依赖、后台推理或原生编码以及显式验收脚本；个人使用范围内剩余 Android 真机性能、Windows 用户桌面运行、其他系统编解码器和缺少 libass 的兼容性验收；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的三端安装包和 GitHub Release，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史和自动说话人分离已完成**：文件转写、实时字幕、视频播放与字幕联动、外部字幕加载、批量转写/翻译/导出队列、字幕校对编辑（234 项单测 + Android API 35 模拟器端到端 7 项，硬字幕真实编码验收 + 粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。自动说话人分离和桌面/Android 硬字幕编码已加入独立模型/FFmpeg 或系统 MediaCodec 依赖、后台推理或原生编码以及显式验收脚本；Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` 硬字幕 smoke；个人使用范围内剩余 Android 真机性能、Windows 用户桌面运行、其他系统编解码器、macOS/本机 FFmpeg 兼容性验收；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -236,6 +236,7 @@ E:\dev\android-sdk    platforms 36 + 37.0、build-tools 36.1.0、platform-tools
 GitHub Actions windows-2022    Flutter 3.47.0 + MSVC + Inno Setup 6
 Run 31914757787                Release、桌面 smoke、产物校验与 artifact 上传均通过
 Run 31919855391                完整模型 e2e 7 项、桌面 smoke、产物校验与 artifact 上传均通过
+Run 32048430484                ffmpeg-full/ass 检查、硬字幕 smoke、Release、产物校验与 artifact 上传均通过
 ```
 
 ## 4. 阶段计划
@@ -377,7 +378,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 ### M10 · 真实设备与下载安全验收（环境审计）
 
-- [x] Windows 最新提交已由 CI run `32008744063` 通过 Flutter analyze、Release 构建、桌面 smoke、产物校验和 artifact 上传；完整模型 E2E 由 run `31919855391` 通过
+- [x] Windows CI 桌面与硬字幕验收：run `32048430484` 通过 Flutter analyze、`ffmpeg-full`/`ass` 检查、Release 构建、桌面 smoke、真实硬字幕 MP4 编码 smoke、产物校验和 artifact 上传；完整模型 E2E 由 run `31919855391` 通过
 - [ ] Android 真机性能、内存和 RTF：本机 `flutter devices` 仅发现 macOS 与 Chrome，没有连接真机或无线设备
 - [ ] Windows 用户桌面干净目录安装、首次启动和真实设备差异：当前只有 Windows runner 结果，尚未有可操作的用户桌面
 

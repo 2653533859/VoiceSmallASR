@@ -8,7 +8,7 @@
 
 - Python 端：离线多语种识别、CLI、实时 VAD、时间戳和字幕导出已完成；`pytest` 107 项通过。
 - Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；项目文件数据层、首页保存/打开、最近项目、Android SAF 字节读取、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 字幕导入和 M12 多文件队列/批量翻译/安全导出/文本缓存/队列恢复已接入；M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总报告、持续性能历史和自动说话人分离；`flutter analyze` 与 `flutter test` 234 项通过。
-- 平台验收：macOS 真实模型、Android API 35 模拟器识别/播放与硬字幕编码、Windows CI 完整模型 E2E 已通过；Android 真机和 Windows 用户桌面仍待验收。
+- 平台验收：macOS 真实模型、Android API 35 模拟器识别/播放与硬字幕编码、Windows CI 完整模型 E2E/桌面 smoke/硬字幕编码已通过；Android 真机和 Windows 用户桌面仍待验收。
 - 发布能力：`v1.0.2` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/ZIP，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`。
 - 明确范围：个人使用，不做商店发布、公证和正式签名证书；真实第三方翻译 API 网络验收不作为自动化门禁。
 
@@ -69,11 +69,15 @@
 - 记录最低可接受配置和推荐线程数，必要时按设备降低实时识别负载。
 - 在国内网络环境验证三源下载；全部失败时再评估增加 ModelScope 或自有对象存储源。
 
+已完成的自动化补强：
+
+- Windows CI 已安装带附加库的 `ffmpeg-full`，先检查 `ass/libass` 滤镜，再用真实 MP4 运行硬字幕编码 smoke；run `32048430484` 的 Flutter analyze、桌面 smoke、硬字幕 smoke、Release 构建和产物校验全部通过。
+
 验收标准：真机实时识别不会持续积压；Windows 安装包能在干净用户目录启动；模型校验失败会删除坏缓存并允许重试。
 
-当前审计（2026-08-17）：
+当前审计（2026-08-18）：
 
-- Windows 最新提交已由 CI run `32008744063` 通过 Flutter analyze、Release 构建、桌面 smoke、产物校验和 artifact 上传；完整模型 E2E 仍由 run `31919855391` 提供依据。
+- Windows 最新提交已由 CI run `32048430484` 通过 Flutter analyze、Release 构建、桌面 smoke、`ass/libass` 检查、硬字幕编码 smoke、产物校验和 artifact 上传；完整模型 E2E 仍由 run `31919855391` 提供依据。
 - 本机没有可用 Android 真机或无线设备；API 35 ARM64 模拟器可用于功能验收，但 Android 真机性能、内存和 RTF 暂不能验收。
 - 当前没有可操作的 Windows 用户桌面，干净用户目录安装、首次启动和真实桌面差异仍待实机验证。
 
@@ -137,12 +141,12 @@
 - [x] 阅读速度检查：按可配置的字符/秒阈值检查原文和译文中较长的一行，只报告超阈值字幕，不修改编辑结果。
 - [x] 字幕样式：视频页支持字号、文字色、背景色和上/中/下位置，并持久化到普通设置。
 - [x] 视频配套字幕导出：视频页按视频文件名导出 SRT/VTT/JSON/TXT；导出的是配套字幕文件，不重新编码视频。
-- [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，均生成带原文、译文、说话人标签并复用字幕样式的 MP4；Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC，以及 SAF `content://` 输出（API 26+），新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本。AAC 与 MP3 音轨已在 API 35 ARM64 模拟器真实编码通过；Android 真实设备、其他编解码器和桌面带 libass FFmpeg 仍待验收。
+- [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，均生成带原文、译文、说话人标签并复用字幕样式的 MP4；Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC，以及 SAF `content://` 输出（API 26+），新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本。AAC 与 MP3 音轨已在 API 35 ARM64 模拟器真实编码通过，Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` 硬字幕 smoke；Android 真实设备、其他编解码器、Windows 用户桌面和 macOS/本机 FFmpeg 兼容性仍待验收。
 - [x] 文件转写性能诊断：记录模型准备、解码、识别和总耗时、RTF、采样点、模型占用、平台与 ASR/VAD 配置，并支持查看/导出 JSON。
 - [x] 批量与实时识别性能汇总：批量页汇总文件数、成功/失败/取消、音频时长、累计解码/识别耗时和 RTF；实时页汇总采样点、音频时长、会话耗时和 RTF，并支持查看/导出 JSON。
 - [x] 持续性能日志：将文件、批量和实时报告以版本化 JSON 持久化到应用私有目录，最多保留 100 条，支持查看、清空，并跳过损坏条目。
 
-当前进度：M13 自动说话人分离和桌面/Android 硬字幕编码代码已完成代码审查、相关测试和验收脚本；`flutter analyze`、Flutter 相关测试、Android Kotlin 编译和 Android API 35 ARM64 模拟器硬字幕真实编码均已通过，模拟器已分别验收 AAC 直通与 MP3 转 AAC。Android 真机、其他系统编解码器、Windows 用户桌面和带 libass 的桌面 FFmpeg 仍待具备环境后验收。下一步是完成真实设备验收，并根据设备结果补充兼容性。
+当前进度：M13 自动说话人分离和桌面/Android 硬字幕编码代码已完成代码审查、相关测试和验收脚本；`flutter analyze`、Flutter 相关测试、Android Kotlin 编译和 Android API 35 ARM64 模拟器硬字幕真实编码均已通过，模拟器已分别验收 AAC 直通与 MP3 转 AAC；Windows CI run `32048430484` 已用带 `libass` 的 `ffmpeg-full` 通过硬字幕编码 smoke。Android 真机、其他系统编解码器、Windows 用户桌面和 macOS/本机 FFmpeg 兼容性仍待具备环境后验收。下一步是完成真实设备验收，并根据设备结果补充兼容性。
 
 ## 推荐执行顺序
 
