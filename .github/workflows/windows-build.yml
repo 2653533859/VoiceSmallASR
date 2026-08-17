@@ -148,6 +148,10 @@ jobs:
           Get-Item -LiteralPath $exe, $installer | Select-Object FullName, Length
           Write-Host "Windows Release 产物检查通过：运行时依赖齐全且未包含模型文件"
 
+      - name: Install Windows package and verify first launch
+        shell: pwsh
+        run: ./scripts/windows_install_smoke.ps1 -Installer "${{ github.workspace }}\dist\windows\VoiceSmallASR-unsigned-setup.exe" -InstallDir "${{ runner.temp }}\voicesmallasr-windows-installed"
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
