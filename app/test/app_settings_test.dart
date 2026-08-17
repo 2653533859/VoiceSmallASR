@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
+import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 
 void main() {
@@ -81,6 +82,25 @@ void main() {
     expect(await repository.loadOfflineMode(), isFalse);
     await repository.saveOfflineMode(true);
     expect(await repository.loadOfflineMode(), isTrue);
+  });
+
+  test('视频字幕样式可以持久化，损坏数据回退到默认值', () async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
+    const SubtitleStyle saved = SubtitleStyle(
+      fontSize: 24,
+      textColor: 0xFFFFFF00,
+      backgroundColor: 0xB3000000,
+      position: SubtitlePosition.top,
+    );
+
+    await repository.saveSubtitleStyle(saved);
+    expect(await repository.loadSubtitleStyle(), saved);
+
+    preferences.strings['settings.video.subtitle_style'] = '{bad json';
+    expect(await repository.loadSubtitleStyle(), const SubtitleStyle());
   });
 
   test('最近项目会去重、置顶并限制数量，损坏数据回退为空列表', () async {

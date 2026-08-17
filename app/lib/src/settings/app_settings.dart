@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
+import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 
 const String _languageKey = 'settings.asr.language';
@@ -24,6 +25,7 @@ const String _translationTargetLanguageKey =
 const String _translationGlossaryKey = 'settings.translation.glossary';
 const String _translationProviderPresetsKey =
     'settings.translation.provider_presets';
+const String _subtitleStyleKey = 'settings.video.subtitle_style';
 const String _recentProjectsKey = 'settings.projects.recent';
 
 /// 最近项目最多保留的路径数，最新打开的项目排在最前面。
@@ -190,6 +192,35 @@ class AppSettingsRepository {
 
   Future<void> saveOfflineMode(bool enabled) =>
       _preferences.writeBool(_offlineModeKey, enabled);
+
+  /// 读取视频页字幕样式；损坏或越界数据回退到默认样式。
+  Future<SubtitleStyle> loadSubtitleStyle({SubtitleStyle? fallback}) async {
+    final SubtitleStyle base = fallback ?? const SubtitleStyle();
+    final String? raw = await _preferences.readString(_subtitleStyleKey);
+    if (raw == null || raw.trim().isEmpty) return base;
+    try {
+      return SubtitleStyle.fromJson(jsonDecode(raw));
+    } on Object {
+      return base;
+    }
+  }
+
+  /// 保存视频页字幕样式，不写入 API Key 或媒体内容。
+  Future<void> saveSubtitleStyle(SubtitleStyle style) async {
+    if (style.fontSize < 12.0 ||
+        !style.fontSize.isFinite ||
+        style.fontSize > 48.0 ||
+        style.textColor < 0 ||
+        style.textColor > 0xFFFFFFFF ||
+        style.backgroundColor < 0 ||
+        style.backgroundColor > 0xFFFFFFFF) {
+      throw ArgumentError.value(style, 'style', '字幕样式包含无效值');
+    }
+    await _preferences.writeString(
+      _subtitleStyleKey,
+      jsonEncode(style.toJson()),
+    );
+  }
 
   /// 读取最近打开或保存的项目路径。偏好损坏时返回空列表，不阻塞启动。
   Future<List<String>> loadRecentProjects() async {

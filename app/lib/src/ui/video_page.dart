@@ -13,6 +13,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
+import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_disclosure.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
@@ -24,6 +25,12 @@ import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 /// 选择视频文件，取消时返回 null。
 typedef PickVideoFile = Future<String?> Function();
 
+/// 保存视频配套字幕文件，测试可以注入内存实现。
+typedef SaveVideoSubtitleFile = Future<String?> Function(
+  String fileName,
+  String content,
+);
+
 class VideoPage extends StatefulWidget {
   const VideoPage({
     super.key,
@@ -31,6 +38,7 @@ class VideoPage extends StatefulWidget {
     required this.transcription,
     this.pickFile,
     this.pickSubtitleFile,
+    this.saveSubtitleFile,
     this.settings,
     this.translationProviderResolver,
   });
@@ -39,6 +47,7 @@ class VideoPage extends StatefulWidget {
   final TranscribeController transcription;
   final PickVideoFile? pickFile;
   final PickSubtitleFile? pickSubtitleFile;
+  final SaveVideoSubtitleFile? saveSubtitleFile;
   final AppSettingsRepository? settings;
   final Future<TranslationProvider?> Function()? translationProviderResolver;
 
@@ -48,6 +57,25 @@ class VideoPage extends StatefulWidget {
 
 class _VideoPageState extends State<VideoPage> {
   bool _translationDisclosureAccepted = false;
+  SubtitleStyle _subtitleStyle = const SubtitleStyle();
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSubtitleStyle());
+  }
+
+  Future<void> _loadSubtitleStyle() async {
+    final AppSettingsRepository? repository = widget.settings;
+    if (repository == null) return;
+    try {
+      final SubtitleStyle style = await repository.loadSubtitleStyle();
+      if (mounted) setState(() => _subtitleStyle = style);
+    } on Object {
+      // 偏好存储暂时不可用时继续使用默认样式，不阻塞视频页打开。
+    }
+  }
+
   Future<String?> _pickFile() async {
     final PickVideoFile? injected = widget.pickFile;
     if (injected != null) return injected();
@@ -109,6 +137,75 @@ class _VideoPageState extends State<VideoPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('加载字幕失败：$error')));
+    }
+  }
+
+  Future<String?> _saveSubtitleFile(String fileName, String content) async {
+    final SaveVideoSubtitleFile? injected = widget.saveSubtitleFile;
+    if (injected != null) return injected(fileName, content);
+    final Uri? saved = await FilePicker.saveFile(
+      dialogTitle: '导出视频字幕',
+      fileName: fileName,
+      bytes: Uint8List.fromList(utf8.encode(content)),
+      mimeType: fileName.endsWith('.json') ? 'application/json' : 'text/plain',
+    );
+    if (saved == null) return null;
+    return saved.isScheme('file') ? saved.toFilePath() : saved.toString();
+  }
+
+  Future<void> _exportSubtitles(TranscriptionResult result) async {
+    final String? mediaPath = widget.controller.filePath;
+    if (mediaPath == null || widget.transcription.busy) return;
+    final String? format = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => SimpleDialog(
+        title: const Text('导出视频配套字幕'),
+        children: <Widget>[
+          for (final String value in kSubtitleFormats)
+            SimpleDialogOption(
+              key: Key('videoExportFormat-$value'),
+              onPressed: () => Navigator.of(context).pop(value),
+              child: Text(value.toUpperCase()),
+            ),
+        ],
+      ),
+    );
+    if (format == null || !mounted) return;
+    try {
+      final String fileName =
+          '${p.basenameWithoutExtension(mediaPath)}.$format';
+      final String? saved = await _saveSubtitleFile(
+        fileName,
+        renderSubtitles(result, format),
+      );
+      if (!mounted || saved == null) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已导出视频配套字幕：$saved')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导出字幕失败：$error')));
+    }
+  }
+
+  Future<void> _editSubtitleStyle() async {
+    SubtitleStyle? next = await showDialog<SubtitleStyle>(
+      context: context,
+      builder: (BuildContext context) =>
+          _SubtitleStyleDialog(initialStyle: _subtitleStyle),
+    );
+    if (next == null || !mounted) return;
+    try {
+      final AppSettingsRepository? repository = widget.settings;
+      if (repository != null) await repository.saveSubtitleStyle(next);
+      if (!mounted) return;
+      setState(() => _subtitleStyle = next);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('字幕样式已保存')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('保存字幕样式失败：$error')));
     }
   }
 
@@ -264,7 +361,22 @@ class _VideoPageState extends State<VideoPage> {
                       icon: const Icon(Icons.translate),
                       label: const Text('翻译字幕'),
                     ),
+                    OutlinedButton.icon(
+                      key: const Key('videoExportSubtitles'),
+                      onPressed: video.busy || widget.transcription.busy
+                          ? null
+                          : () => _exportSubtitles(result),
+                      icon: const Icon(Icons.file_download_outlined),
+                      label: const Text('导出字幕'),
+                    ),
                   ],
+                  if (video.filePath != null)
+                    OutlinedButton.icon(
+                      key: const Key('videoSubtitleStyle'),
+                      onPressed: video.busy ? null : _editSubtitleStyle,
+                      icon: const Icon(Icons.format_color_text_outlined),
+                      label: const Text('字幕样式'),
+                    ),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 240),
                     child: Text(
@@ -291,7 +403,11 @@ class _VideoPageState extends State<VideoPage> {
             ],
             Expanded(
               flex: hasLinkedResult ? 3 : 4,
-              child: _VideoSurface(controller: video, current: current),
+              child: _VideoSurface(
+                controller: video,
+                current: current,
+                style: _subtitleStyle,
+              ),
             ),
             if (video.filePath != null) _PlaybackControls(controller: video),
             if (video.errorText != null)
@@ -322,41 +438,49 @@ class _VideoPageState extends State<VideoPage> {
 }
 
 class _VideoSurface extends StatelessWidget {
-  const _VideoSurface({required this.controller, required this.current});
+  const _VideoSurface({
+    required this.controller,
+    required this.current,
+    required this.style,
+  });
 
   final VideoPlaybackController controller;
   final Segment? current;
+  final SubtitleStyle style;
 
   @override
   Widget build(BuildContext context) {
     final Widget? subtitle = current == null
         ? null
-        : Positioned(
-            left: 16,
-            right: 16,
-            bottom: 20,
+        : Positioned.fill(
             child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.78),
-                  borderRadius: BorderRadius.circular(6),
-                ),
+              child: Align(
+                alignment: style.position.alignment,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  child: Text(
-                    <String>[
-                      current!.text,
-                      if ((current!.translation ?? '').trim().isNotEmpty)
-                        current!.translation!,
-                    ].join('\n'),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      height: 1.35,
+                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: style.background,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        <String>[
+                          current!.text,
+                          if ((current!.translation ?? '').trim().isNotEmpty)
+                            current!.translation!,
+                        ].join('\n'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: style.foreground,
+                          fontSize: style.fontSize,
+                          height: 1.35,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -379,6 +503,157 @@ class _VideoSurface extends StatelessWidget {
                   const Center(child: CircularProgressIndicator()),
               ],
             ),
+    );
+  }
+}
+
+class _SubtitleStyleDialog extends StatefulWidget {
+  const _SubtitleStyleDialog({required this.initialStyle});
+
+  final SubtitleStyle initialStyle;
+
+  @override
+  State<_SubtitleStyleDialog> createState() => _SubtitleStyleDialogState();
+}
+
+class _SubtitleStyleDialogState extends State<_SubtitleStyleDialog> {
+  late double _fontSize = widget.initialStyle.fontSize;
+  late int _textColor = widget.initialStyle.textColor;
+  late int _backgroundColor = widget.initialStyle.backgroundColor;
+  late SubtitlePosition _position = widget.initialStyle.position;
+
+  static const List<int> _textColors = <int>[
+    0xFFFFFFFF,
+    0xFFFFFF00,
+    0xFF00FFFF,
+    0xFF00FF00,
+  ];
+  static const List<int> _backgroundColors = <int>[
+    0xC7000000,
+    0xB3000000,
+    0xCCFFFFFF,
+    0x00000000,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('字幕样式'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text('字号：${_fontSize.round()}'),
+            Slider(
+              key: const Key('subtitleStyleFontSize'),
+              min: 12,
+              max: 48,
+              divisions: 36,
+              value: _fontSize,
+              label: _fontSize.round().toString(),
+              onChanged: (double value) => setState(() => _fontSize = value),
+            ),
+            DropdownButtonFormField<int>(
+              key: ValueKey<String>('subtitleStyleTextColor-$_textColor'),
+              initialValue: _textColor,
+              decoration: const InputDecoration(labelText: '文字颜色'),
+              onChanged: (int? value) {
+                if (value != null) setState(() => _textColor = value);
+              },
+              items: <DropdownMenuItem<int>>[
+                for (final int value in _textColors)
+                  DropdownMenuItem<int>(
+                    value: value,
+                    child: _ColorOption(color: Color(value)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              key: ValueKey<String>(
+                'subtitleStyleBackgroundColor-$_backgroundColor',
+              ),
+              initialValue: _backgroundColor,
+              decoration: const InputDecoration(labelText: '背景颜色'),
+              onChanged: (int? value) {
+                if (value != null) setState(() => _backgroundColor = value);
+              },
+              items: <DropdownMenuItem<int>>[
+                for (final int value in _backgroundColors)
+                  DropdownMenuItem<int>(
+                    value: value,
+                    child: _ColorOption(color: Color(value)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<SubtitlePosition>(
+              key: ValueKey<String>('subtitleStylePosition-${_position.name}'),
+              initialValue: _position,
+              decoration: const InputDecoration(labelText: '字幕位置'),
+              onChanged: (SubtitlePosition? value) {
+                if (value != null) setState(() => _position = value);
+              },
+              items: <DropdownMenuItem<SubtitlePosition>>[
+                for (final SubtitlePosition value in SubtitlePosition.values)
+                  DropdownMenuItem<SubtitlePosition>(
+                    value: value,
+                    child: Text(value.label),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('saveSubtitleStyle'),
+          onPressed: () => Navigator.of(context).pop(
+            SubtitleStyle(
+              fontSize: _fontSize,
+              textColor: _textColor,
+              backgroundColor: _backgroundColor,
+              position: _position,
+            ),
+          ),
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ColorOption extends StatelessWidget {
+  const _ColorOption({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: color,
+            border: Border.all(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          color.a == 0
+              ? '透明'
+              : color == Colors.white
+              ? '白色'
+              : '自定义',
+        ),
+      ],
     );
   }
 }

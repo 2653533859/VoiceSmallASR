@@ -17,7 +17,9 @@ import 'support/fake_asr.dart';
 
 void main() {
   testWidgets('载入已转写视频、显示当前字幕并可点击跳转', (WidgetTester tester) async {
-    final Directory workspace = Directory.systemTemp.createTempSync('vsasr_video_test');
+    final Directory workspace = Directory.systemTemp.createTempSync(
+      'vsasr_video_test',
+    );
     final String videoPath = '${workspace.path}/movie.mp4';
     writeFakeModel(workspace.path);
     final TranscribeController transcription = TranscribeController(
@@ -30,8 +32,12 @@ void main() {
       }) async => FakeTranscriber(language: config.language, text: '字幕第一条'),
     );
     final _FakeVideoBackend backend = _FakeVideoBackend();
-    final VideoPlaybackController video = VideoPlaybackController(backend: backend);
+    final VideoPlaybackController video = VideoPlaybackController(
+      backend: backend,
+    );
     final _FakeTranslationProvider translation = _FakeTranslationProvider();
+    String? savedFileName;
+    String? savedContent;
     addTearDown(() async {
       video.dispose();
       await transcription.shutdown();
@@ -52,6 +58,11 @@ void main() {
                 utf8.encode('1\n00:00:00,000 --> 00:00:01,000\n外部字幕\n'),
               ),
             ),
+            saveSubtitleFile: (String name, String content) async {
+              savedFileName = name;
+              savedContent = content;
+              return '/tmp/$name';
+            },
             translationProviderResolver: () async => translation,
           ),
         ),
@@ -81,6 +92,20 @@ void main() {
     expect(transcription.result?.segments.single.text, '外部字幕');
     expect(find.text('外部字幕'), findsNWidgets(2));
     expect(find.textContaining('已加载字幕：external.srt'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('videoExportSubtitles')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoExportFormat-srt')));
+    await tester.pumpAndSettle();
+    expect(savedFileName, 'movie.srt');
+    expect(savedContent, contains('外部字幕'));
+
+    await tester.tap(find.byKey(const Key('videoSubtitleStyle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('subtitleStyleFontSize')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('saveSubtitleStyle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('saveSubtitleStyle')), findsNothing);
   });
 }
 
@@ -101,9 +126,13 @@ class _FakeTranslationProvider implements TranslationProvider {
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {
-  final StreamController<Duration> _positions = StreamController<Duration>.broadcast(sync: true);
-  final StreamController<Duration> _durations = StreamController<Duration>.broadcast(sync: true);
-  final StreamController<bool> _playing = StreamController<bool>.broadcast(sync: true);
+  final StreamController<Duration> _positions =
+      StreamController<Duration>.broadcast(sync: true);
+  final StreamController<Duration> _durations =
+      StreamController<Duration>.broadcast(sync: true);
+  final StreamController<bool> _playing = StreamController<bool>.broadcast(
+    sync: true,
+  );
 
   Duration? lastSeek;
 
