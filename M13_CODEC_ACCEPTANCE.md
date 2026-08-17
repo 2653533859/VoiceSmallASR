@@ -12,9 +12,11 @@
 | H.264 + MP3 / MP4 | MP3 解码后转 AAC | 通过 |
 | VP9 + Opus / WebM | VP9 解码，Opus 解码后转 AAC | 通过 |
 | HEVC + AAC / MP4 | HEVC 解码，AAC 音轨直通 | 通过 |
+| AV1 + AAC / MP4 | AV1 解码，AAC 音轨直通 | 通过 |
+| VP8 + Vorbis / WebM | VP8 解码，Vorbis 解码后转 AAC | 通过 |
 
 输入文件先复制到模拟器的 `/data/local/tmp/`，确保应用可以直接读取；输出文件由
-Android `MediaCodec + OpenGL + MediaMuxer` 生成到应用临时目录。四个输出均成功生成且
+Android `MediaCodec + OpenGL + MediaMuxer` 生成到应用临时目录。六个输出均成功生成且
 大于 1 KiB。
 
 ## 可复用命令
@@ -28,7 +30,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 cd app
 flutter test integration_test/hard_subtitle_acceptance_test.dart \
   -d emulator-5554 \
-  '--dart-define=VSASR_HARD_SUBTITLE_TEST_VIDEOS=/data/local/tmp/aac.mp4|/data/local/tmp/mp3.mp4|/data/local/tmp/vp9-opus.webm|/data/local/tmp/hevc-aac.mp4'
+  '--dart-define=VSASR_HARD_SUBTITLE_TEST_VIDEOS=/data/local/tmp/aac.mp4|/data/local/tmp/mp3.mp4|/data/local/tmp/vp9-opus.webm|/data/local/tmp/hevc-aac.mp4|/data/local/tmp/av1-aac.mp4|/data/local/tmp/vp8-vorbis.webm'
 ```
 
 仍兼容原有的单输入 `VSASR_HARD_SUBTITLE_TEST_VIDEO`。桌面端同样可以使用多输入变量；桌面

@@ -420,8 +420,8 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 持续性能日志：文件、批量和实时报告写入应用私有目录的版本化 JSON，最多保留 100 条，支持查看/清空和损坏条目跳过
 - [x] 手工说话人标签：`Segment`/项目 JSON 支持可选标签；字幕编辑器可编辑、清空并在合并/拆分时传播；SRT/VTT/TXT 使用 `[speaker:标签]` 标记，视频叠加和列表显示标签
 - [x] 自动说话人分离：独立下载/校验 pyannote segmentation 与 3D-Speaker embedding 模型，后台 isolate 运行并按时间重叠映射 `SPEAKER_00` 等标签；首页支持自动估计或指定人数，新增单测和显式真实模型验收脚本；本机 macOS 已用官方四人中文 WAV 和真实模型通过 Debug 集成验收，记录见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)，Android 真机和 Windows 用户桌面仍待验收
-- [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，复用字幕样式生成带原文、译文和说话人标签的 MP4；Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出，新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本；AAC 直通与 MP3 转 AAC 已在 API 35 ARM64 模拟器真实通过，Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` smoke，macOS `ffmpeg-full 9.0.1` 已通过 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart` 纯 VM 真实编码与重新解码，无开发证书的 Debug Runner 也已用 ad-hoc 签名完成集成启动与编码验收；普通 Homebrew FFmpeg 8.1.1 缺少 `libass` 时已通过负向验收，应用会明确提示使用完整 FFmpeg，记录见 [`M13_FFMPEG_COMPATIBILITY.md`](M13_FFMPEG_COMPATIBILITY.md)；Android 真机和其他编解码器仍待验收
-- [x] 硬字幕编解码器矩阵补充验收：API 35 ARM64 模拟器使用同一集成测试入口额外通过 H.264+MP3、VP9+Opus 和 HEVC+AAC 输入；详细设备、命令和范围限制见 [`M13_CODEC_ACCEPTANCE.md`](M13_CODEC_ACCEPTANCE.md)
+- [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，复用字幕样式生成带原文、译文和说话人标签的 MP4；Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出，新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本；AAC 直通与 MP3 转 AAC 已在 API 35 ARM64 模拟器真实通过，Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` smoke，macOS `ffmpeg-full 9.0.1` 已通过 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart` 纯 VM 真实编码与重新解码，无开发证书的 Debug Runner 也已用 ad-hoc 签名完成集成启动与编码验收；普通 Homebrew FFmpeg 8.1.1 缺少 `libass` 时已通过负向验收，应用会明确提示使用完整 FFmpeg，记录见 [`M13_FFMPEG_COMPATIBILITY.md`](M13_FFMPEG_COMPATIBILITY.md)；API 35 模拟器已补充通过 AV1+AAC 与 VP8+Vorbis，Android 真机和厂商 Codec 差异仍待验收
+- [x] 硬字幕编解码器矩阵补充验收：API 35 ARM64 模拟器使用同一集成测试入口通过 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC、AV1+AAC 和 VP8+Vorbis 六种输入；详细设备、命令和范围限制见 [`M13_CODEC_ACCEPTANCE.md`](M13_CODEC_ACCEPTANCE.md)
 
 ## 5. 决策记录与待决策事项
 
