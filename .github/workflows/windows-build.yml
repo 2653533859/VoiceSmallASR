@@ -46,6 +46,16 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg --no-progress --yes
 
+      - name: Verify FFmpeg ASS subtitle filter
+        shell: pwsh
+        run: |
+          $filters = (& ffmpeg -hide_banner -filters 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) { throw "无法读取 FFmpeg 滤镜列表，退出码 $LASTEXITCODE" }
+          if ($filters -notmatch '(?im)^\s*(?:[A-Z\.]{3}\s+)?ass\s+') {
+            throw "Windows runner 的 FFmpeg 未包含 ass/libass 滤镜，无法验收硬字幕编码"
+          }
+          Write-Host "FFmpeg ass/libass 滤镜可用"
+
       - name: Build Windows Release and installer
         shell: pwsh
         run: ./scripts/build_windows_unsigned.ps1 -Flutter flutter
@@ -94,6 +104,13 @@ jobs:
           VSASR_SMOKE_AUDIO: "${{ runner.temp }}/voicesmallasr-windows-smoke/tone.m4a"
           VSASR_SMOKE_VIDEO: "${{ runner.temp }}/voicesmallasr-windows-smoke/tone.mp4"
         run: flutter test integration_test/windows_smoke_test.dart -d windows
+
+      - name: Run Windows hard subtitle smoke
+        working-directory: app
+        shell: pwsh
+        env:
+          VSASR_HARD_SUBTITLE_TEST_VIDEO: "${{ runner.temp }}/voicesmallasr-windows-smoke/tone.mp4"
+        run: flutter test integration_test/hard_subtitle_acceptance_test.dart -d windows
 
       - name: Verify artifacts
         shell: pwsh
