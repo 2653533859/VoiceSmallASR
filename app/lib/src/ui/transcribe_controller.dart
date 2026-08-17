@@ -14,6 +14,8 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/asr_engine.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/asr/speaker_diarization.dart';
+import 'package:vsasr_app/src/asr/speaker_diarization_model_manager.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/diagnostics/performance_report.dart';
@@ -41,6 +43,9 @@ enum JobStage {
   /// 正在翻译当前识别结果。
   translating,
 
+  /// 正在进行离线说话人分离并把标签映射到字幕。
+  diarizing,
+
   /// 正在删除或刷新模型缓存。
   managingModel,
 }
@@ -53,8 +58,12 @@ class TranscribeController extends ChangeNotifier {
     this.launch = launchWorkerIsolate,
     AsrConfig? config,
     bool offlineMode = false,
+    SpeakerDiarizationModelManager? speakerModels,
+    SpeakerDiarizationRunner? diarize,
   }) : _decoder = decoder ?? const PlatformAudioDecoder(),
        _models = models ?? ModelManager(),
+       _speakerModels = speakerModels ?? SpeakerDiarizationModelManager(),
+       _diarize = diarize ?? runOfflineSpeakerDiarization,
        _config = config ?? AsrConfig(),
        _offlineMode = false {
     _offlineMode = offlineMode;
@@ -62,6 +71,8 @@ class TranscribeController extends ChangeNotifier {
 
   final AudioDecoder _decoder;
   final ModelManager _models;
+  final SpeakerDiarizationModelManager _speakerModels;
+  final SpeakerDiarizationRunner _diarize;
 
   /// 怎么起转写器。默认后台 isolate；测试可注入进程内替身。
   final TranscriberLauncher launch;
@@ -453,6 +464,85 @@ class TranscribeController extends ChangeNotifier {
     }
   }
 
+  /// 为当前识别结果自动标注说话人。
+  ///
+  /// 说话人分离需要重新读取当前媒体文件，因此导入的独立字幕只有在项目
+  /// 已绑定媒体路径时才能使用。分离结果只写回字幕段的 speaker 字段，
+  /// 不会覆盖文字、时间戳或已有译文。
+  Future<void> diarizeCurrentResult({
+    int numClusters = -1,
+    double threshold = 0.9,
+  }) async {
+    if (busy) return;
+    final TranscriptionResult? source = _result;
+    final String? path = _filePath;
+    if (source == null) throw StateError('还没有可标注的识别结果');
+    if (path == null || path.trim().isEmpty) {
+      throw StateError('自动说话人分离需要绑定原媒体文件');
+    }
+    final SpeakerDiarizationOptions options = SpeakerDiarizationOptions(
+      numClusters: numClusters,
+      threshold: threshold,
+    );
+    options.validate();
+
+    final int generation = _cancelGeneration;
+    _stage = JobStage.diarizing;
+    _errorText = null;
+    _progress = null;
+    _statusText = '正在准备说话人模型…';
+    notifyListeners();
+    try {
+      final SpeakerDiarizationModelPaths paths = await _speakerModels.ensure(
+        allowDownload: !_offlineMode,
+        progress: _onModelProgress,
+      );
+      if (_disposed || generation != _cancelGeneration) return;
+
+      _statusText = '正在解码音频…';
+      _progress = null;
+      notifyListeners();
+      final Float32List samples = await _decoder.decodeFile(path);
+      if (_disposed || generation != _cancelGeneration) return;
+
+      _statusText = '正在分析说话人…';
+      _progress = null;
+      notifyListeners();
+      final List<SpeakerDiarizationSpan> spans = await _diarize(
+        samples,
+        paths,
+        options,
+      );
+      if (_disposed || generation != _cancelGeneration) return;
+
+      final TranscriptionResult labeled = applySpeakerDiarization(
+        source,
+        spans,
+      );
+      _result = labeled;
+      final Set<String> speakers = labeled.segments
+          .map((Segment segment) => segment.speaker)
+          .whereType<String>()
+          .toSet();
+      _statusText = '说话人标注完成：${speakers.length} 位';
+      _progress = 1;
+      _markProjectChanged();
+    } on AudioDecodeException catch (error) {
+      if (_disposed || generation != _cancelGeneration) return;
+      _errorText = error.message;
+      _statusText = '解码失败';
+      _progress = null;
+    } on Object catch (error) {
+      if (_disposed || generation != _cancelGeneration) return;
+      _errorText = _humanize(error);
+      _statusText = '说话人标注失败';
+      _progress = null;
+    } finally {
+      _stage = JobStage.idle;
+      notifyListeners();
+    }
+  }
+
   /// 翻译当前识别结果，并在所有批次成功后一次性写回译文。
   ///
   /// [provider] 由界面或调用方创建，API Key 的读取和 provider 生命周期不放进
@@ -548,11 +638,16 @@ class TranscribeController extends ChangeNotifier {
     await worker?.dispose();
   }
 
-  /// 取消当前准备、解码、识别或翻译操作，并阻止迟到的异步结果写回。
+  /// 取消当前准备、解码、识别、翻译或说话人标注操作，并阻止迟到的异步结果写回。
+  ///
+  /// 翻译和说话人标注都是对已有结果的后处理，取消时必须保留原字幕；
+  /// 只有新转写阶段才清空尚未完成的结果。
   Future<void> cancelCurrentTask() async {
     if (!busy) return;
     _cancelGeneration++;
-    _result = null;
+    if (_stage == JobStage.decoding || _stage == JobStage.transcribing) {
+      _result = null;
+    }
     _progress = null;
     _errorText = null;
     _statusText = '处理已取消';

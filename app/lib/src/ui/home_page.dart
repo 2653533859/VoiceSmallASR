@@ -1278,6 +1278,61 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _diarize() async {
+    final TranscriptionResult? result = widget.controller.result;
+    if (result == null || widget.controller.busy) return;
+    final String? input = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        String value = '';
+        return AlertDialog(
+          title: const Text('自动标注说话人'),
+          content: TextField(
+            key: const Key('speakerCountInput'),
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: '说话人数（可选）',
+              hintText: '留空：自动判断人数',
+            ),
+            onChanged: (String next) => value = next,
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(value.trim()),
+              child: const Text('开始分析'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || input == null) return;
+
+    final String countText = input.trim();
+    final int? count = countText.isEmpty ? null : int.tryParse(countText);
+    if (countText.isNotEmpty && (count == null || count <= 0)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('说话人数必须是正整数，或留空自动判断')));
+      return;
+    }
+    try {
+      await widget.controller.diarizeCurrentResult(numClusters: count ?? -1);
+      if (!mounted) return;
+      final String? error = widget.controller.errorText;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error == null ? '说话人标注完成' : '说话人标注失败：$error')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('说话人标注失败：$error')));
+    }
+  }
+
   Future<void> _translateBatch() async {
     if (_batch.running || !_batch.hasTranslatableItems) return;
     final AppSettingsRepository repository = _settingsRepository;
@@ -1457,6 +1512,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onExport: _exportFile,
             onEdit: _openEditor,
             onTranslate: _translate,
+            onDiarize: _diarize,
             onImport: _importSubtitle,
             onBatch: _openBatch,
             onDiagnostics: _showPerformanceReport,
@@ -1476,6 +1532,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               onExport: _exportFile,
               onEdit: _openEditor,
               onTranslate: _translate,
+              onDiarize: _diarize,
               onImport: _importSubtitle,
               onBatch: _openBatch,
               onDiagnostics: _showPerformanceReport,
@@ -1682,6 +1739,7 @@ class _TranscribeView extends StatelessWidget {
     required this.onExport,
     required this.onEdit,
     required this.onTranslate,
+    required this.onDiarize,
     required this.onImport,
     required this.onBatch,
     required this.onDiagnostics,
@@ -1699,6 +1757,7 @@ class _TranscribeView extends StatelessWidget {
   final VoidCallback onExport;
   final VoidCallback onEdit;
   final VoidCallback onTranslate;
+  final VoidCallback onDiarize;
   final VoidCallback onImport;
   final VoidCallback onBatch;
   final VoidCallback onDiagnostics;
@@ -1816,6 +1875,14 @@ class _TranscribeView extends StatelessWidget {
                     : onTranslate,
                 icon: const Icon(Icons.translate),
                 label: const Text('翻译为中文'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('autoSpeakerDiarization'),
+                onPressed: result == null || controller.busy || batchBusy
+                    ? null
+                    : onDiarize,
+                icon: const Icon(Icons.record_voice_over_outlined),
+                label: const Text('自动标注说话人'),
               ),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 240),
