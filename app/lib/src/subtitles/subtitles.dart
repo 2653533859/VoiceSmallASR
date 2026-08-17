@@ -101,6 +101,22 @@ TranscriptionResult _parseTimedSubtitle(
       textLines.add(_stripSubtitleMarkup(text));
       lineNumber++;
     }
+    String? speaker;
+    if (textLines.isNotEmpty) {
+      final Match? match = RegExp(
+        r'^\[speaker:([^\]\r\n]+)\]\s*(.*)$',
+        caseSensitive: false,
+      ).firstMatch(textLines.first);
+      final String? label = match?.group(1)?.trim();
+      final String? firstText = match?.group(2)?.trim();
+      if (label != null &&
+          label.isNotEmpty &&
+          firstText != null &&
+          firstText.isNotEmpty) {
+        speaker = label;
+        textLines[0] = firstText;
+      }
+    }
     final String text = textLines
         .where((String value) => value.isNotEmpty)
         .join('\n')
@@ -112,6 +128,7 @@ TranscriptionResult _parseTimedSubtitle(
           start: timing.start,
           end: timing.end,
           index: index++,
+          speaker: speaker,
         ),
       );
     }
@@ -225,12 +242,14 @@ class Cue {
     required this.start,
     required this.end,
     this.translation,
+    this.speaker,
   });
 
   final String text;
   final double start;
   final double end;
   final String? translation;
+  final String? speaker;
 }
 
 /// 检查识别段是否能安全地作为字幕时间轴导出。
@@ -249,11 +268,15 @@ List<String> validateSubtitleTimeline(
       errors.add('第 ${index + 1} 条字幕的时间不是有效数字');
     } else {
       if (segment.start < 0) errors.add('第 ${index + 1} 条字幕不能从负数秒开始');
-      if (segment.end <= segment.start) errors.add('第 ${index + 1} 条字幕的结束时间必须晚于开始时间');
+      if (segment.end <= segment.start) {
+        errors.add('第 ${index + 1} 条字幕的结束时间必须晚于开始时间');
+      }
       if (previousEnd != null && segment.start < previousEnd - 0.000001) {
         errors.add('第 ${index + 1} 条字幕与上一条重叠或倒序');
       }
-      if (duration != null && duration > 0 && segment.end > duration + 0.000001) {
+      if (duration != null &&
+          duration > 0 &&
+          segment.end > duration + 0.000001) {
         errors.add('第 ${index + 1} 条字幕超出音频时长');
       }
       previousEnd = segment.end;
@@ -268,7 +291,10 @@ void ensureValidSubtitleTimeline(
   Iterable<Segment> segments, {
   double? duration,
 }) {
-  final List<String> errors = validateSubtitleTimeline(segments, duration: duration);
+  final List<String> errors = validateSubtitleTimeline(
+    segments,
+    duration: duration,
+  );
   if (errors.isNotEmpty) throw ArgumentError('字幕时间轴无效：${errors.first}');
 }
 
@@ -287,11 +313,7 @@ String formatTimestamp(double seconds, {String sep = ','}) {
 }
 
 /// 按 token 时间戳把长段切成多条字幕。
-Iterable<Cue> _splitByWords(
-  Segment seg,
-  int maxChars,
-  double maxDuration,
-) {
+Iterable<Cue> _splitByWords(Segment seg, int maxChars, double maxDuration) {
   final List<Cue> cues = <Cue>[];
   List<Word> chunk = <Word>[];
 
@@ -299,15 +321,26 @@ Iterable<Cue> _splitByWords(
     if (chunk.isEmpty) return;
     final String text = chunk.map((Word w) => w.text).join().trim();
     if (text.isNotEmpty) {
-      cues.add(Cue(text: text, start: chunk.first.start, end: chunk.last.end));
+      cues.add(
+        Cue(
+          text: text,
+          start: chunk.first.start,
+          end: chunk.last.end,
+          speaker: seg.speaker,
+        ),
+      );
     }
     chunk = <Word>[];
   }
 
   for (final Word word in seg.words) {
-    final int pending = chunk.fold<int>(0, (int n, Word w) => n + w.text.length);
+    final int pending = chunk.fold<int>(
+      0,
+      (int n, Word w) => n + w.text.length,
+    );
     final bool tooLong = pending + word.text.length > maxChars;
-    final bool tooSlow = chunk.isNotEmpty && word.end - chunk.first.start > maxDuration;
+    final bool tooSlow =
+        chunk.isNotEmpty && word.end - chunk.first.start > maxDuration;
     if (chunk.isNotEmpty && (tooLong || tooSlow)) flush();
     chunk.add(word);
   }
@@ -340,6 +373,7 @@ Iterable<Cue> _splitEvenly(Segment seg, int maxChars, double maxDuration) {
         text: text.substring(offset, end),
         start: seg.start + span * offset / total,
         end: seg.start + span * end / total,
+        speaker: seg.speaker,
       ),
     );
   }
@@ -359,7 +393,8 @@ List<Cue> buildCues(
     final String text = seg.text.trim();
     if (text.isEmpty) continue;
     final bool hasTranslation = (seg.translation ?? '').trim().isNotEmpty;
-    final bool shortEnough = text.length <= maxChars && seg.duration <= maxDuration;
+    final bool shortEnough =
+        text.length <= maxChars && seg.duration <= maxDuration;
     if (shortEnough || hasTranslation) {
       cues.add(
         Cue(
@@ -367,6 +402,7 @@ List<Cue> buildCues(
           start: seg.start,
           end: seg.end,
           translation: hasTranslation ? seg.translation!.trim() : null,
+          speaker: seg.speaker,
         ),
       );
     } else if (seg.words.isNotEmpty) {
@@ -383,10 +419,18 @@ double _safeEnd(Cue cue) => cue.end > cue.start ? cue.end : cue.start + 0.001;
 
 List<String> _cueLines(Cue cue, bool bilingual, bool translationFirst) {
   final String? translated = cue.translation;
+  final String source = _withSpeaker(cue.text, cue.speaker);
   if (!bilingual || translated == null || translated.isEmpty) {
-    return <String>[cue.text];
+    return <String>[source];
   }
-  return translationFirst ? <String>[translated, cue.text] : <String>[cue.text, translated];
+  return translationFirst
+      ? <String>[translated, source]
+      : <String>[source, translated];
+}
+
+String _withSpeaker(String text, String? speaker) {
+  final String label = speaker?.trim() ?? '';
+  return label.isEmpty ? text : '[speaker:$label] $text';
 }
 
 /// 生成 SRT 字幕内容。[bilingual] 为真且段带译文时输出双行。
@@ -399,9 +443,15 @@ String toSrt(
 }) {
   final StringBuffer buf = StringBuffer();
   int number = 1;
-  for (final Cue cue in buildCues(segments, maxChars: maxChars, maxDuration: maxDuration)) {
+  for (final Cue cue in buildCues(
+    segments,
+    maxChars: maxChars,
+    maxDuration: maxDuration,
+  )) {
     buf.writeln(number++);
-    buf.writeln('${formatTimestamp(cue.start)} --> ${formatTimestamp(_safeEnd(cue))}');
+    buf.writeln(
+      '${formatTimestamp(cue.start)} --> ${formatTimestamp(_safeEnd(cue))}',
+    );
     for (final String line in _cueLines(cue, bilingual, translationFirst)) {
       buf.writeln(line);
     }
@@ -421,7 +471,11 @@ String toVtt(
   final StringBuffer buf = StringBuffer()
     ..writeln('WEBVTT')
     ..writeln();
-  for (final Cue cue in buildCues(segments, maxChars: maxChars, maxDuration: maxDuration)) {
+  for (final Cue cue in buildCues(
+    segments,
+    maxChars: maxChars,
+    maxDuration: maxDuration,
+  )) {
     buf.writeln(
       '${formatTimestamp(cue.start, sep: '.')} --> ${formatTimestamp(_safeEnd(cue), sep: '.')}',
     );
@@ -439,7 +493,7 @@ String toTxt(Iterable<Segment> segments, {bool bilingual = true}) {
   for (final Segment seg in segments) {
     final String text = seg.text.trim();
     if (text.isEmpty) continue;
-    buf.writeln(text);
+    buf.writeln(_withSpeaker(text, seg.speaker));
     final String translated = (seg.translation ?? '').trim();
     if (bilingual && translated.isNotEmpty) buf.writeln(translated);
   }
@@ -478,6 +532,10 @@ String renderSubtitles(
     case 'txt':
       return toTxt(result.segments, bilingual: bilingual);
     default:
-      throw ArgumentError.value(format, 'format', '不支持的格式，可选 $kSubtitleFormats');
+      throw ArgumentError.value(
+        format,
+        'format',
+        '不支持的格式，可选 $kSubtitleFormats',
+      );
   }
 }

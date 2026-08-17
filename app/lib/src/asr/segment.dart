@@ -44,6 +44,7 @@ class Segment {
     this.isFinal = true,
     this.index = -1,
     this.translation,
+    this.speaker,
   });
 
   factory Segment.fromJson(Object? value) {
@@ -67,6 +68,11 @@ class Segment {
     if (rawIsFinal != null && rawIsFinal is! bool) {
       throw FormatException('segment.is_final 必须是布尔值或 null');
     }
+    final Object? rawSpeaker = map['speaker'];
+    if (rawSpeaker != null && rawSpeaker is! String) {
+      throw FormatException('segment.speaker 必须是字符串或 null');
+    }
+    final String? speaker = (rawSpeaker as String?)?.trim();
     return Segment(
       text: _jsonString(map['text'], 'segment.text'),
       start: _jsonDouble(map['start'], 'segment.start'),
@@ -76,6 +82,7 @@ class Segment {
       isFinal: rawIsFinal as bool? ?? true,
       index: _jsonInt(map['index'], 'segment.index', fallback: -1),
       translation: rawTranslation as String?,
+      speaker: speaker == null || speaker.isEmpty ? null : speaker,
     );
   }
 
@@ -99,6 +106,9 @@ class Segment {
   /// 译文（翻译功能填充），未翻译时为 null。
   final String? translation;
 
+  /// 说话人标签。自动分离或人工校对均可填充，未标注时为 null。
+  final String? speaker;
+
   double get duration => end > start ? end - start : 0.0;
 
   Segment copyWith({
@@ -110,6 +120,8 @@ class Segment {
     bool? isFinal,
     int? index,
     String? translation,
+    String? speaker,
+    bool clearSpeaker = false,
   }) {
     return Segment(
       text: text ?? this.text,
@@ -120,6 +132,7 @@ class Segment {
       isFinal: isFinal ?? this.isFinal,
       index: index ?? this.index,
       translation: translation ?? this.translation,
+      speaker: clearSpeaker ? null : speaker ?? this.speaker,
     );
   }
 
@@ -131,6 +144,8 @@ class Segment {
     'language': language,
     'is_final': isFinal,
     if (translation != null) 'translation': translation,
+    if (speaker != null && speaker!.trim().isNotEmpty)
+      'speaker': speaker!.trim(),
     'words': words.map((Word w) => w.toJson()).toList(),
   };
 }
@@ -165,8 +180,11 @@ class TranscriptionResult {
   final String language;
 
   /// 拼接所有定稿段的文本。
-  String get text =>
-      segments.where((Segment s) => s.text.isNotEmpty).map((Segment s) => s.text).join(' ').trim();
+  String get text => segments
+      .where((Segment s) => s.text.isNotEmpty)
+      .map((Segment s) => s.text)
+      .join(' ')
+      .trim();
 
   bool get isEmpty => segments.isEmpty;
 

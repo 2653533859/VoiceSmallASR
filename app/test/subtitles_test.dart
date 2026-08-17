@@ -33,6 +33,42 @@ void main() {
     );
   });
 
+  test('说话人标签会随 JSON、SRT、VTT、TXT 导出，并可从带标签字幕导入', () {
+    const Segment labeled = Segment(
+      text: 'Hello',
+      start: 0.0,
+      end: 1.25,
+      translation: '你好',
+      speaker: '主持人',
+    );
+    const TranscriptionResult result = TranscriptionResult(
+      duration: 1.25,
+      segments: <Segment>[labeled],
+    );
+
+    expect(
+      toSrt(result.segments),
+      '1\n00:00:00,000 --> 00:00:01,250\n[speaker:主持人] Hello\n你好\n\n',
+    );
+    expect(toVtt(result.segments), contains('[speaker:主持人] Hello\n你好'));
+    expect(toTxt(result.segments), '[speaker:主持人] Hello\n你好\n');
+    expect(renderSubtitles(result, 'json'), contains('"speaker": "主持人"'));
+
+    final TranscriptionResult imported = parseSubtitleText(
+      '1\n00:00:00,000 --> 00:00:01,250\n[speaker:主持人] Hello\n你好\n',
+      format: 'srt',
+    );
+    expect(imported.segments.single.speaker, '主持人');
+    expect(imported.segments.single.text, 'Hello\n你好');
+
+    final TranscriptionResult ordinaryBracket = parseSubtitleText(
+      '1\n00:00:00,000 --> 00:00:01,250\n[音乐] Hello\n',
+      format: 'srt',
+    );
+    expect(ordinaryBracket.segments.single.speaker, isNull);
+    expect(ordinaryBracket.segments.single.text, '[音乐] Hello');
+  });
+
   test('VTT 和 TXT 都保留双语顺序，空白译文不会产生空行', () {
     const TranscriptionResult result = TranscriptionResult(
       segments: <Segment>[

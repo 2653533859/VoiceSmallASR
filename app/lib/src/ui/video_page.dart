@@ -470,6 +470,8 @@ class _VideoSurface extends StatelessWidget {
                       ),
                       child: Text(
                         <String>[
+                          if ((current!.speaker ?? '').trim().isNotEmpty)
+                            '【${current!.speaker!.trim()}】',
                           current!.text,
                           if ((current!.translation ?? '').trim().isNotEmpty)
                             current!.translation!,
@@ -736,6 +738,11 @@ class _SubtitleList extends StatelessWidget {
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              if ((segment.speaker ?? '').trim().isNotEmpty)
+                Text(
+                  '【${segment.speaker!.trim()}】',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
               Text(segment.text),
               if ((segment.translation ?? '').trim().isNotEmpty)
                 Text(

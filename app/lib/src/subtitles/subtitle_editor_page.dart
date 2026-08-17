@@ -65,7 +65,9 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
   Future<void> _split(int index) async {
     final Segment segment = _editor.result.segments[index];
     final TextEditingController offset = TextEditingController(
-      text: (segment.text.trim().length ~/ 2).clamp(1, segment.text.trim().length - 1).toString(),
+      text: (segment.text.trim().length ~/ 2)
+          .clamp(1, segment.text.trim().length - 1)
+          .toString(),
     );
     final TextEditingController time = TextEditingController(
       text: ((segment.start + segment.end) / 2).toStringAsFixed(3),
@@ -86,13 +88,18 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
             TextField(
               key: const Key('subtitleSplitTime'),
               controller: time,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: '分割时间（秒）'),
             ),
           ],
         ),
         actions: <Widget>[
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
           FilledButton(
             key: const Key('subtitleSplitConfirm'),
             onPressed: () {
@@ -128,11 +135,17 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
           key: const Key('subtitleOffsetSeconds'),
           initialValue: '0.000',
           onChanged: (String value) => input = value,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+          keyboardType: const TextInputType.numberWithOptions(
+            decimal: true,
+            signed: true,
+          ),
           decoration: const InputDecoration(labelText: '偏移秒数（正数后移，负数前移）'),
         ),
         actions: <Widget>[
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
           FilledButton(
             key: const Key('subtitleOffsetConfirm'),
             onPressed: () {
@@ -156,58 +169,59 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
     final _ReplaceRequest? request = await showDialog<_ReplaceRequest>(
       context: context,
       builder: (BuildContext context) => StatefulBuilder(
-        builder: (
-          BuildContext context,
-          void Function(void Function()) setDialogState,
-        ) {
-          return AlertDialog(
-            title: const Text('搜索替换字幕文本'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                TextFormField(
-                  key: const Key('subtitleReplaceQuery'),
-                  onChanged: (String value) => setDialogState(() => query = value),
-                  decoration: const InputDecoration(labelText: '搜索内容'),
+        builder:
+            (
+              BuildContext context,
+              void Function(void Function()) setDialogState,
+            ) {
+              return AlertDialog(
+                title: const Text('搜索替换字幕文本'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    TextFormField(
+                      key: const Key('subtitleReplaceQuery'),
+                      onChanged: (String value) =>
+                          setDialogState(() => query = value),
+                      decoration: const InputDecoration(labelText: '搜索内容'),
+                    ),
+                    TextFormField(
+                      key: const Key('subtitleReplaceWith'),
+                      onChanged: (String value) =>
+                          setDialogState(() => replacement = value),
+                      decoration: const InputDecoration(labelText: '替换为（可为空）'),
+                    ),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: caseSensitive,
+                      onChanged: (bool? value) =>
+                          setDialogState(() => caseSensitive = value ?? true),
+                      title: const Text('区分大小写'),
+                    ),
+                  ],
                 ),
-                TextFormField(
-                  key: const Key('subtitleReplaceWith'),
-                  onChanged: (String value) =>
-                      setDialogState(() => replacement = value),
-                  decoration: const InputDecoration(labelText: '替换为（可为空）'),
-                ),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: caseSensitive,
-                  onChanged: (bool? value) => setDialogState(
-                    () => caseSensitive = value ?? true,
+                actions: <Widget>[
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消'),
                   ),
-                  title: const Text('区分大小写'),
-                ),
-              ],
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                key: const Key('subtitleReplaceConfirm'),
-                onPressed: query.isEmpty
-                    ? null
-                    : () => Navigator.pop(
-                        context,
-                        _ReplaceRequest(
-                          query: query,
-                          replacement: replacement,
-                          caseSensitive: caseSensitive,
-                        ),
-                      ),
-                child: const Text('替换全部'),
-              ),
-            ],
-          );
-        },
+                  FilledButton(
+                    key: const Key('subtitleReplaceConfirm'),
+                    onPressed: query.isEmpty
+                        ? null
+                        : () => Navigator.pop(
+                            context,
+                            _ReplaceRequest(
+                              query: query,
+                              replacement: replacement,
+                              caseSensitive: caseSensitive,
+                            ),
+                          ),
+                    child: const Text('替换全部'),
+                  ),
+                ],
+              );
+            },
       ),
     );
     if (!mounted || request == null) return;
@@ -253,8 +267,9 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
     if (!mounted || threshold == null) return;
 
     try {
-      final List<SubtitleReadingSpeedIssue> issues =
-          _editor.checkReadingSpeed(maxCharactersPerSecond: threshold);
+      final List<SubtitleReadingSpeedIssue> issues = _editor.checkReadingSpeed(
+        maxCharactersPerSecond: threshold,
+      );
       setState(() => _errorText = null);
       await showDialog<void>(
         context: context,
@@ -299,7 +314,13 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
   void _seek(double seconds) {
     final VideoPlaybackController? player = widget.player;
     if (player == null) return;
-    unawaited(player.seek(Duration(microseconds: (seconds * Duration.microsecondsPerSecond).round())));
+    unawaited(
+      player.seek(
+        Duration(
+          microseconds: (seconds * Duration.microsecondsPerSecond).round(),
+        ),
+      ),
+    );
   }
 
   @override
@@ -335,11 +356,26 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
                             segment: segment,
                             canMerge: index + 1 < segments.length,
                             canSplit: segment.text.trim().length >= 2,
-                            onSeek: widget.player == null ? null : () => _seek(segment.start),
-                            onApply: (String text, double start, double end) => _runEdit(
-                              () => _editor.updateSegment(index, text: text, start: start, end: end),
-                            ),
-                            onMerge: () => _runEdit(() => _editor.mergeSegments(index)),
+                            onSeek: widget.player == null
+                                ? null
+                                : () => _seek(segment.start),
+                            onApply:
+                                (
+                                  String text,
+                                  double start,
+                                  double end,
+                                  String speaker,
+                                ) => _runEdit(
+                                  () => _editor.updateSegment(
+                                    index,
+                                    text: text,
+                                    start: start,
+                                    end: end,
+                                    speaker: speaker,
+                                  ),
+                                ),
+                            onMerge: () =>
+                                _runEdit(() => _editor.mergeSegments(index)),
                             onSplit: () => _split(index),
                           );
                         },
@@ -423,11 +459,16 @@ class _EditorToolbar extends StatelessWidget {
             ),
             Expanded(
               child: errorText == null
-                  ? Text('${editor.result.length} 条字幕', textAlign: TextAlign.center)
+                  ? Text(
+                      '${editor.result.length} 条字幕',
+                      textAlign: TextAlign.center,
+                    )
                   : Text(
                       errorText!,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
             ),
             FilledButton.icon(
@@ -459,7 +500,8 @@ class _EditableSegmentTile extends StatefulWidget {
   final bool canMerge;
   final bool canSplit;
   final VoidCallback? onSeek;
-  final void Function(String text, double start, double end) onApply;
+  final void Function(String text, double start, double end, String speaker)
+  onApply;
   final VoidCallback onMerge;
   final VoidCallback onSplit;
 
@@ -471,13 +513,17 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
   late final TextEditingController _text;
   late final TextEditingController _start;
   late final TextEditingController _end;
+  late final TextEditingController _speaker;
 
   @override
   void initState() {
     super.initState();
     _text = TextEditingController(text: widget.segment.text);
-    _start = TextEditingController(text: widget.segment.start.toStringAsFixed(3));
+    _start = TextEditingController(
+      text: widget.segment.start.toStringAsFixed(3),
+    );
     _end = TextEditingController(text: widget.segment.end.toStringAsFixed(3));
+    _speaker = TextEditingController(text: widget.segment.speaker ?? '');
   }
 
   @override
@@ -488,6 +534,8 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
     final String end = widget.segment.end.toStringAsFixed(3);
     if (_start.text != start) _start.text = start;
     if (_end.text != end) _end.text = end;
+    final String speaker = widget.segment.speaker ?? '';
+    if (_speaker.text != speaker) _speaker.text = speaker;
   }
 
   @override
@@ -495,6 +543,7 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
     _text.dispose();
     _start.dispose();
     _end.dispose();
+    _speaker.dispose();
     super.dispose();
   }
 
@@ -502,7 +551,7 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
     final double? start = double.tryParse(_start.text.trim());
     final double? end = double.tryParse(_end.text.trim());
     if (start == null || end == null) return;
-    widget.onApply(_text.text, start, end);
+    widget.onApply(_text.text, start, end, _speaker.text);
   }
 
   @override
@@ -518,7 +567,10 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
           children: <Widget>[
             Row(
               children: <Widget>[
-                Text('第 ${index + 1} 条', style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  '第 ${index + 1} 条',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 const Spacer(),
                 if (widget.onSeek != null)
                   IconButton(
@@ -557,13 +609,21 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
               decoration: const InputDecoration(labelText: '字幕文本'),
             ),
             const SizedBox(height: 4),
+            TextField(
+              key: Key('subtitleSpeaker_$index'),
+              controller: _speaker,
+              decoration: const InputDecoration(labelText: '说话人标签（可选）'),
+            ),
+            const SizedBox(height: 4),
             Row(
               children: <Widget>[
                 Expanded(
                   child: TextField(
                     key: Key('subtitleStart_$index'),
                     controller: _start,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(labelText: '开始（秒）'),
                   ),
                 ),
@@ -572,7 +632,9 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
                   child: TextField(
                     key: Key('subtitleEnd_$index'),
                     controller: _end,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(labelText: '结束（秒）'),
                   ),
                 ),

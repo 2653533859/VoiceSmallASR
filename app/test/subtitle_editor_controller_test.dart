@@ -20,7 +20,9 @@ void main() {
   );
 
   test('修改文本会清除过期译文和 token 时间戳，并支持撤销重做', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     editor.updateSegment(0, text: 'hi');
     expect(editor.result.segments.first.text, 'hi');
@@ -35,8 +37,36 @@ void main() {
     expect(editor.result.segments.first.text, 'hi');
   });
 
+  test('说话人标签可编辑、清空并在合并拆分时保持正确归属', () {
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: const TranscriptionResult(
+        duration: 4.0,
+        segments: <Segment>[
+          Segment(text: '甲段', start: 0.0, end: 1.0, speaker: '甲'),
+          Segment(text: '乙段', start: 1.0, end: 2.0, speaker: '乙'),
+        ],
+      ),
+    );
+
+    editor.updateSegment(0, speaker: '主持人');
+    expect(editor.result.segments.first.speaker, '主持人');
+    editor.updateSegment(0, speaker: ' ');
+    expect(editor.result.segments.first.speaker, isNull);
+    editor.undo();
+    expect(editor.result.segments.first.speaker, '主持人');
+
+    editor.mergeSegments(0);
+    expect(editor.result.segments.single.speaker, isNull);
+    editor.undo();
+    editor.splitSegment(0, characterOffset: 1, splitTime: 0.5);
+    expect(editor.result.segments[0].speaker, '主持人');
+    expect(editor.result.segments[1].speaker, '主持人');
+  });
+
   test('时间修改拒绝重叠、倒序和超出音频时长', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     expect(
       () => editor.updateSegment(1, start: 0.5),
@@ -47,11 +77,19 @@ void main() {
       throwsA(isA<SubtitleEditException>()),
     );
     expect(editor.result.segments[0].end, 1.0);
-    expect(validateSubtitleTimeline(editor.result.segments, duration: editor.result.duration), isEmpty);
+    expect(
+      validateSubtitleTimeline(
+        editor.result.segments,
+        duration: editor.result.duration,
+      ),
+      isEmpty,
+    );
   });
 
   test('时间修改会清除过期 token 时间戳但保留译文', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     editor.updateSegment(0, start: 0.2);
 
@@ -60,7 +98,9 @@ void main() {
   });
 
   test('批量时间偏移会同步移动 token、保留译文并支持撤销', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     editor.shiftTimeOffset(0.5);
 
@@ -75,7 +115,9 @@ void main() {
   });
 
   test('批量时间偏移越过时间轴边界时拒绝且不改变结果', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     expect(
       () => editor.shiftTimeOffset(-0.1),
@@ -86,12 +128,11 @@ void main() {
   });
 
   test('搜索替换会更新所有字幕并清除过期译文与 token', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
-
-    final int replacements = editor.replaceText(
-      query: 'o',
-      replacement: 'O',
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
     );
+
+    final int replacements = editor.replaceText(query: 'o', replacement: 'O');
 
     expect(replacements, 2);
     expect(editor.result.segments[0].text, 'hellO');
@@ -103,7 +144,9 @@ void main() {
   });
 
   test('搜索替换支持不区分大小写', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     expect(
       editor.replaceText(
@@ -117,7 +160,9 @@ void main() {
   });
 
   test('搜索替换未命中或搜索内容为空时不污染撤销记录', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     expect(editor.replaceText(query: 'missing', replacement: 'x'), 0);
     expect(editor.canUndo, isFalse);
@@ -128,10 +173,13 @@ void main() {
   });
 
   test('阅读速度检查返回超阈值字幕且不修改编辑结果', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
-    final List<SubtitleReadingSpeedIssue> issues =
-        editor.checkReadingSpeed(maxCharactersPerSecond: 4.0);
+    final List<SubtitleReadingSpeedIssue> issues = editor.checkReadingSpeed(
+      maxCharactersPerSecond: 4.0,
+    );
 
     expect(issues, hasLength(2));
     expect(issues.first.index, 0);
@@ -142,7 +190,9 @@ void main() {
   });
 
   test('阅读速度检查拒绝非正阈值', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     expect(
       () => editor.checkReadingSpeed(maxCharactersPerSecond: 0),
@@ -151,7 +201,9 @@ void main() {
   });
 
   test('重复应用相同内容不会新增撤销记录', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     editor.updateSegment(0, text: ' hello ');
 
@@ -159,7 +211,9 @@ void main() {
   });
 
   test('合并和拆分会重排序号，撤销后可恢复原列表', () {
-    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
 
     editor.mergeSegments(0);
     expect(editor.result.length, 1);
@@ -171,7 +225,10 @@ void main() {
     expect(editor.result.length, 2);
     editor.splitSegment(0, characterOffset: 2, splitTime: 0.4);
     expect(editor.result.length, 3);
-    expect(editor.result.segments.map((Segment segment) => segment.index), <int>[0, 1, 2]);
+    expect(
+      editor.result.segments.map((Segment segment) => segment.index),
+      <int>[0, 1, 2],
+    );
     expect(editor.result.segments[0].text, 'he');
     expect(editor.result.segments[1].text, 'llo');
   });

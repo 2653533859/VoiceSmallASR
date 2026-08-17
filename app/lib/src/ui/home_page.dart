@@ -140,8 +140,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _batchQueueSavedRevision = 0;
   bool _batchQueueFailureNotified = false;
   bool _batchQueueRecoveryPromptShown = false;
-  final List<PerformanceLogEntry> _performanceHistory =
-      <PerformanceLogEntry>[];
+  final List<PerformanceLogEntry> _performanceHistory = <PerformanceLogEntry>[];
   final Set<String> _performanceHistoryKeys = <String>{};
   Future<void>? _performanceHistoryLoad;
   Future<void> _performanceWriteChain = Future<void>.value();
@@ -269,8 +268,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _loadPerformanceHistory() async {
     try {
-      final List<PerformanceLogEntry> entries =
-          await _performanceLogRepository.load();
+      final List<PerformanceLogEntry> entries = await _performanceLogRepository
+          .load();
       if (_detached) return;
       _performanceHistory
         ..clear()
@@ -2011,6 +2010,11 @@ class _LiveList extends StatelessWidget {
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              if ((segment.speaker ?? '').trim().isNotEmpty)
+                Text(
+                  '【${segment.speaker!.trim()}】',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
               Text(segment.text),
               if ((segment.translation ?? '').trim().isNotEmpty)
                 Text(
@@ -2071,6 +2075,11 @@ class _SegmentList extends StatelessWidget {
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              if ((segment.speaker ?? '').trim().isNotEmpty)
+                Text(
+                  '【${segment.speaker!.trim()}】',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
               Text(segment.text),
               if ((segment.translation ?? '').trim().isNotEmpty)
                 Text(

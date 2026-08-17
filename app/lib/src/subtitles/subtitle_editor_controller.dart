@@ -43,7 +43,7 @@ const double kDefaultMaxCharactersPerSecond = 17.0;
 /// 影响识别控制器当前正在显示的结果。
 class SubtitleEditorController extends ChangeNotifier {
   SubtitleEditorController({required TranscriptionResult initial})
-      : _result = _withIndexes(initial) {
+    : _result = _withIndexes(initial) {
     _ensureValid(_result);
   }
 
@@ -66,15 +66,30 @@ class SubtitleEditorController extends ChangeNotifier {
     String? text,
     double? start,
     double? end,
+    String? speaker,
+    bool clearSpeaker = false,
   }) {
     final Segment current = _segmentAt(index);
     final String nextText = text?.trim() ?? current.text;
     if (nextText.isEmpty) throw const SubtitleEditException('字幕文本不能为空');
     final bool textChanged = nextText != current.text;
     final bool timingChanged = start != null || end != null;
+    final String? nextSpeaker = clearSpeaker
+        ? null
+        : speaker == null
+        ? current.speaker
+        : speaker.trim().isEmpty
+        ? null
+        : speaker.trim();
+    final bool speakerChanged = nextSpeaker != current.speaker;
     final double nextStart = start ?? current.start;
     final double nextEnd = end ?? current.end;
-    if (nextText == current.text && nextStart == current.start && nextEnd == current.end) return;
+    if (nextText == current.text &&
+        nextStart == current.start &&
+        nextEnd == current.end &&
+        !speakerChanged) {
+      return;
+    }
     final Segment next = Segment(
       text: nextText,
       start: nextStart,
@@ -84,6 +99,7 @@ class SubtitleEditorController extends ChangeNotifier {
       isFinal: current.isFinal,
       index: current.index,
       translation: textChanged ? null : current.translation,
+      speaker: nextSpeaker,
     );
     final List<Segment> segments = List<Segment>.of(_result.segments);
     segments[index] = next;
@@ -104,6 +120,7 @@ class SubtitleEditorController extends ChangeNotifier {
       language: first.language,
       isFinal: true,
       index: first.index,
+      speaker: first.speaker == second.speaker ? first.speaker : null,
     );
     final List<Segment> segments = List<Segment>.of(_result.segments)
       ..replaceRange(index, index + 2, <Segment>[merged]);
@@ -111,38 +128,42 @@ class SubtitleEditorController extends ChangeNotifier {
   }
 
   /// 按字符位置与时间点拆分第 [index] 条字幕。
-  void splitSegment(int index, {required int characterOffset, required double splitTime}) {
+  void splitSegment(
+    int index, {
+    required int characterOffset,
+    required double splitTime,
+  }) {
     final Segment current = _segmentAt(index);
     final String text = current.text.trim();
     if (characterOffset <= 0 || characterOffset >= text.length) {
       throw const SubtitleEditException('分割位置必须在字幕文本中间');
     }
-    if (!splitTime.isFinite || splitTime <= current.start || splitTime >= current.end) {
+    if (!splitTime.isFinite ||
+        splitTime <= current.start ||
+        splitTime >= current.end) {
       throw const SubtitleEditException('分割时间必须位于当前字幕的起止时间之间');
     }
     final List<Segment> segments = List<Segment>.of(_result.segments)
-      ..replaceRange(
-        index,
-        index + 1,
-        <Segment>[
-          Segment(
-            text: text.substring(0, characterOffset).trim(),
-            start: current.start,
-            end: splitTime,
-            language: current.language,
-            isFinal: true,
-            index: current.index,
-          ),
-          Segment(
-            text: text.substring(characterOffset).trim(),
-            start: splitTime,
-            end: current.end,
-            language: current.language,
-            isFinal: true,
-            index: current.index + 1,
-          ),
-        ],
-      );
+      ..replaceRange(index, index + 1, <Segment>[
+        Segment(
+          text: text.substring(0, characterOffset).trim(),
+          start: current.start,
+          end: splitTime,
+          language: current.language,
+          isFinal: true,
+          index: current.index,
+          speaker: current.speaker,
+        ),
+        Segment(
+          text: text.substring(characterOffset).trim(),
+          start: splitTime,
+          end: current.end,
+          language: current.language,
+          isFinal: true,
+          index: current.index + 1,
+          speaker: current.speaker,
+        ),
+      ]);
     _commit(segments);
   }
 
@@ -204,6 +225,7 @@ class SubtitleEditorController extends ChangeNotifier {
             language: segment.language,
             isFinal: segment.isFinal,
             index: segment.index,
+            speaker: segment.speaker,
           );
         })
         .toList(growable: false);
@@ -219,15 +241,18 @@ class SubtitleEditorController extends ChangeNotifier {
     if (!maxCharactersPerSecond.isFinite || maxCharactersPerSecond <= 0) {
       throw const SubtitleEditException('阅读速度阈值必须是正数');
     }
-    final List<SubtitleReadingSpeedIssue> issues = <SubtitleReadingSpeedIssue>[];
+    final List<SubtitleReadingSpeedIssue> issues =
+        <SubtitleReadingSpeedIssue>[];
     for (int index = 0; index < _result.segments.length; index++) {
       final Segment segment = _result.segments[index];
       final double duration = segment.duration;
       if (duration <= 0) continue;
       final int textCharacters = segment.text.trim().runes.length;
-      final int translationCharacters = segment.translation?.trim().runes.length ?? 0;
-      final int characters =
-          textCharacters > translationCharacters ? textCharacters : translationCharacters;
+      final int translationCharacters =
+          segment.translation?.trim().runes.length ?? 0;
+      final int characters = textCharacters > translationCharacters
+          ? textCharacters
+          : translationCharacters;
       if (characters == 0) continue;
       final double charactersPerSecond = characters / duration;
       if (charactersPerSecond > maxCharactersPerSecond) {
@@ -266,7 +291,9 @@ class SubtitleEditorController extends ChangeNotifier {
   }
 
   void _commit(List<Segment> segments) {
-    final TranscriptionResult next = _result.copyWith(segments: _withIndexesFrom(segments));
+    final TranscriptionResult next = _result.copyWith(
+      segments: _withIndexesFrom(segments),
+    );
     _ensureValid(next);
     _undo.add(_result);
     _result = next;
@@ -280,7 +307,8 @@ class SubtitleEditorController extends ChangeNotifier {
   static List<Segment> _withIndexesFrom(Iterable<Segment> source) {
     final List<Segment> items = List<Segment>.of(source);
     return <Segment>[
-      for (int i = 0; i < items.length; i++) items[i].copyWith(index: i, isFinal: true),
+      for (int i = 0; i < items.length; i++)
+        items[i].copyWith(index: i, isFinal: true),
     ];
   }
 
@@ -291,7 +319,9 @@ class SubtitleEditorController extends ChangeNotifier {
     );
     if (errors.isNotEmpty) throw SubtitleEditException(errors.first);
     for (final Segment segment in result.segments) {
-      if (segment.text.trim().isEmpty) throw const SubtitleEditException('字幕文本不能为空');
+      if (segment.text.trim().isEmpty) {
+        throw const SubtitleEditException('字幕文本不能为空');
+      }
     }
   }
 }

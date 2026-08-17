@@ -19,11 +19,15 @@ void main() {
     TranscriptionResult? saved;
     await tester.pumpWidget(
       MaterialApp(
-        home: SubtitleEditorPage(initialResult: result, onSave: (TranscriptionResult value) => saved = value),
+        home: SubtitleEditorPage(
+          initialResult: result,
+          onSave: (TranscriptionResult value) => saved = value,
+        ),
       ),
     );
 
     await tester.enterText(find.byKey(const Key('subtitleText_0')), '改好的句子');
+    await tester.enterText(find.byKey(const Key('subtitleSpeaker_0')), '主持人');
     await tester.tap(find.byKey(const Key('subtitleApply_0')));
     await tester.pump();
     expect(find.text('改好的句子'), findsOneWidget);
@@ -38,17 +42,24 @@ void main() {
     await tester.tap(find.byKey(const Key('subtitleSave')));
     await tester.pumpAndSettle();
     expect(saved?.segments.first.text, '改好的句子');
+    expect(saved?.segments.first.speaker, '主持人');
   });
 
   testWidgets('编辑器可以通过播放器定位到字幕开始位置', (WidgetTester tester) async {
     final _FakeVideoBackend backend = _FakeVideoBackend();
-    final VideoPlaybackController player = VideoPlaybackController(backend: backend);
+    final VideoPlaybackController player = VideoPlaybackController(
+      backend: backend,
+    );
     addTearDown(player.dispose);
     await player.open('test.mp4');
 
     await tester.pumpWidget(
       MaterialApp(
-        home: SubtitleEditorPage(initialResult: result, player: player, onSave: (_) {}),
+        home: SubtitleEditorPage(
+          initialResult: result,
+          player: player,
+          onSave: (_) {},
+        ),
       ),
     );
     await tester.tap(find.byKey(const Key('subtitleSeek_1')));
@@ -58,7 +69,9 @@ void main() {
 
   testWidgets('编辑器支持合并和拆分入口', (WidgetTester tester) async {
     await tester.pumpWidget(
-      MaterialApp(home: SubtitleEditorPage(initialResult: result, onSave: (_) {})),
+      MaterialApp(
+        home: SubtitleEditorPage(initialResult: result, onSave: (_) {}),
+      ),
     );
 
     await tester.tap(find.byKey(const Key('subtitleMerge_0')));
@@ -116,14 +129,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('subtitleReplace')));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('subtitleReplaceQuery')),
-      '句',
-    );
-    await tester.enterText(
-      find.byKey(const Key('subtitleReplaceWith')),
-      '段',
-    );
+    await tester.enterText(find.byKey(const Key('subtitleReplaceQuery')), '句');
+    await tester.enterText(find.byKey(const Key('subtitleReplaceWith')), '段');
     await tester.tap(find.byKey(const Key('subtitleReplaceConfirm')));
     await tester.pump();
 
@@ -166,9 +173,13 @@ void main() {
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {
-  final StreamController<Duration> _positions = StreamController<Duration>.broadcast(sync: true);
-  final StreamController<Duration> _durations = StreamController<Duration>.broadcast(sync: true);
-  final StreamController<bool> _playing = StreamController<bool>.broadcast(sync: true);
+  final StreamController<Duration> _positions =
+      StreamController<Duration>.broadcast(sync: true);
+  final StreamController<Duration> _durations =
+      StreamController<Duration>.broadcast(sync: true);
+  final StreamController<bool> _playing = StreamController<bool>.broadcast(
+    sync: true,
+  );
   Duration? lastSeek;
 
   @override
