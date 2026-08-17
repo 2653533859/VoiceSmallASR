@@ -2,6 +2,9 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
+import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_disclosure.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
@@ -26,6 +30,7 @@ class VideoPage extends StatefulWidget {
     required this.controller,
     required this.transcription,
     this.pickFile,
+    this.pickSubtitleFile,
     this.settings,
     this.translationProviderResolver,
   });
@@ -33,6 +38,7 @@ class VideoPage extends StatefulWidget {
   final VideoPlaybackController controller;
   final TranscribeController transcription;
   final PickVideoFile? pickFile;
+  final PickSubtitleFile? pickSubtitleFile;
   final AppSettingsRepository? settings;
   final Future<TranslationProvider?> Function()? translationProviderResolver;
 
@@ -51,6 +57,59 @@ class _VideoPageState extends State<VideoPage> {
       allowedExtensions: kVideoExtensions,
     );
     return picked?.path;
+  }
+
+  Future<SubtitleFileData?> _pickSubtitleFile() async {
+    final PickSubtitleFile? injected = widget.pickSubtitleFile;
+    if (injected != null) return injected();
+    final PlatformFile? picked = await FilePicker.pickFile(
+      dialogTitle: '加载外部字幕',
+      type: FileType.custom,
+      allowedExtensions: kSubtitleImportFormats,
+    );
+    if (picked == null) return null;
+    final String? path = picked.path;
+    return SubtitleFileData(
+      name: picked.name,
+      path: path,
+      bytes: path == null ? await picked.readAsBytes() : null,
+    );
+  }
+
+  Future<String> _readSubtitleFile(SubtitleFileData selected) async {
+    final Uint8List? bytes = selected.bytes;
+    if (bytes != null) return utf8.decode(bytes);
+    final String? path = selected.path;
+    if (path == null) throw const FormatException('字幕文件没有可读取的路径');
+    return File(path).readAsString();
+  }
+
+  String _subtitleFormat(SubtitleFileData selected) {
+    final String source = selected.name.isNotEmpty
+        ? selected.name
+        : (selected.path ?? '');
+    return p.extension(source).replaceFirst('.', '').toLowerCase();
+  }
+
+  Future<void> _importSubtitle() async {
+    final String? mediaPath = widget.controller.filePath;
+    if (mediaPath == null || widget.transcription.busy) return;
+    final SubtitleFileData? selected = await _pickSubtitleFile();
+    if (selected == null) return;
+    try {
+      final TranscriptionResult result = parseSubtitleText(
+        await _readSubtitleFile(selected),
+        format: _subtitleFormat(selected),
+      );
+      widget.transcription.applyImportedResult(result, mediaPath: mediaPath);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已加载字幕：${selected.name}')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('加载字幕失败：$error')));
+    }
   }
 
   Future<void> _openVideo() async {
@@ -180,6 +239,15 @@ class _VideoPageState extends State<VideoPage> {
                       label: const Text('加载已转写视频'),
                     ),
                   ],
+                  if (video.filePath != null)
+                    OutlinedButton.icon(
+                      key: const Key('videoImportSubtitle'),
+                      onPressed: video.busy || widget.transcription.busy
+                          ? null
+                          : _importSubtitle,
+                      icon: const Icon(Icons.subtitles_outlined),
+                      label: const Text('加载外部字幕'),
+                    ),
                   if (hasLinkedResult) ...<Widget>[
                     OutlinedButton.icon(
                       key: const Key('videoSubtitleEditor'),

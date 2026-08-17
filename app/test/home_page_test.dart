@@ -16,6 +16,7 @@ import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
+import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
@@ -56,6 +57,7 @@ void main() {
     TranscribeController controller, {
     PickFile? pickFile,
     PickProjectFile? pickProjectFile,
+    PickSubtitleFile? pickSubtitleFile,
     LoadProjectFile? loadProjectFile,
     SaveFile? saveFile,
     ProjectAutosaveStore? autosaveStore,
@@ -69,6 +71,7 @@ void main() {
           controller: controller,
           pickFile: pickFile,
           pickProjectFile: pickProjectFile,
+          pickSubtitleFile: pickSubtitleFile,
           loadProjectFile: loadProjectFile,
           saveFile: saveFile,
           autosaveStore: autosaveStore ?? _FakeAutosaveStore(),
@@ -99,6 +102,28 @@ void main() {
 
     expect(find.text('选择音频/视频'), findsOneWidget);
     expect(find.text('选一个音频或视频文件开始'), findsOneWidget);
+  });
+
+  testWidgets('首页可以导入 SRT 字幕并生成当前结果', (WidgetTester tester) async {
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      pickSubtitleFile: () async => SubtitleFileData(
+        name: 'captions.srt',
+        bytes: Uint8List.fromList(
+          utf8.encode('1\n00:00:00,000 --> 00:00:01,500\n外部字幕\n'),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('importSubtitle')));
+    await tester.pumpAndSettle();
+
+    expect(controller.result?.segments.single.text, '外部字幕');
+    expect(find.text('外部字幕'), findsOneWidget);
+    expect(find.textContaining('已导入字幕：captions.srt'), findsOneWidget);
   });
 
   testWidgets('模型准备失败时显示错误并把按钮改成重试', (WidgetTester tester) async {

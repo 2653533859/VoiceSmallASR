@@ -62,6 +62,7 @@ class HomePage extends StatefulWidget {
     this.video,
     this.pickFile,
     this.pickProjectFile,
+    this.pickSubtitleFile,
     this.loadProjectFile,
     this.saveFile,
     this.autosaveStore,
@@ -82,6 +83,7 @@ class HomePage extends StatefulWidget {
   /// 文件选择与保存。测试注入替身，默认走 `file_picker`。
   final PickFile? pickFile;
   final PickProjectFile? pickProjectFile;
+  final PickSubtitleFile? pickSubtitleFile;
   final LoadProjectFile? loadProjectFile;
   final SaveFile? saveFile;
 
@@ -414,6 +416,58 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
+  Future<SubtitleFileData?> _pickSubtitleFile() async {
+    final PickSubtitleFile? injected = widget.pickSubtitleFile;
+    if (injected != null) return injected();
+    final PlatformFile? picked = await FilePicker.pickFile(
+      dialogTitle: '导入字幕',
+      type: FileType.custom,
+      allowedExtensions: kSubtitleImportFormats,
+    );
+    if (picked == null) return null;
+    final String? path = picked.path;
+    return SubtitleFileData(
+      name: picked.name,
+      path: path,
+      bytes: path == null ? await picked.readAsBytes() : null,
+    );
+  }
+
+  Future<String> _readSubtitleFile(SubtitleFileData selected) async {
+    final Uint8List? bytes = selected.bytes;
+    if (bytes != null) return utf8.decode(bytes);
+    final String? path = selected.path;
+    if (path == null) throw const FormatException('字幕文件没有可读取的路径');
+    return File(path).readAsString();
+  }
+
+  String _subtitleFormat(SubtitleFileData selected) {
+    final String source = selected.name.isNotEmpty
+        ? selected.name
+        : (selected.path ?? '');
+    return p.extension(source).replaceFirst('.', '').toLowerCase();
+  }
+
+  Future<void> _importSubtitle() async {
+    if (widget.controller.busy) return;
+    final SubtitleFileData? selected = await _pickSubtitleFile();
+    if (selected == null) return;
+    try {
+      final TranscriptionResult result = parseSubtitleText(
+        await _readSubtitleFile(selected),
+        format: _subtitleFormat(selected),
+      );
+      widget.controller.applyImportedResult(result);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已导入字幕：${selected.name}')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导入字幕失败：$error')));
+    }
+  }
+
   Future<void> _openProject() async {
     final PickedProjectFile? selected = await _pickProjectFile();
     if (selected == null) return;
@@ -690,6 +744,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onExport: _exportFile,
             onEdit: _openEditor,
             onTranslate: _translate,
+            onImport: _importSubtitle,
           );
         } else {
           body = _Tabs(
@@ -703,6 +758,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               onExport: _exportFile,
               onEdit: _openEditor,
               onTranslate: _translate,
+              onImport: _importSubtitle,
             ),
             live: live == null
                 ? null
@@ -896,6 +952,7 @@ class _TranscribeView extends StatelessWidget {
     required this.onExport,
     required this.onEdit,
     required this.onTranslate,
+    required this.onImport,
   });
 
   final TranscribeController controller;
@@ -907,6 +964,7 @@ class _TranscribeView extends StatelessWidget {
   final VoidCallback onExport;
   final VoidCallback onEdit;
   final VoidCallback onTranslate;
+  final VoidCallback onImport;
 
   @override
   Widget build(BuildContext context) {
@@ -970,6 +1028,12 @@ class _TranscribeView extends StatelessWidget {
                 onPressed: result == null || controller.busy ? null : onExport,
                 icon: const Icon(Icons.save_alt),
                 label: const Text('导出字幕'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('importSubtitle'),
+                onPressed: controller.busy ? null : onImport,
+                icon: const Icon(Icons.file_download_outlined),
+                label: const Text('导入字幕'),
               ),
               OutlinedButton.icon(
                 key: const Key('openSubtitleEditor'),

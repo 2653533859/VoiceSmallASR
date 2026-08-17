@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +9,7 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
+import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
@@ -43,6 +46,12 @@ void main() {
             controller: video,
             transcription: transcription,
             pickFile: () async => videoPath,
+            pickSubtitleFile: () async => SubtitleFileData(
+              name: 'external.srt',
+              bytes: Uint8List.fromList(
+                utf8.encode('1\n00:00:00,000 --> 00:00:01,000\n外部字幕\n'),
+              ),
+            ),
             translationProviderResolver: () async => translation,
           ),
         ),
@@ -66,6 +75,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
     expect(translation.calls, 1);
+
+    await tester.tap(find.byKey(const Key('videoImportSubtitle')));
+    await tester.pumpAndSettle();
+    expect(transcription.result?.segments.single.text, '外部字幕');
+    expect(find.text('外部字幕'), findsNWidgets(2));
+    expect(find.textContaining('已加载字幕：external.srt'), findsOneWidget);
   });
 }
 

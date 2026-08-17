@@ -148,6 +148,24 @@ class TranscribeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 接收外部导入的带时间轴字幕；可选地把当前项目绑定到指定媒体。
+  void applyImportedResult(TranscriptionResult imported, {String? mediaPath}) {
+    if (busy) throw StateError('识别进行中，暂时不能导入字幕');
+    ensureValidSubtitleTimeline(imported.segments, duration: imported.duration);
+    if (mediaPath != null) {
+      final String value = mediaPath.trim();
+      if (value.isEmpty) throw ArgumentError('媒体文件路径不能为空');
+      _filePath = value;
+    }
+    _result = imported;
+    _elapsed = null;
+    _progress = null;
+    _errorText = null;
+    _statusText = '字幕已导入：${imported.length} 段';
+    _markProjectChanged();
+    notifyListeners();
+  }
+
   /// 接收字幕校对页保存后的结果。
   ///
   /// 校对页只在空闲时打开；这里仍做一次时间轴校验，避免其他调用方绕过编辑器

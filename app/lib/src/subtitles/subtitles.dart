@@ -5,11 +5,212 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:vsasr_app/src/asr/segment.dart';
 
 /// 支持的导出格式。
 const List<String> kSubtitleFormats = <String>['srt', 'vtt', 'json', 'txt'];
+
+/// 可导入的外部字幕格式；TXT 没有时间轴，不能直接用于视频联动。
+const List<String> kSubtitleImportFormats = <String>['srt', 'vtt', 'json'];
+
+const String _projectSchema = 'voicesmallasr.project';
+
+/// 文件选择器返回的字幕文件。Android SAF 可能只有字节，没有本地路径。
+class SubtitleFileData {
+  const SubtitleFileData({required this.name, this.path, this.bytes});
+
+  final String name;
+  final String? path;
+  final Uint8List? bytes;
+}
+
+/// 选择字幕文件，取消时返回 null。
+typedef PickSubtitleFile = Future<SubtitleFileData?> Function();
+
+class _SubtitleTiming {
+  const _SubtitleTiming(this.start, this.end);
+
+  final double start;
+  final double end;
+}
+
+final RegExp _subtitleTimingStart = RegExp(
+  r'^\s*(?:\d{1,2}:)?\d{2}:\d{2}(?:[,.]\d{1,3})?\s*-->',
+);
+
+/// 解析 SRT、VTT 或本项目导出的字幕 JSON。
+///
+/// 导入结果会统一成 [TranscriptionResult]，并复用项目时间轴校验；导入的
+/// JSON 应是 `renderSubtitles(result, 'json')` 生成的结果 JSON，项目 JSON
+/// 请使用“打开项目”入口以保留媒体路径和识别配置。
+TranscriptionResult parseSubtitleText(
+  String content, {
+  required String format,
+}) {
+  final String normalizedFormat = format.trim().toLowerCase().replaceFirst(
+    '.',
+    '',
+  );
+  final String normalized = content
+      .replaceFirst('\uFEFF', '')
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n');
+  if (normalized.trim().isEmpty) {
+    throw const FormatException('字幕文件为空');
+  }
+  switch (normalizedFormat) {
+    case 'srt':
+      return _parseTimedSubtitle(normalized, format: 'SRT');
+    case 'vtt':
+      return _parseTimedSubtitle(normalized, format: 'VTT');
+    case 'json':
+      return _parseSubtitleJson(normalized);
+    default:
+      throw FormatException('不支持导入的字幕格式：$format');
+  }
+}
+
+TranscriptionResult _parseTimedSubtitle(
+  String content, {
+  required String format,
+}) {
+  final List<String> lines = content.split('\n');
+  final List<Segment> segments = <Segment>[];
+  int index = 0;
+  int lineNumber = 0;
+  while (lineNumber < lines.length) {
+    final String line = lines[lineNumber].trim();
+    if (!_subtitleTimingStart.hasMatch(line)) {
+      lineNumber++;
+      continue;
+    }
+    final _SubtitleTiming timing;
+    try {
+      timing = _parseSubtitleTiming(line);
+    } on FormatException catch (error) {
+      throw FormatException('$format 第 ${lineNumber + 1} 行：${error.message}');
+    }
+    lineNumber++;
+    final List<String> textLines = <String>[];
+    while (lineNumber < lines.length &&
+        lines[lineNumber].trim().isNotEmpty &&
+        !_subtitleTimingStart.hasMatch(lines[lineNumber])) {
+      final String text = lines[lineNumber].trim();
+      textLines.add(_stripSubtitleMarkup(text));
+      lineNumber++;
+    }
+    final String text = textLines
+        .where((String value) => value.isNotEmpty)
+        .join('\n')
+        .trim();
+    if (text.isNotEmpty) {
+      segments.add(
+        Segment(
+          text: text,
+          start: timing.start,
+          end: timing.end,
+          index: index++,
+        ),
+      );
+    }
+  }
+  if (segments.isEmpty) {
+    throw FormatException('$format 中没有找到有效字幕条目');
+  }
+  return _buildImportedResult(segments);
+}
+
+_SubtitleTiming _parseSubtitleTiming(String line) {
+  final int arrow = line.indexOf('-->');
+  if (arrow < 0) throw const FormatException('缺少 --> 时间分隔符');
+  final String startText = line.substring(0, arrow).trim();
+  final String endText = line
+      .substring(arrow + 3)
+      .trim()
+      .split(RegExp(r'\s+'))
+      .first;
+  final double start = _parseSubtitleTimestamp(startText);
+  final double end = _parseSubtitleTimestamp(endText);
+  if (end <= start) throw const FormatException('结束时间必须晚于开始时间');
+  return _SubtitleTiming(start, end);
+}
+
+double _parseSubtitleTimestamp(String value) {
+  final List<String> clock = value.trim().split(':');
+  if (clock.length != 2 && clock.length != 3) {
+    throw FormatException('时间格式无效：$value');
+  }
+  final String secondsText = clock.last.replaceFirst(',', '.');
+  final List<String> secondParts = secondsText.split('.');
+  if (secondParts.length > 2) {
+    throw FormatException('时间格式无效：$value');
+  }
+  final int? wholeSeconds = int.tryParse(secondParts.first);
+  final String fraction = secondParts.length == 2 ? secondParts[1] : '';
+  final int? fractionValue = fraction.isEmpty
+      ? 0
+      : int.tryParse(fraction.padRight(3, '0').substring(0, 3));
+  if (wholeSeconds == null || fractionValue == null || wholeSeconds >= 60) {
+    throw FormatException('时间格式无效：$value');
+  }
+  final int? minutes = int.tryParse(clock[clock.length == 3 ? 1 : 0]);
+  final int? hours = clock.length == 3 ? int.tryParse(clock.first) : 0;
+  if (minutes == null || hours == null || minutes >= 60 || hours < 0) {
+    throw FormatException('时间格式无效：$value');
+  }
+  return hours * 3600 + minutes * 60 + wholeSeconds + fractionValue / 1000;
+}
+
+String _stripSubtitleMarkup(String value) =>
+    value.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+
+TranscriptionResult _parseSubtitleJson(String content) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(content);
+  } on Object catch (error) {
+    throw FormatException('字幕 JSON 无法解析：$error');
+  }
+  if (decoded is Map<String, dynamic> && decoded['schema'] == _projectSchema) {
+    throw const FormatException('这是项目 JSON，请使用“打开项目”入口');
+  }
+  final TranscriptionResult result;
+  try {
+    result = TranscriptionResult.fromJson(decoded);
+  } on Object catch (error) {
+    throw FormatException('字幕 JSON 结构无效：$error');
+  }
+  final double maximumEnd = result.segments.fold<double>(
+    0,
+    (double maximum, Segment segment) =>
+        segment.end > maximum ? segment.end : maximum,
+  );
+  final TranscriptionResult normalized = result.duration > 0
+      ? result
+      : result.copyWith(duration: maximumEnd);
+  ensureValidSubtitleTimeline(
+    normalized.segments,
+    duration: normalized.duration,
+  );
+  return normalized;
+}
+
+TranscriptionResult _buildImportedResult(List<Segment> segments) {
+  final double duration = segments.fold<double>(
+    0,
+    (double maximum, Segment segment) =>
+        segment.end > maximum ? segment.end : maximum,
+  );
+  final TranscriptionResult result = TranscriptionResult(
+    language: 'auto',
+    duration: duration,
+    segments: List<Segment>.unmodifiable(segments),
+  );
+  ensureValidSubtitleTimeline(result.segments, duration: result.duration);
+  return result;
+}
 
 /// 单条字幕的默认字符上限（CJK 按字计，约两行的量）。
 const int kDefaultMaxChars = 28;
