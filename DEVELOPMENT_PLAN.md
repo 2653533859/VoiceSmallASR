@@ -636,6 +636,11 @@ API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.de
 `fallback` 的实战价值要在那台机器上才能确认。第四源（ModelScope / 国内对象存储）暂不加：
 它的 URL 结构不是 `<base>/<文件名>`，套不进现有的 `BASE_URLS` 拼接方式，需要单独的取址逻辑。
 
+**当前主机复测（2026-08-18）**：重新对同一压缩包请求前 2 MiB，GitHub、`ghfast.top`、`gh-proxy.com`
+均返回 HTTP `206` 和完整 2,097,152 bytes，耗时/速度分别为 `5.812 s / 360,833 B/s`、
+`4.794 s / 437,475 B/s`、`6.605 s / 317,526 B/s`。该结果仅更新当前 macOS 主机证据，不把国内 Windows
+网络验收标记为完成，详细记录见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
+
 ### 平台限制
 
 - **macOS 安装包只能在 Mac 上构建** —— 本仓库所在的机器就是 Mac，Xcode 26.6 已装，已不是限制。
