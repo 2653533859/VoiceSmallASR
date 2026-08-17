@@ -51,7 +51,9 @@ jobs:
         run: |
           $filters = (& ffmpeg -hide_banner -filters 2>&1 | Out-String)
           if ($LASTEXITCODE -ne 0) { throw "无法读取 FFmpeg 滤镜列表，退出码 $LASTEXITCODE" }
-          if ($filters -notmatch '(?im)^\s*(?:[A-Z\.]{3}\s+)?ass\s+') {
+          $assFilters = @($filters -split "`r?`n" | Where-Object { $_ -match '(?i)\bass\b' })
+          $assFilters | ForEach-Object { Write-Host $_ }
+          if ($assFilters.Count -eq 0) {
             throw "Windows runner 的 FFmpeg 未包含 ass/libass 滤镜，无法验收硬字幕编码"
           }
           Write-Host "FFmpeg ass/libass 滤镜可用"
