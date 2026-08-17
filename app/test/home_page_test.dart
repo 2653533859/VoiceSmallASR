@@ -14,6 +14,7 @@ import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
+import 'package:vsasr_app/src/project/batch_translation_cache.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
@@ -64,12 +65,14 @@ void main() {
     SaveFile? saveFile,
     ProjectAutosaveStore? autosaveStore,
     MediaFileExists? mediaFileExists,
+    BatchTranslationCache? batchTranslationCache,
     AppSettingsRepository? settings,
     TranslationProviderFactory? translationProviderFactory,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: HomePage(
+          key: ObjectKey(controller),
           controller: controller,
           pickFile: pickFile,
           pickBatchFiles: pickBatchFiles,
@@ -78,6 +81,8 @@ void main() {
           loadProjectFile: loadProjectFile,
           saveFile: saveFile,
           autosaveStore: autosaveStore ?? _FakeAutosaveStore(),
+          batchTranslationCache:
+              batchTranslationCache ?? const _NoopBatchTranslationCache(),
           mediaFileExists:
               mediaFileExists ?? (String path) async => File(path).existsSync(),
           settings: settings,
@@ -185,6 +190,58 @@ void main() {
     expect(provider.calls, 2);
     expect(find.text('已翻译 2/2'), findsOneWidget);
     expect(find.textContaining('已完成翻译'), findsNWidgets(2));
+  });
+
+  testWidgets('批量翻译命中本地缓存时不调用 provider', (WidgetTester tester) async {
+    final TranscriptionResult cachedResult = const TranscriptionResult(
+      language: 'auto',
+      duration: 1,
+      segments: <Segment>[
+        Segment(
+          text: '呢几个字都表达唔到',
+          start: 0,
+          end: 1,
+          words: <Word>[Word(text: '呢几个字都表达唔到', start: 0, end: 1)],
+          language: 'auto',
+          index: 0,
+          translation: '缓存译文',
+        ),
+      ],
+    );
+    final _MemoryBatchTranslationCache cache = _MemoryBatchTranslationCache(
+      cachedResult,
+    );
+    final AppSettingsRepository settings = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: _FakeSecretStore()),
+    );
+    final _FakeTranslationProvider provider = _FakeTranslationProvider();
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      batchTranslationCache: cache,
+      settings: settings,
+      translationProviderFactory: (_) => provider,
+      pickBatchFiles: () async => <String>['/tmp/cache.wav'],
+    );
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchPickFiles')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchStart')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchTranslate')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('发现本地翻译缓存'), findsOneWidget);
+    await tester.tap(find.text('复用缓存'));
+    await tester.pumpAndSettle();
+
+    expect(provider.calls, 0);
+    expect(find.text('已翻译 1/1'), findsOneWidget);
+    expect(find.textContaining('已复用 1 个本地翻译缓存'), findsOneWidget);
   });
 
   testWidgets('批量导出支持四种格式并为同名文件生成不冲突的文件名', (WidgetTester tester) async {
@@ -705,6 +762,57 @@ class _FakeTranslationProvider implements TranslationProvider {
     calls++;
     return texts.map((String text) => '译文：$text').toList();
   }
+}
+
+class _NoopBatchTranslationCache extends BatchTranslationCache {
+  const _NoopBatchTranslationCache();
+
+  @override
+  Future<TranscriptionResult?> read({
+    required String mediaPath,
+    required TranscriptionResult source,
+    required String targetLanguage,
+    required String providerScope,
+  }) => Future<TranscriptionResult?>.value();
+
+  @override
+  Future<void> write({
+    required String mediaPath,
+    required TranscriptionResult translated,
+    required String targetLanguage,
+    required String providerScope,
+  }) => Future<void>.value();
+}
+
+class _MemoryBatchTranslationCache extends BatchTranslationCache {
+  _MemoryBatchTranslationCache(this.cachedResult);
+
+  final TranscriptionResult? cachedResult;
+  final Map<String, TranscriptionResult> values =
+      <String, TranscriptionResult>{};
+
+  @override
+  Future<TranscriptionResult?> read({
+    required String mediaPath,
+    required TranscriptionResult source,
+    required String targetLanguage,
+    required String providerScope,
+  }) => Future<TranscriptionResult?>.value(
+    cachedResult ?? values[_key(mediaPath, targetLanguage, providerScope)],
+  );
+
+  @override
+  Future<void> write({
+    required String mediaPath,
+    required TranscriptionResult translated,
+    required String targetLanguage,
+    required String providerScope,
+  }) async {
+    values[_key(mediaPath, targetLanguage, providerScope)] = translated;
+  }
+
+  String _key(String path, String target, String provider) =>
+      '$path\n$target\n$provider';
 }
 
 class _FakeAutosaveStore implements ProjectAutosaveStore {

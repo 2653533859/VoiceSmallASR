@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 
@@ -81,6 +82,11 @@ class BatchItem {
 
 /// 选择多个音频或视频文件，取消时返回空列表。
 typedef PickBatchFiles = Future<List<String>> Function();
+
+/// 一个文件成功翻译后触发的辅助持久化回调。
+typedef BatchTranslationResultCallback = FutureOr<void> Function(
+  BatchItem item,
+);
 
 /// 顺序处理多个文件，复用主控制器中已经加载的识别模型。
 ///
@@ -191,6 +197,7 @@ class BatchTranscriptionController extends ChangeNotifier {
     int batchSize = 20,
     int maxRetries = 2,
     Duration retryDelay = const Duration(milliseconds: 250),
+    BatchTranslationResultCallback? onItemTranslated,
   }) {
     if (_running || _paused) {
       return Future<void>.error(StateError('批量处理进行中，请稍后再翻译'));
@@ -228,6 +235,7 @@ class BatchTranscriptionController extends ChangeNotifier {
       batchSize: batchSize,
       maxRetries: maxRetries,
       retryDelay: retryDelay,
+      onItemTranslated: onItemTranslated,
     );
     _runFuture = future;
     return future;
@@ -296,6 +304,34 @@ class BatchTranscriptionController extends ChangeNotifier {
     _items[index] = item.copyWith(
       status: BatchItemStatus.completed,
       clearProgress: true,
+      clearError: true,
+    );
+    _notify();
+  }
+
+  /// 应用经过指纹校验的本地缓存译文，不触发网络请求。
+  void applyCachedTranslation(int index, TranscriptionResult translated) {
+    if (index < 0 || index >= _items.length) {
+      throw RangeError.index(index, _items);
+    }
+    final BatchItem item = _items[index];
+    final TranscriptionResult? source = item.result;
+    if ((item.status != BatchItemStatus.completed &&
+            item.status != BatchItemStatus.translationFailed) ||
+        source == null) {
+      throw StateError('当前条目没有可复用的识别结果');
+    }
+    ensureValidSubtitleTimeline(
+      translated.segments,
+      duration: translated.duration,
+    );
+    if (!_sameSource(source, translated)) {
+      throw StateError('本地翻译缓存与当前识别结果不匹配');
+    }
+    _items[index] = item.copyWith(
+      status: BatchItemStatus.translated,
+      progress: 1,
+      result: translated,
       clearError: true,
     );
     _notify();
@@ -384,6 +420,7 @@ class BatchTranscriptionController extends ChangeNotifier {
     required int batchSize,
     required int maxRetries,
     required Duration retryDelay,
+    required BatchTranslationResultCallback? onItemTranslated,
   }) async {
     final Set<int> attempted = <int>{};
     try {
@@ -445,6 +482,11 @@ class BatchTranscriptionController extends ChangeNotifier {
             result: translated,
             clearError: true,
           );
+          try {
+            await onItemTranslated?.call(_items[next]);
+          } on Object {
+            // 缓存是辅助能力，写入失败不能让已经成功的翻译变成失败。
+          }
         } on Object catch (error) {
           if (_cancelRequested) {
             _items[next] = _items[next].copyWith(
@@ -527,6 +569,26 @@ class BatchTranscriptionController extends ChangeNotifier {
   String _humanize(Object error) {
     final String raw = error is StateError ? error.message : '$error';
     return raw.replaceFirst(RegExp(r'^(Bad state: |Exception: )+'), '');
+  }
+
+  bool _sameSource(TranscriptionResult source, TranscriptionResult other) {
+    if (source.language != other.language ||
+        source.duration != other.duration ||
+        source.segments.length != other.segments.length) {
+      return false;
+    }
+    for (int i = 0; i < source.segments.length; i++) {
+      final Segment left = source.segments[i];
+      final Segment right = other.segments[i];
+      if (left.text != right.text ||
+          left.start != right.start ||
+          left.end != right.end ||
+          left.index != right.index ||
+          left.language != right.language) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @override

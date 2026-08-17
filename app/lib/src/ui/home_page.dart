@@ -13,6 +13,7 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
+import 'package:vsasr_app/src/project/batch_translation_cache.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/settings_page.dart';
@@ -69,6 +70,7 @@ class HomePage extends StatefulWidget {
     this.loadProjectFile,
     this.saveFile,
     this.autosaveStore,
+    this.batchTranslationCache,
     this.mediaFileExists,
     this.settings,
     this.translationProviderFactory,
@@ -93,6 +95,9 @@ class HomePage extends StatefulWidget {
 
   /// 自动保存与恢复存储。生产环境使用应用支持目录，测试可注入内存实现。
   final ProjectAutosaveStore? autosaveStore;
+
+  /// 翻译缓存。测试可注入临时目录；生产环境默认使用应用私有支持目录。
+  final BatchTranslationCache? batchTranslationCache;
 
   final MediaFileExists? mediaFileExists;
 
@@ -126,6 +131,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   ProjectAutosaveStore get _autosaveRepository =>
       widget.autosaveStore ?? const FileProjectAutosaveStore();
+
+  BatchTranslationCache get _batchTranslationCache =>
+      widget.batchTranslationCache ?? const BatchTranslationCache();
 
   @override
   void initState() {
@@ -831,6 +839,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final TranslationApiSettings settings = await repository
         .loadTranslationApiSettings();
     if (!mounted) return;
+
+    final String providerScope = _batchProviderScope(settings);
+    final Map<int, TranscriptionResult> cached =
+        await _readBatchTranslationCache(
+          targetLanguage: settings.targetLanguage,
+          providerScope: providerScope,
+        );
+    if (!mounted) return;
+    if (cached.isNotEmpty) {
+      final bool? reuse = await _confirmBatchTranslationCache(cached.length);
+      if (!mounted || reuse == null) return;
+      if (reuse) {
+        int applied = 0;
+        for (final MapEntry<int, TranscriptionResult> entry in cached.entries) {
+          try {
+            _batch.applyCachedTranslation(entry.key, entry.value);
+            applied++;
+          } on Object {
+            // 页面状态可能在异步确认期间发生变化，单个缓存失效按未命中处理。
+          }
+        }
+        if (!_batch.hasTranslatableItems) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('已复用 $applied 个本地翻译缓存')));
+          return;
+        }
+      }
+    }
     if (!_translationDisclosureAccepted) {
       final bool confirmed = await confirmThirdPartyTranslation(context);
       if (!confirmed || !mounted) return;
@@ -862,10 +898,76 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await _batch.translateAll(
         provider,
         targetLanguage: settings.targetLanguage,
+        onItemTranslated: (BatchItem item) async {
+          final TranscriptionResult? result = item.result;
+          if (result == null) return;
+          await _batchTranslationCache.write(
+            mediaPath: item.path,
+            translated: result,
+            targetLanguage: settings.targetLanguage,
+            providerScope: providerScope,
+          );
+        },
       );
     } finally {
       if (provider is ClosableTranslationProvider) provider.close();
     }
+  }
+
+  String _batchProviderScope(TranslationApiSettings settings) {
+    // 不把 API Key 写入缓存；endpoint + model 足以区分默认 API 配置。
+    return '${settings.endpoint.trim()}\n${settings.model.trim()}';
+  }
+
+  Future<Map<int, TranscriptionResult>> _readBatchTranslationCache({
+    required String targetLanguage,
+    required String providerScope,
+  }) async {
+    final Map<int, TranscriptionResult> cached = <int, TranscriptionResult>{};
+    for (int index = 0; index < _batch.items.length; index++) {
+      final BatchItem item = _batch.items[index];
+      if ((item.status != BatchItemStatus.completed &&
+              item.status != BatchItemStatus.translationFailed) ||
+          item.result == null) {
+        continue;
+      }
+      try {
+        final TranscriptionResult? result = await _batchTranslationCache.read(
+          mediaPath: item.path,
+          source: item.result!,
+          targetLanguage: targetLanguage,
+          providerScope: providerScope,
+        );
+        if (result != null) cached[index] = result;
+      } on Object {
+        // 缓存读取失败按未命中处理，不影响在线翻译。
+      }
+    }
+    return cached;
+  }
+
+  Future<bool?> _confirmBatchTranslationCache(int count) {
+    return showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('发现本地翻译缓存'),
+        content: Text('发现 $count 个与当前识别结果匹配的本地翻译缓存，是否复用？'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('重新翻译'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('复用缓存'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _setLiveTranslation(bool enabled) async {
