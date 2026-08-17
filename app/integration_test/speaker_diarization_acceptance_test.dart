@@ -34,6 +34,7 @@ void main() {
         SpeakerDiarizationModelManager(root: root);
     final SpeakerDiarizationModelPaths paths = await manager.resolvePaths();
     expect(paths.exists, isTrue, reason: '说话人模型未就绪：${paths.root}');
+    await manager.verifyIntegrity(paths);
     final Float32List samples = decodeWavToModelInput(
       await File(audio).readAsBytes(),
     );

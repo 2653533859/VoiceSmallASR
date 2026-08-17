@@ -30,13 +30,14 @@
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
 - 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，随后在 run `32046411140` 构建并发布 `v1.0.2`，包含 Android APK/AAB、Windows 未签名安装包、macOS 未签名 DMG/APP 压缩包、`SHA256SUMS.txt` 和 `BUILD_INFO.txt`；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2。
-- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收以及 Android/Windows 统一 device acceptance 入口和执行手册，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
+- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收以及 Android/Windows 统一 device acceptance 入口和执行手册，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；自动说话人分离的 macOS 真实模型验收记录见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
 
 ## 已验证结果
 
 - Python：`pytest` 107 项通过，`ruff check .` 通过。
 - Flutter：`flutter analyze` 通过，234 项单测通过；Python 端 107 项测试通过。
 - macOS：无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；安全存储不可用时 API Key 退回当前会话，不影响个人使用的无签名包交付。
+- M13 自动说话人分离真实模型验收：macOS 26.5.2 arm64 Debug Runner 使用 ad-hoc 签名通过官方 `0-four-speakers-zh.wav`、pyannote segmentation 和 3D-Speaker embedding 的端到端验收；模型文件只存在于临时目录，SHA-256 与输出时间段契约均通过，详细命令和范围见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)。
 - M7 打包：已生成 `dist/macos/VoiceSmallASR.app`（通用二进制，约 161 MB）和 `VoiceSmallASR-unsigned.dmg`（约 64 MB），并用 `hdiutil imageinfo` 验证为 UDZO 镜像。
 - Android M7 构建：`app/build/app/outputs/flutter-apk/app-release.apk`（169 MiB，177,219,459 bytes）和 `app/build/app/outputs/bundle/release/app-release.aab`（124 MiB，129,974,495 bytes）构建成功；APK 含 arm64-v8a、armeabi-v7a、x86_64，`apksigner verify --verbose` 通过 v2 签名校验，APK/AAB 均未打入 `.onnx`、tar 或 `tokens.txt` 模型文件。
 - Windows M7 构建：run `31912544699` 的 `vsasr_app.exe`（141,312 bytes）和 `VoiceSmallASR-unsigned-setup.exe`（32,809,700 bytes）均为 x86-64 PE 文件；Release 目录约 111 MiB，包含 sherpa/ONNX、media_kit 原生 DLL，CI 自动确认未打入 `.onnx`、`.tar`、`.bz2` 或 `tokens.txt` 模型文件。
@@ -79,7 +80,7 @@
 - M13 文件转写性能诊断：新增性能报告值对象和首页入口，记录模型准备、解码、识别、RTF、采样点、平台、模型占用与 ASR/VAD 配置；支持查看和导出 JSON，新增控制器与首页回归测试。
 - M13 批量与实时性能汇总：新增批量聚合报告和实时会话报告，两个页面均支持查看/导出 JSON；新增批量、实时控制器和页面回归测试。
 - M13 持续性能历史：新增版本化性能日志存储，文件、批量和实时报告写入应用私有目录，最多保留 100 条；首页/实时字幕页支持查看和清空历史，损坏条目单独跳过；新增存储、首页和实时字幕回归测试。
-- M13 手工说话人标签与自动说话人分离：保留手工标签编辑能力；新增 pyannote segmentation + 3D-Speaker embedding 模型管理、sha256 校验、后台 isolate 推理、按时间重叠映射 `SPEAKER_00` 等标签，以及首页自动估计/指定人数入口。新增 4 项单测和显式真实模型验收脚本；本机 macOS 尚未执行自动分离真实模型验收，Android 真机与 Windows 用户桌面验收待环境具备。桌面/Android 硬字幕编码代码已完成，Android API 35 模拟器已通过 AAC 直通和 MP3 转 AAC 真实编码。
+- M13 手工说话人标签与自动说话人分离：保留手工标签编辑能力；新增 pyannote segmentation + 3D-Speaker embedding 模型管理、sha256 校验、后台 isolate 推理、按时间重叠映射 `SPEAKER_00` 等标签，以及首页自动估计/指定人数入口。新增 4 项单测和显式真实模型验收脚本；本机 macOS 已使用官方四人中文 WAV 通过自动分离真实模型验收，记录见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)；Android 真机与 Windows 用户桌面验收待环境具备。桌面/Android 硬字幕编码代码已完成，Android API 35 模拟器已通过 AAC 直通和 MP3 转 AAC 真实编码。
 
 ## 尚未验证的环境
 
