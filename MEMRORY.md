@@ -15,7 +15,7 @@
 - M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数、第三方翻译 endpoint/模型/API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
 - M13 翻译术语表已完成：设置页支持每行 `原词=译词` 的可选术语表，保存和 provider 构造时校验非法格式/重复原词；文件、实时、视频和批量翻译都会注入术语提示，批量缓存 scope 包含术语表内容。
 - M13 服务商预设已完成：设置页可保存、选择和删除 endpoint、模型、目标语言和术语表组合；预设以普通设置 JSON 持久化，不包含 API Key；加载时跳过损坏或重复条目，并支持自定义目标语言。
-- M13 字幕样式、视频配套字幕导出与桌面/Android 硬字幕编码已完成：视频页可调整字号、文字色、背景色和上/中/下位置并持久化；可按视频文件名导出 SRT/VTT/JSON/TXT 配套字幕文件；桌面调用本机 FFmpeg/ASS，Android 调用 MediaCodec + OpenGL + MediaMuxer 生成带原文、译文和说话人标签的 MP4，Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出。新增 MethodChannel 单测、视频页回归测试和跨平台真实验收脚本；AAC 直通与 MP3 转 AAC 已在 API 35 ARM64 模拟器真实通过，Windows CI run `32048430484` 已用 `ffmpeg-full` 通过 `ass/libass` 硬字幕 smoke，真实 Android 设备、其他编解码器、Windows 用户桌面和 macOS/本机 FFmpeg 兼容性仍待验收。
+- M13 字幕样式、视频配套字幕导出与桌面/Android 硬字幕编码已完成：视频页可调整字号、文字色、背景色和上/中/下位置并持久化；可按视频文件名导出 SRT/VTT/JSON/TXT 配套字幕文件；桌面调用本机 FFmpeg/ASS，Android 调用 MediaCodec + OpenGL + MediaMuxer 生成带原文、译文和说话人标签的 MP4，Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出。新增 MethodChannel 单测、视频页回归测试和跨平台真实验收脚本；AAC 直通与 MP3 转 AAC 已在 API 35 ARM64 模拟器真实通过，Windows CI run `32056120388` 已用 `ffmpeg-full` 通过 `ass/libass` 硬字幕 smoke；macOS `ffmpeg-full 9.0.1` 已通过纯 VM 与无开发证书 ad-hoc Debug Runner 集成验收，真实 Android 设备、其他编解码器、Windows 用户桌面和普通 macOS FFmpeg（不含 libass）仍待验收。
 - M13 文件转写性能诊断已完成：转写控制器分别记录模型准备、解码、识别和总耗时，生成含 RTF、采样点、模型占用、平台和 ASR/VAD 配置的报告；首页支持查看并导出 JSON。模型占用统计未完成时显示“未统计”，不误报为 0。
 - M13 批量与实时性能汇总及持续性能历史已完成：批量队列聚合文件数、成功/失败/取消、音频时长、模型准备/解码/识别耗时和 RTF；实时会话记录采样点、音频时长、会话耗时和 RTF；文件、批量和实时报告均支持查看/导出 JSON，并以版本化 JSON 写入应用私有目录，最多保留 100 条，支持清空和跳过损坏条目。
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
@@ -79,11 +79,11 @@
 - M13 文件转写性能诊断：新增性能报告值对象和首页入口，记录模型准备、解码、识别、RTF、采样点、平台、模型占用与 ASR/VAD 配置；支持查看和导出 JSON，新增控制器与首页回归测试。
 - M13 批量与实时性能汇总：新增批量聚合报告和实时会话报告，两个页面均支持查看/导出 JSON；新增批量、实时控制器和页面回归测试。
 - M13 持续性能历史：新增版本化性能日志存储，文件、批量和实时报告写入应用私有目录，最多保留 100 条；首页/实时字幕页支持查看和清空历史，损坏条目单独跳过；新增存储、首页和实时字幕回归测试。
-- M13 手工说话人标签与自动说话人分离：保留手工标签编辑能力；新增 pyannote segmentation + 3D-Speaker embedding 模型管理、sha256 校验、后台 isolate 推理、按时间重叠映射 `SPEAKER_00` 等标签，以及首页自动估计/指定人数入口。新增 4 项单测和显式真实模型验收脚本；本机 macOS 集成运行因无签名开发证书未执行，Android 真机与 Windows 用户桌面验收待环境具备。桌面/Android 硬字幕编码代码已完成，Android API 35 模拟器已通过 AAC 直通和 MP3 转 AAC 真实编码。
+- M13 手工说话人标签与自动说话人分离：保留手工标签编辑能力；新增 pyannote segmentation + 3D-Speaker embedding 模型管理、sha256 校验、后台 isolate 推理、按时间重叠映射 `SPEAKER_00` 等标签，以及首页自动估计/指定人数入口。新增 4 项单测和显式真实模型验收脚本；本机 macOS 尚未执行自动分离真实模型验收，Android 真机与 Windows 用户桌面验收待环境具备。桌面/Android 硬字幕编码代码已完成，Android API 35 模拟器已通过 AAC 直通和 MP3 转 AAC 真实编码。
 
 ## 尚未验证的环境
 
-- M13 macOS 硬字幕补充验收：新增 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart`，使用本机 `ffmpeg-full 9.0.1` 直接调用生产编码器生成 MP4，并由 FFmpeg 重新解码，纯 VM 验收通过；无签名 Runner 集成启动仍受 entitlements/开发证书限制，普通 Homebrew FFmpeg 8.1.1 不含 `libass`。
+- M13 macOS 硬字幕补充验收：新增 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart`，使用本机 `ffmpeg-full 9.0.1` 直接调用生产编码器生成 MP4，并由 FFmpeg 重新解码；无开发证书的 Debug Runner 通过 ad-hoc 签名完成集成启动与真实编码验收。普通 Homebrew FFmpeg 8.1.1 不含 `libass`，因此仍需使用包含 ASS/libass 的 FFmpeg。
 
 - Android 原生 Kotlin 解码和硬字幕编码已完成编译；解码与硬字幕编码均已在 API 35 ARM64 模拟器端到端运行验证，但尚未在真实 Android 设备运行。
 - Windows 原生 C++ 解码已在 MSVC/Windows SDK 上编译，并在 CI 桌面 smoke、完整模型 e2e 和硬字幕 smoke 中通过 AAC/视频音轨识别与 MP4 编码；用户桌面运行仍未验证。

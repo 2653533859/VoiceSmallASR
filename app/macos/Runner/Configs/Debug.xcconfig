@@ -1,2 +1,7 @@
 #include "../../Flutter/Flutter-Debug.xcconfig"
 #include "Warnings.xcconfig"
+
+// 个人使用的 Debug/集成验收不要求开发证书，使用 macOS ad-hoc 签名即可；Release 的签名策略不受影响。
+CODE_SIGN_IDENTITY = -
+CODE_SIGNING_ALLOWED = YES
+CODE_SIGNING_REQUIRED = YES
