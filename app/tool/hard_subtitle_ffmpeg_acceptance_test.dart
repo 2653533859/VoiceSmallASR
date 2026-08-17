@@ -7,6 +7,12 @@
 /// VSASR_HARD_SUBTITLE_TEST_VIDEO=/path/to/input.mp4 \
 /// flutter test tool/hard_subtitle_ffmpeg_acceptance_test.dart
 /// ```
+///
+/// 普通 FFmpeg 缺少 ass 滤镜时可显式验收失败提示：
+///
+/// ```bash
+/// VSASR_FFMPEG_PATH=/opt/homebrew/bin/ffmpeg VSASR_HARD_SUBTITLE_EXPECT_UNSUPPORTED=1 VSASR_HARD_SUBTITLE_TEST_VIDEO=/path/to/input.mp4 flutter test tool/hard_subtitle_ffmpeg_acceptance_test.dart
+/// ```
 library;
 
 import 'dart:io';
@@ -45,7 +51,7 @@ void main() {
       }
     });
 
-    await FfmpegHardSubtitleEncoder().encode(
+    final Future<void> encoding = FfmpegHardSubtitleEncoder().encode(
       inputPath: inputPath,
       outputPath: outputPath,
       result: const TranscriptionResult(
@@ -63,6 +69,16 @@ void main() {
       ),
       style: const SubtitleStyle(),
     );
+    if (_expectsMissingAssFilter()) {
+      try {
+        await encoding;
+        fail('当前 FFmpeg 未包含 ass 滤镜时不应编码成功');
+      } on HardSubtitleEncodeException catch (error) {
+        expect(error.message, contains('libass/ass'));
+      }
+      return;
+    }
+    await encoding;
 
     final File output = File(outputPath);
     expect(output.existsSync(), isTrue);
@@ -94,3 +110,7 @@ String _ffmpegExecutable() {
   final String? configured = Platform.environment['VSASR_FFMPEG_PATH']?.trim();
   return configured == null || configured.isEmpty ? 'ffmpeg' : configured;
 }
+
+bool _expectsMissingAssFilter() =>
+    Platform.environment['VSASR_HARD_SUBTITLE_EXPECT_UNSUPPORTED']?.trim() ==
+    '1';
