@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -80,6 +81,11 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   bool _translationDisclosureAccepted = false;
   bool _liveTranslationDisclosureAccepted = false;
+  List<String> _recentProjects = <String>[];
+  int _recentProjectsGeneration = 0;
+
+  AppSettingsRepository get _settingsRepository =>
+      widget.settings ?? AppSettingsRepository();
 
   @override
   void initState() {
@@ -87,7 +93,57 @@ class _HomePageState extends State<HomePage> {
     // build 之后再查模型，避免在 initState 里同步 notifyListeners。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshModel();
+      unawaited(_loadRecentProjects());
     });
+  }
+
+  Future<void> _loadRecentProjects() async {
+    final int generation = _recentProjectsGeneration;
+    try {
+      final List<String> projects = await _settingsRepository
+          .loadRecentProjects();
+      if (!mounted) return;
+      if (generation != _recentProjectsGeneration) return;
+      setState(() => _recentProjects = projects);
+    } on Object {
+      // 最近项目只是辅助入口，偏好存储不可用时不影响主流程。
+    }
+  }
+
+  Future<void> _rememberRecentProject(String path) async {
+    final String? normalizedPath = _normalizeRecentProjectPath(path);
+    if (normalizedPath == null) return;
+    final int generation = ++_recentProjectsGeneration;
+    try {
+      final List<String> projects = await _settingsRepository
+          .rememberRecentProject(normalizedPath);
+      if (!mounted) return;
+      if (generation != _recentProjectsGeneration) return;
+      setState(() => _recentProjects = projects);
+    } on Object {
+      // 保存/打开已成功时，最近项目写入失败不应覆盖主结果。
+    }
+  }
+
+  /// 项目文件的默认读取器使用 dart:io；不要把 Android SAF 等不可直接读取的
+  /// content:// URI 放进最近项目，否则菜单项一定会在下次打开时失败。
+  String? _normalizeRecentProjectPath(String path) {
+    // file_picker Android 的 SAF 保存结果可能只有 provider path，无法由
+    // dart:io 在下一次启动时恢复；等跨平台 URI 读取适配后再启用持久化。
+    if (Platform.isAndroid) return null;
+    final String value = path.trim();
+    if (value.isEmpty) return null;
+    if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value)) return value;
+    final Uri? uri = Uri.tryParse(value);
+    if (uri == null || uri.scheme.isEmpty) return value;
+    if (uri.scheme == 'file') {
+      try {
+        return uri.toFilePath();
+      } on Object {
+        return null;
+      }
+    }
+    return null;
   }
 
   Future<String?> _pickFile() async {
@@ -140,11 +196,18 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openProject() async {
     final String? path = await _pickProjectFile();
     if (path == null) return;
+    await _openProjectAt(path);
+  }
+
+  Future<void> _openRecentProject(String path) => _openProjectAt(path);
+
+  Future<void> _openProjectAt(String path) async {
     try {
       final LoadProjectFile load =
           widget.loadProjectFile ?? const ProjectFileStore().load;
       final VsasrProject project = await load(path);
       await widget.controller.loadProject(project);
+      await _rememberRecentProject(path);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('已打开项目：${p.basename(path)}')));
@@ -166,6 +229,9 @@ class _HomePageState extends State<HomePage> {
         '$content\n',
         dialogTitle: '保存 VoiceSmallASR 项目',
       );
+      if (saved != null) {
+        await _rememberRecentProject(saved);
+      }
       if (saved != null && mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('项目已保存到 $saved')));
@@ -324,6 +390,8 @@ class _HomePageState extends State<HomePage> {
             controller: c,
             onOpen: _openFile,
             onOpenProject: _openProject,
+            recentProjects: _recentProjects,
+            onOpenRecentProject: _openRecentProject,
             onSaveProject: _saveProject,
             onExport: _exportFile,
             onEdit: _openEditor,
@@ -335,6 +403,8 @@ class _HomePageState extends State<HomePage> {
               controller: c,
               onOpen: _openFile,
               onOpenProject: _openProject,
+              recentProjects: _recentProjects,
+              onOpenRecentProject: _openRecentProject,
               onSaveProject: _saveProject,
               onExport: _exportFile,
               onEdit: _openEditor,
@@ -516,6 +586,8 @@ class _TranscribeView extends StatelessWidget {
     required this.controller,
     required this.onOpen,
     required this.onOpenProject,
+    required this.recentProjects,
+    required this.onOpenRecentProject,
     required this.onSaveProject,
     required this.onExport,
     required this.onEdit,
@@ -525,6 +597,8 @@ class _TranscribeView extends StatelessWidget {
   final TranscribeController controller;
   final VoidCallback onOpen;
   final VoidCallback onOpenProject;
+  final List<String> recentProjects;
+  final ValueChanged<String> onOpenRecentProject;
   final VoidCallback onSaveProject;
   final VoidCallback onExport;
   final VoidCallback onEdit;
@@ -547,6 +621,34 @@ class _TranscribeView extends StatelessWidget {
                 onPressed: controller.busy ? null : onOpen,
                 icon: const Icon(Icons.folder_open),
                 label: const Text('选择音频/视频'),
+              ),
+              PopupMenuButton<String>(
+                key: const Key('recentProjects'),
+                tooltip: '最近项目',
+                onSelected: controller.busy ? null : onOpenRecentProject,
+                itemBuilder: (BuildContext context) {
+                  if (recentProjects.isEmpty) {
+                    return <PopupMenuEntry<String>>[
+                      const PopupMenuItem<String>(
+                        enabled: false,
+                        value: '',
+                        child: Text('暂无最近项目'),
+                      ),
+                    ];
+                  }
+                  return recentProjects
+                      .map(
+                        (String path) => PopupMenuItem<String>(
+                          value: path,
+                          child: Text(
+                            p.basename(path),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(growable: false);
+                },
+                icon: const Icon(Icons.history),
               ),
               OutlinedButton.icon(
                 onPressed: controller.busy ? null : onOpenProject,

@@ -83,6 +83,45 @@ void main() {
     expect(await repository.loadOfflineMode(), isTrue);
   });
 
+  test('最近项目会去重、置顶并限制数量，损坏数据回退为空列表', () async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
+
+    for (int index = 0; index < kMaxRecentProjects + 2; index++) {
+      await repository.rememberRecentProject('/tmp/project-$index.json');
+    }
+    List<String> recent = await repository.loadRecentProjects();
+    expect(recent, hasLength(kMaxRecentProjects));
+    expect(recent.first, '/tmp/project-${kMaxRecentProjects + 1}.json');
+    expect(recent, isNot(contains('/tmp/project-0.json')));
+
+    recent = await repository.rememberRecentProject('/tmp/project-3.json');
+    expect(recent.first, '/tmp/project-3.json');
+    expect(
+      recent.where((String path) => path == '/tmp/project-3.json'),
+      hasLength(1),
+    );
+
+    preferences.strings['settings.projects.recent'] = '{bad json';
+    expect(await repository.loadRecentProjects(), isEmpty);
+  });
+
+  test('最近项目可以移除指定路径', () async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
+    await repository.rememberRecentProject('/tmp/a.json');
+    await repository.rememberRecentProject('/tmp/b.json');
+
+    final List<String> recent = await repository.forgetRecentProject(
+      '/tmp/a.json',
+    );
+    expect(recent, <String>['/tmp/b.json']);
+  });
+
   test('第三方翻译 API 地址和模型可以持久化，但不包含 API Key', () async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
     final AppSettingsRepository repository = AppSettingsRepository(

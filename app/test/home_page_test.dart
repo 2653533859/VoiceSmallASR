@@ -199,6 +199,46 @@ void main() {
     expect(find.text('项目已保存到 /tmp/VoiceSmallASR.vsasr.json'), findsOneWidget);
   });
 
+  testWidgets('保存项目后会出现在最近项目菜单，并可再次打开', (WidgetTester tester) async {
+    bool openedRecent = false;
+    final AppSettingsRepository settings = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+    );
+    final TranscribeController controller = build(text: '最近项目字幕');
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      settings: settings,
+      pickFile: () async => '/tmp/recent.wav',
+      saveFile: (String name, String content) async => '/tmp/recent.vsasr.json',
+      loadProjectFile: (String path) async {
+        expect(path, '/tmp/recent.vsasr.json');
+        openedRecent = true;
+        return controller.projectSnapshot;
+      },
+    );
+
+    await tester.tap(find.text('选择音频/视频'));
+    for (int i = 0; i < 6; i++) {
+      await tester.pump();
+    }
+    await tester.tap(find.text('保存项目'));
+    for (int i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+
+    await tester.tap(find.byKey(const Key('recentProjects')));
+    await tester.pumpAndSettle();
+    expect(find.text('recent.vsasr.json'), findsOneWidget);
+    await tester.tap(find.text('recent.vsasr.json'));
+    for (int i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+    expect(openedRecent, isTrue);
+    expect(find.text('最近项目字幕'), findsOneWidget);
+  });
+
   testWidgets('解码失败时把中文说明显示在错误框里', (WidgetTester tester) async {
     final TranscribeController controller = build(
       decodeFailure: const AudioDecodeException('系统无法解码该格式（mkv / webm 需先转码）'),

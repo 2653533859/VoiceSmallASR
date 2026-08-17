@@ -1,6 +1,8 @@
 /// 持久化的应用设置与配置读取。
 library;
 
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
@@ -19,6 +21,10 @@ const String _translationEndpointKey = 'settings.translation.endpoint';
 const String _translationModelKey = 'settings.translation.model';
 const String _translationTargetLanguageKey =
     'settings.translation.target_language';
+const String _recentProjectsKey = 'settings.projects.recent';
+
+/// 最近项目最多保留的路径数，最新打开的项目排在最前面。
+const int kMaxRecentProjects = 8;
 
 /// 可替换的普通设置存储，便于在没有平台 channel 的单测里验证持久化逻辑。
 abstract interface class PreferenceStore {
@@ -179,6 +185,43 @@ class AppSettingsRepository {
   Future<void> saveOfflineMode(bool enabled) =>
       _preferences.writeBool(_offlineModeKey, enabled);
 
+  /// 读取最近打开或保存的项目路径。偏好损坏时返回空列表，不阻塞启动。
+  Future<List<String>> loadRecentProjects() async {
+    final String? raw = await _preferences.readString(_recentProjectsKey);
+    if (raw == null || raw.trim().isEmpty) return <String>[];
+    try {
+      return _sanitizeRecentProjects(jsonDecode(raw));
+    } on Object {
+      return <String>[];
+    }
+  }
+
+  /// 记住项目路径并移到列表首位；返回写入后的完整列表。
+  Future<List<String>> rememberRecentProject(String path) async {
+    final String normalized = path.trim();
+    if (normalized.isEmpty) return loadRecentProjects();
+    final List<String> current = await loadRecentProjects();
+    final List<String> updated = <String>[
+      normalized,
+      ...current.where((String value) => value != normalized),
+    ].take(kMaxRecentProjects).toList(growable: false);
+    await _preferences.writeString(_recentProjectsKey, jsonEncode(updated));
+    return updated;
+  }
+
+  /// 从最近项目中移除路径；返回写入后的完整列表。
+  Future<List<String>> forgetRecentProject(String path) async {
+    final String normalized = path.trim();
+    final List<String> current = await loadRecentProjects();
+    final List<String> updated = current
+        .where((String value) => value != normalized)
+        .toList(growable: false);
+    if (updated.length != current.length) {
+      await _preferences.writeString(_recentProjectsKey, jsonEncode(updated));
+    }
+    return updated;
+  }
+
   /// 读取第三方翻译 API 的普通配置；API Key 仍由 [translationSecrets] 单独读取。
   Future<TranslationApiSettings> loadTranslationApiSettings({
     TranslationApiSettings? fallback,
@@ -237,3 +280,17 @@ bool _validInt(int? value, {required int min, required int max}) =>
 
 bool _validDouble(double? value, {required double min, required double max}) =>
     value != null && value.isFinite && value >= min && value <= max;
+
+List<String> _sanitizeRecentProjects(Object? value) {
+  if (value is! List) return <String>[];
+  final Set<String> seen = <String>{};
+  final List<String> paths = <String>[];
+  for (final Object? item in value) {
+    if (item is! String) continue;
+    final String path = item.trim();
+    if (path.isEmpty || !seen.add(path)) continue;
+    paths.add(path);
+    if (paths.length == kMaxRecentProjects) break;
+  }
+  return paths;
+}
