@@ -143,12 +143,12 @@
 - [x] 阅读速度检查：按可配置的字符/秒阈值检查原文和译文中较长的一行，只报告超阈值字幕，不修改编辑结果。
 - [x] 字幕样式：视频页支持字号、文字色、背景色和上/中/下位置，并持久化到普通设置。
 - [x] 视频配套字幕导出：视频页按视频文件名导出 SRT/VTT/JSON/TXT；导出的是配套字幕文件，不重新编码视频。
-- [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，均生成带原文、译文、说话人标签并复用字幕样式的 MP4；Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC，以及 SAF `content://` 输出（API 26+），新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本。AAC 与 MP3 音轨已在 API 35 ARM64 模拟器真实编码通过，Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` 硬字幕 smoke；Android 真实设备、其他编解码器、Windows 用户桌面和 macOS/本机 FFmpeg 兼容性仍待验收。
+- [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，均生成带原文、译文、说话人标签并复用字幕样式的 MP4；Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC，以及 SAF `content://` 输出（API 26+），新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本。AAC 与 MP3 音轨已在 API 35 ARM64 模拟器真实编码通过，Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` 硬字幕 smoke，macOS `ffmpeg-full 9.0.1` 已通过 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart` 纯 VM 真实编码与重新解码；Android 真实设备、其他编解码器、Windows 用户桌面、普通 macOS FFmpeg 和无签名 Runner 集成启动仍待验收。
 - [x] 文件转写性能诊断：记录模型准备、解码、识别和总耗时、RTF、采样点、模型占用、平台与 ASR/VAD 配置，并支持查看/导出 JSON。
 - [x] 批量与实时识别性能汇总：批量页汇总文件数、成功/失败/取消、音频时长、累计解码/识别耗时和 RTF；实时页汇总采样点、音频时长、会话耗时和 RTF，并支持查看/导出 JSON。
 - [x] 持续性能日志：将文件、批量和实时报告以版本化 JSON 持久化到应用私有目录，最多保留 100 条，支持查看、清空，并跳过损坏条目。
 
-当前进度：M13 自动说话人分离和桌面/Android 硬字幕编码代码已完成代码审查、相关测试和验收脚本；`flutter analyze`、Flutter 相关测试、Android Kotlin 编译和 Android API 35 ARM64 模拟器硬字幕真实编码均已通过，模拟器已分别验收 AAC 直通与 MP3 转 AAC；Windows CI run `32048430484` 已用带 `libass` 的 `ffmpeg-full` 通过硬字幕编码 smoke。Android 真机、其他系统编解码器、Windows 用户桌面和 macOS/本机 FFmpeg 兼容性仍待具备环境后验收。下一步是完成真实设备验收，并根据设备结果补充兼容性。
+当前进度：M13 自动说话人分离和桌面/Android 硬字幕编码代码已完成代码审查、相关测试和验收脚本；`flutter analyze`、Flutter 相关测试、Android Kotlin 编译和 Android API 35 ARM64 模拟器硬字幕真实编码均已通过，模拟器已分别验收 AAC 直通与 MP3 转 AAC；Windows CI run `32048430484` 已用带 `libass` 的 `ffmpeg-full` 通过硬字幕编码 smoke；本机 macOS `ffmpeg-full 9.0.1` 已通过无 Runner 的纯 VM 真实编码与重新解码，新增脚本见 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart`。Android 真机、其他系统编解码器、Windows 用户桌面、普通 macOS FFmpeg 和无签名 Runner 集成启动仍待具备环境后验收。下一步是完成真实设备验收，并根据设备结果补充兼容性。
 
 ## 推荐执行顺序
 

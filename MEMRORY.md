@@ -83,6 +83,8 @@
 
 ## 尚未验证的环境
 
+- M13 macOS 硬字幕补充验收：新增 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart`，使用本机 `ffmpeg-full 9.0.1` 直接调用生产编码器生成 MP4，并由 FFmpeg 重新解码，纯 VM 验收通过；无签名 Runner 集成启动仍受 entitlements/开发证书限制，普通 Homebrew FFmpeg 8.1.1 不含 `libass`。
+
 - Android 原生 Kotlin 解码和硬字幕编码已完成编译；解码与硬字幕编码均已在 API 35 ARM64 模拟器端到端运行验证，但尚未在真实 Android 设备运行。
 - Windows 原生 C++ 解码已在 MSVC/Windows SDK 上编译，并在 CI 桌面 smoke、完整模型 e2e 和硬字幕 smoke 中通过 AAC/视频音轨识别与 MP4 编码；用户桌面运行仍未验证。
 - Android 模拟器的 media_kit 视频播放已通过端到端验证；Windows CI smoke 已通过 media_kit MP4 打开、读取时长和播放，用户桌面差异仍未验证。
