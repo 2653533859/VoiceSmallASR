@@ -87,6 +87,7 @@ void main() {
     addTearDown(f.dispose);
     await f.live.start();
     f.live.setTranslationEnabled(true);
+    f.live.setTranslationTargetLanguage('ja');
 
     f.session.emit(
       const Segment(
@@ -101,7 +102,7 @@ void main() {
 
     expect(f.live.finals.single.translation, '译文：hello');
     expect(provider.from, 'en');
-    expect(provider.to, 'zh-CN');
+    expect(provider.to, 'ja');
     expect(provider.calls, 1);
     expect(resolveCount, 1);
     expect(provider.closed, isFalse);
@@ -121,6 +122,13 @@ void main() {
 
     await f.live.stop();
     expect(provider.closed, isTrue);
+  });
+
+  test('实时翻译目标语言不能为空', () {
+    final _Fixture f = _Fixture();
+    addTearDown(f.dispose);
+
+    expect(() => f.live.setTranslationTargetLanguage(' '), throwsArgumentError);
   });
 
   test('停止录音：先停设备再收会话，尾句能进来', () async {

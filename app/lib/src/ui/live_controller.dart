@@ -44,14 +44,24 @@ class LiveController extends ChangeNotifier {
     required this.provideWorker,
     required this.languageOf,
     this.provideTranslationProvider,
-    this.translationTargetLanguage = 'zh-CN',
+    String translationTargetLanguage = 'zh-CN',
     AudioSource? mic,
-  }) : _mic = mic ?? MicrophoneSource();
+  }) : _mic = mic ?? MicrophoneSource() {
+    final String target = translationTargetLanguage.trim();
+    if (target.isEmpty) {
+      throw ArgumentError.value(
+        translationTargetLanguage,
+        'translationTargetLanguage',
+        '目标语言不能为空',
+      );
+    }
+    _translationTargetLanguage = target;
+  }
 
   final WorkerProvider provideWorker;
   final LanguageOf languageOf;
   final TranslationProviderResolver? provideTranslationProvider;
-  final String translationTargetLanguage;
+  late String _translationTargetLanguage;
   final AudioSource _mic;
 
   final List<Segment> _finals = <Segment>[];
@@ -88,6 +98,16 @@ class LiveController extends ChangeNotifier {
 
   /// 是否在定稿字幕后自动请求第三方翻译 API。
   bool get translationEnabled => _translationEnabled;
+
+  String get translationTargetLanguage => _translationTargetLanguage;
+
+  void setTranslationTargetLanguage(String value) {
+    final String target = value.trim();
+    if (target.isEmpty) {
+      throw ArgumentError.value(value, 'translationTargetLanguage', '目标语言不能为空');
+    }
+    _translationTargetLanguage = target;
+  }
 
   bool get hasResult => _finals.isNotEmpty;
 
@@ -236,7 +256,7 @@ class LiveController extends ChangeNotifier {
     final List<String> translated = await provider.translate(
       <String>[segment.text],
       from: source,
-      to: translationTargetLanguage,
+      to: _translationTargetLanguage,
     );
     if (translated.length != 1) {
       throw StateError('翻译服务返回 ${translated.length} 条结果，需要 1 条，无法安全对应实时字幕');

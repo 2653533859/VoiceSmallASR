@@ -113,6 +113,28 @@ void main() {
     );
   });
 
+  test('测试连接使用最小文本请求并复用正常响应校验', () async {
+    final _FakeClient client = _FakeClient(
+      _jsonResponse(<String, Object>{
+        'translations': <String>['连接测试完成'],
+      }),
+    );
+    final ApiTranslationProvider provider = ApiTranslationProvider(
+      apiKey: 'key',
+      client: client,
+    );
+
+    await provider.testConnection(targetLanguage: 'ja');
+
+    final Map<String, dynamic> body =
+        jsonDecode(client.body) as Map<String, dynamic>;
+    final List<dynamic> messages = body['messages'] as List<dynamic>;
+    final Map<String, dynamic> request =
+        jsonDecode(messages[1]['content'] as String) as Map<String, dynamic>;
+    expect(request['target_language'], 'ja');
+    expect(request['texts'], <String>['连接测试']);
+  });
+
   test('构造时校验 API Key、地址、模型和超时', () {
     expect(() => ApiTranslationProvider(apiKey: ' '), throwsArgumentError);
     expect(

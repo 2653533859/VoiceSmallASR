@@ -29,9 +29,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('日文').last);
     final Finder apiKeyField = find.byKey(const Key('translationApiKey')).first;
+    await tester.ensureVisible(apiKeyField);
     await tester.enterText(apiKeyField, '  saved-key  ');
     for (int i = 0; i < 3; i++) {
-      await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+      await tester.dragFrom(const Offset(400, 300), const Offset(0, -400));
       await tester.pump();
     }
     await tester.tap(find.text('离线模式'));
@@ -65,6 +66,7 @@ void main() {
     await tester.pump();
 
     final Finder apiKeyField = find.byKey(const Key('translationApiKey')).first;
+    expect(find.byKey(const Key('translationTargetLanguage')), findsOneWidget);
     final TextField field = tester.widget<TextField>(apiKeyField);
     expect(field.obscureText, isTrue);
     expect(field.controller?.text, 'saved-key');

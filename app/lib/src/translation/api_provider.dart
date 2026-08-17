@@ -11,13 +11,31 @@ const String kDefaultTranslationApiEndpoint =
     'https://api.openai.com/v1/chat/completions';
 
 const String kDefaultTranslationApiModel = 'gpt-4o-mini';
+const String kDefaultTranslationTargetLanguage = 'zh-CN';
+
+/// 设置页提供的目标语言。provider 本身仍接受任意非空语言标识，方便第三方扩展。
+const Map<String, String> kTranslationLanguageLabels = <String, String>{
+  'zh-CN': '中文（简体）',
+  'en': '英文',
+  'ja': '日文',
+  'ko': '韩文',
+  'yue': '粤语',
+};
+
+const List<String> kTranslationLanguages = <String>[
+  'zh-CN',
+  'en',
+  'ja',
+  'ko',
+  'yue',
+];
 
 /// 用户可配置的第三方翻译 API 参数。
 class TranslationApiSettings {
   const TranslationApiSettings({
     this.endpoint = kDefaultTranslationApiEndpoint,
     this.model = kDefaultTranslationApiModel,
-    this.targetLanguage = 'zh-CN',
+    this.targetLanguage = kDefaultTranslationTargetLanguage,
   });
 
   final String endpoint;
@@ -50,6 +68,15 @@ class ApiTranslationProvider implements ClosableTranslationProvider {
   final http.Client _client;
   final bool _ownsClient;
   final Duration _timeout;
+
+  /// 发送一条最小请求，验证 endpoint、模型和 API Key 是否可用。
+  ///
+  /// 不返回或记录测试文本，调用方只需根据是否抛错展示连接结果。
+  Future<void> testConnection({
+    String targetLanguage = kDefaultTranslationTargetLanguage,
+  }) async {
+    await translate(<String>['连接测试'], to: targetLanguage);
+  }
 
   @override
   Future<List<String>> translate(

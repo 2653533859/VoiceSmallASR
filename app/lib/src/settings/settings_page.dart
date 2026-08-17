@@ -24,6 +24,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late String _language;
+  String _targetLanguage = kDefaultTranslationTargetLanguage;
   late bool _useItn;
   late bool _offlineMode;
   late int _numThreads;
@@ -36,7 +37,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _loading = true;
   bool _saving = false;
+  bool _testingConnection = false;
   String? _errorText;
+  String? _connectionStatus;
 
   @override
   void initState() {
@@ -72,6 +75,9 @@ class _SettingsPageState extends State<SettingsPage> {
       _apiEndpoint.text = settings.endpoint;
       _apiModel.text = settings.model;
       _apiKey.text = key ?? '';
+      _targetLanguage = kTranslationLanguages.contains(settings.targetLanguage)
+          ? settings.targetLanguage
+          : kDefaultTranslationTargetLanguage;
       setState(() => _loading = false);
     } on Object catch (error) {
       if (!mounted) return;
@@ -92,10 +98,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _save() async {
-    if (_loading || _saving) return;
+    if (_loading || _saving || _testingConnection) return;
     setState(() {
       _saving = true;
       _errorText = null;
+      _connectionStatus = null;
     });
     final AsrConfig current = widget.controller.config;
     final AsrConfig next = current.copyWith(
@@ -115,6 +122,7 @@ class _SettingsPageState extends State<SettingsPage> {
         TranslationApiSettings(
           endpoint: _apiEndpoint.text,
           model: _apiModel.text,
+          targetLanguage: _targetLanguage,
         ),
       );
       final String key = _apiKey.text.trim();
@@ -133,6 +141,53 @@ class _SettingsPageState extends State<SettingsPage> {
         _saving = false;
         _errorText = '保存设置失败：$error';
       });
+    }
+  }
+
+  Future<void> _testConnection() async {
+    if (_loading || _saving || _testingConnection) return;
+    final String apiKey = _apiKey.text.trim();
+    if (apiKey.isEmpty) {
+      setState(() {
+        _connectionStatus = null;
+        _errorText = '连接测试失败：请先输入 API Key';
+      });
+      return;
+    }
+    final String endpoint = _apiEndpoint.text.trim();
+    final String model = _apiModel.text.trim();
+    setState(() {
+      _testingConnection = true;
+      _errorText = null;
+      _connectionStatus = '正在测试 ${_safeEndpoint(endpoint)} / 模型 $model…';
+    });
+    final ApiTranslationProvider provider;
+    try {
+      provider = ApiTranslationProvider(
+        apiKey: apiKey,
+        endpoint: endpoint,
+        model: model,
+      );
+      try {
+        await provider.testConnection(targetLanguage: _targetLanguage);
+        if (!mounted) return;
+        setState(() {
+          _connectionStatus =
+              '连接成功：${_safeEndpoint(endpoint)} / 模型 $model 已返回响应';
+        });
+      } finally {
+        provider.close();
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _connectionStatus = null;
+        _errorText =
+            '连接失败（${_safeEndpoint(endpoint)} / 模型 $model）：'
+            '${_redactApiKey(error.toString(), apiKey)}';
+      });
+    } finally {
+      if (mounted) setState(() => _testingConnection = false);
     }
   }
 
@@ -164,7 +219,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final bool disabled = _loading || _saving || widget.controller.busy;
+    final bool disabled =
+        _loading || _saving || _testingConnection || widget.controller.busy;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: _loading
@@ -253,6 +309,26 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  key: const Key('translationTargetLanguage'),
+                  initialValue: _targetLanguage,
+                  decoration: const InputDecoration(labelText: '翻译目标语言'),
+                  onChanged: disabled
+                      ? null
+                      : (String? value) {
+                          if (value != null) {
+                            setState(() => _targetLanguage = value);
+                          }
+                        },
+                  items: <DropdownMenuItem<String>>[
+                    for (final String code in kTranslationLanguages)
+                      DropdownMenuItem<String>(
+                        value: code,
+                        child: Text(kTranslationLanguageLabels[code] ?? code),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 TextField(
                   key: const Key('translationApiModel'),
                   controller: _apiModel,
@@ -289,6 +365,27 @@ class _SettingsPageState extends State<SettingsPage> {
                   )
                 else
                   const Text('API 地址和模型名保存到普通设置；API Key 只保存到系统安全存储。'),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const Key('testTranslationConnection'),
+                  onPressed: disabled ? null : _testConnection,
+                  icon: _testingConnection
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.wifi_tethering),
+                  label: Text(_testingConnection ? '测试连接中…' : '测试 API 连接'),
+                ),
+                if (_connectionStatus != null) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Text(
+                    _connectionStatus!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ],
                 const Divider(height: 24),
                 Text('实时识别', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
@@ -399,6 +496,21 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
     );
   }
+}
+
+String _safeEndpoint(String value) {
+  try {
+    final Uri uri = Uri.parse(value);
+    if (uri.host.isEmpty) return '<无效地址>';
+    return uri.replace(userInfo: '', query: '', fragment: '').toString();
+  } on FormatException {
+    return '<无效地址>';
+  }
+}
+
+String _redactApiKey(String message, String apiKey) {
+  if (apiKey.isEmpty) return message;
+  return message.replaceAll(apiKey, '[API Key 已隐藏]');
 }
 
 String _formatBytes(int bytes) {

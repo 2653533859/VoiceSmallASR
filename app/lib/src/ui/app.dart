@@ -62,6 +62,7 @@ class _VsasrAppState extends State<VsasrApp> {
     if (apiKey == null) return null;
     final TranslationApiSettings settings = await repository
         .loadTranslationApiSettings();
+    _live.setTranslationTargetLanguage(settings.targetLanguage);
     return ApiTranslationProvider(
       apiKey: apiKey,
       endpoint: settings.endpoint,

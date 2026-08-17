@@ -17,6 +17,8 @@ const String _maxSpeechDurationKey = 'settings.vad.max_speech_duration';
 const String _offlineModeKey = 'settings.model.offline_mode';
 const String _translationEndpointKey = 'settings.translation.endpoint';
 const String _translationModelKey = 'settings.translation.model';
+const String _translationTargetLanguageKey =
+    'settings.translation.target_language';
 
 /// 可替换的普通设置存储，便于在没有平台 channel 的单测里验证持久化逻辑。
 abstract interface class PreferenceStore {
@@ -187,12 +189,17 @@ class AppSettingsRepository {
       _translationEndpointKey,
     );
     final String? model = await _preferences.readString(_translationModelKey);
+    final String? targetLanguage = await _preferences.readString(
+      _translationTargetLanguageKey,
+    );
     return TranslationApiSettings(
       endpoint: endpoint?.trim().isNotEmpty == true
           ? endpoint!.trim()
           : base.endpoint,
       model: model?.trim().isNotEmpty == true ? model!.trim() : base.model,
-      targetLanguage: base.targetLanguage,
+      targetLanguage: targetLanguage?.trim().isNotEmpty == true
+          ? targetLanguage!.trim()
+          : base.targetLanguage,
     );
   }
 
@@ -202,14 +209,26 @@ class AppSettingsRepository {
   ) async {
     final String endpoint = settings.endpoint.trim();
     final String model = settings.model.trim();
+    final String targetLanguage = settings.targetLanguage.trim();
     if (endpoint.isEmpty) {
       throw ArgumentError.value(settings.endpoint, 'endpoint', 'API 地址不能为空');
     }
     if (model.isEmpty) {
       throw ArgumentError.value(settings.model, 'model', '模型名不能为空');
     }
+    if (targetLanguage.isEmpty) {
+      throw ArgumentError.value(
+        settings.targetLanguage,
+        'targetLanguage',
+        '目标语言不能为空',
+      );
+    }
     await _preferences.writeString(_translationEndpointKey, endpoint);
     await _preferences.writeString(_translationModelKey, model);
+    await _preferences.writeString(
+      _translationTargetLanguageKey,
+      targetLanguage,
+    );
   }
 }
 

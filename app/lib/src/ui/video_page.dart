@@ -70,8 +70,15 @@ class _VideoPageState extends State<VideoPage> {
     try {
       final Future<TranslationProvider?> Function()? resolver =
           widget.translationProviderResolver;
+      final AppSettingsRepository? configuredRepository = widget.settings;
+      final TranslationApiSettings settings = configuredRepository == null
+          ? const TranslationApiSettings()
+          : await configuredRepository.loadTranslationApiSettings();
       final TranslationProvider? provider = resolver == null
-          ? await _loadTranslationProvider()
+          ? await _loadTranslationProvider(
+              configuredRepository ?? AppSettingsRepository(),
+              settings,
+            )
           : await resolver();
       try {
         if (!mounted) return;
@@ -83,7 +90,7 @@ class _VideoPageState extends State<VideoPage> {
         }
         await widget.transcription.translateCurrentResult(
           provider,
-          targetLanguage: 'zh-CN',
+          targetLanguage: settings.targetLanguage,
         );
       } finally {
         if (provider is ClosableTranslationProvider) provider.close();
@@ -94,11 +101,10 @@ class _VideoPageState extends State<VideoPage> {
     }
   }
 
-  Future<TranslationProvider?> _loadTranslationProvider() async {
-    final AppSettingsRepository repository =
-        widget.settings ?? AppSettingsRepository();
-    final TranslationApiSettings settings = await repository
-        .loadTranslationApiSettings();
+  Future<TranslationProvider?> _loadTranslationProvider(
+    AppSettingsRepository repository,
+    TranslationApiSettings settings,
+  ) async {
     final String? apiKey = await repository.translationSecrets.readApiKey();
     if (apiKey == null) return null;
     return ApiTranslationProvider(
@@ -123,18 +129,27 @@ class _VideoPageState extends State<VideoPage> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge(<Listenable>[widget.controller, widget.transcription]),
+      listenable: Listenable.merge(<Listenable>[
+        widget.controller,
+        widget.transcription,
+      ]),
       builder: (BuildContext context, Widget? _) {
         final VideoPlaybackController video = widget.controller;
         final TranscriptionResult? result = widget.transcription.result;
         final bool hasLinkedResult =
-            result != null && video.filePath != null && video.filePath == widget.transcription.filePath;
-        final Segment? current = hasLinkedResult ? activeSegment(result.segments, video.position) : null;
+            result != null &&
+            video.filePath != null &&
+            video.filePath == widget.transcription.filePath;
+        final Segment? current = hasLinkedResult
+            ? activeSegment(result.segments, video.position)
+            : null;
         final String? transcribedPath = widget.transcription.filePath;
-        final String transcribedExtension =
-            transcribedPath == null ? '' : p.extension(transcribedPath).replaceFirst('.', '').toLowerCase();
+        final String transcribedExtension = transcribedPath == null
+            ? ''
+            : p.extension(transcribedPath).replaceFirst('.', '').toLowerCase();
         final bool transcribedVideo =
-            transcribedPath != null && kVideoExtensions.contains(transcribedExtension);
+            transcribedPath != null &&
+            kVideoExtensions.contains(transcribedExtension);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -177,7 +192,9 @@ class _VideoPageState extends State<VideoPage> {
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 240),
                     child: Text(
-                      video.filePath == null ? '尚未打开视频' : p.basename(video.filePath!),
+                      video.filePath == null
+                          ? '尚未打开视频'
+                          : p.basename(video.filePath!),
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.right,
                       style: Theme.of(context).textTheme.bodySmall,
@@ -189,7 +206,10 @@ class _VideoPageState extends State<VideoPage> {
             if (widget.transcription.stage == JobStage.translating) ...<Widget>[
               LinearProgressIndicator(value: widget.transcription.progress),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 child: Text(widget.transcription.statusText),
               ),
             ],
@@ -200,7 +220,10 @@ class _VideoPageState extends State<VideoPage> {
             if (video.filePath != null) _PlaybackControls(controller: video),
             if (video.errorText != null)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 child: Text(
                   video.errorText!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
@@ -212,7 +235,9 @@ class _VideoPageState extends State<VideoPage> {
                 child: _SubtitleList(controller: video, result: result),
               )
             else if (video.filePath == null)
-              const Expanded(child: Center(child: Text('打开视频，或先在「文件转写」页签识别一个视频'))),
+              const Expanded(
+                child: Center(child: Text('打开视频，或先在「文件转写」页签识别一个视频')),
+              ),
           ],
         );
       },
@@ -241,12 +266,22 @@ class _VideoSurface extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   child: Text(
-                    <String>[current!.text, if ((current!.translation ?? '').trim().isNotEmpty) current!.translation!]
-                        .join('\n'),
+                    <String>[
+                      current!.text,
+                      if ((current!.translation ?? '').trim().isNotEmpty)
+                        current!.translation!,
+                    ].join('\n'),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white, fontSize: 18, height: 1.35),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      height: 1.35,
+                    ),
                   ),
                 ),
               ),
@@ -256,13 +291,16 @@ class _VideoSurface extends StatelessWidget {
     return ColoredBox(
       color: Colors.black,
       child: controller.filePath == null
-          ? const Center(child: Text('打开视频开始播放', style: TextStyle(color: Colors.white70)))
+          ? const Center(
+              child: Text('打开视频开始播放', style: TextStyle(color: Colors.white70)),
+            )
           : Stack(
               fit: StackFit.expand,
               children: <Widget>[
                 controller.buildVideo(),
                 ?subtitle,
-                if (controller.busy) const Center(child: CircularProgressIndicator()),
+                if (controller.busy)
+                  const Center(child: CircularProgressIndicator()),
               ],
             ),
     );
@@ -276,8 +314,10 @@ class _PlaybackControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double total = controller.duration.inMicroseconds / Duration.microsecondsPerSecond;
-    final double current = controller.position.inMicroseconds / Duration.microsecondsPerSecond;
+    final double total =
+        controller.duration.inMicroseconds / Duration.microsecondsPerSecond;
+    final double current =
+        controller.position.inMicroseconds / Duration.microsecondsPerSecond;
     final double max = total > 0 ? total : 1;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
@@ -285,10 +325,14 @@ class _PlaybackControls extends StatelessWidget {
         children: <Widget>[
           IconButton(
             tooltip: controller.playing ? '暂停' : '播放',
-            onPressed: controller.busy ? null : () => unawaited(controller.playOrPause()),
+            onPressed: controller.busy
+                ? null
+                : () => unawaited(controller.playOrPause()),
             icon: Icon(controller.playing ? Icons.pause : Icons.play_arrow),
           ),
-          Text('${_formatDuration(controller.position)} / ${_formatDuration(controller.duration)}'),
+          Text(
+            '${_formatDuration(controller.position)} / ${_formatDuration(controller.duration)}',
+          ),
           Expanded(
             child: Slider(
               value: current.clamp(0.0, max),
@@ -296,10 +340,13 @@ class _PlaybackControls extends StatelessWidget {
               onChanged: total <= 0 || controller.busy
                   ? null
                   : (double value) => unawaited(
-                        controller.seek(
-                          Duration(microseconds: (value * Duration.microsecondsPerSecond).round()),
+                      controller.seek(
+                        Duration(
+                          microseconds: (value * Duration.microsecondsPerSecond)
+                              .round(),
                         ),
                       ),
+                    ),
             ),
           ),
         ],
@@ -316,15 +363,22 @@ class _SubtitleList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Segment? current = activeSegment(result.segments, controller.position);
+    final Segment? current = activeSegment(
+      result.segments,
+      controller.position,
+    );
     return ListView.separated(
       padding: const EdgeInsets.only(bottom: 12),
       itemCount: result.segments.length,
-      separatorBuilder: (BuildContext context, int index) => const Divider(height: 1),
+      separatorBuilder: (BuildContext context, int index) =>
+          const Divider(height: 1),
       itemBuilder: (BuildContext context, int index) {
         final Segment segment = result.segments[index];
-        final bool selected = identical(segment, current) ||
-            (current != null && segment.index == current.index && segment.start == current.start);
+        final bool selected =
+            identical(segment, current) ||
+            (current != null &&
+                segment.index == current.index &&
+                segment.start == current.start);
         return ListTile(
           dense: true,
           selected: selected,
@@ -335,9 +389,8 @@ class _SubtitleList extends StatelessWidget {
               if ((segment.translation ?? '').trim().isNotEmpty)
                 Text(
                   segment.translation!.trim(),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: Theme.of(context).colorScheme.primary),
                 ),
             ],
           ),
@@ -346,7 +399,12 @@ class _SubtitleList extends StatelessWidget {
             '${_formatDuration(Duration(milliseconds: (segment.end * 1000).round()))}',
           ),
           onTap: () => unawaited(
-            controller.seek(Duration(microseconds: (segment.start * Duration.microsecondsPerSecond).round())),
+            controller.seek(
+              Duration(
+                microseconds: (segment.start * Duration.microsecondsPerSecond)
+                    .round(),
+              ),
+            ),
           ),
         );
       },
@@ -357,7 +415,12 @@ class _SubtitleList extends StatelessWidget {
 String _formatDuration(Duration duration) {
   final int totalSeconds = duration.inSeconds;
   final String hours = (totalSeconds ~/ 3600).toString().padLeft(2, '0');
-  final String minutes = ((totalSeconds % 3600) ~/ 60).toString().padLeft(2, '0');
+  final String minutes = ((totalSeconds % 3600) ~/ 60).toString().padLeft(
+    2,
+    '0',
+  );
   final String seconds = (totalSeconds % 60).toString().padLeft(2, '0');
-  return totalSeconds >= 3600 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  return totalSeconds >= 3600
+      ? '$hours:$minutes:$seconds'
+      : '$minutes:$seconds';
 }

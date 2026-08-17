@@ -91,6 +91,7 @@ void main() {
     const TranslationApiSettings saved = TranslationApiSettings(
       endpoint: 'https://provider.example/v1/chat/completions',
       model: 'provider-translate',
+      targetLanguage: 'ja',
     );
 
     await repository.saveTranslationApiSettings(saved);
@@ -99,6 +100,7 @@ void main() {
 
     expect(loaded.endpoint, saved.endpoint);
     expect(loaded.model, saved.model);
+    expect(loaded.targetLanguage, saved.targetLanguage);
     expect(preferences.strings.values, isNot(contains('secret')));
   });
 }

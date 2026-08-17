@@ -7,7 +7,7 @@
 ## 当前基线
 
 - Python 端：离线多语种识别、CLI、实时 VAD、时间戳和字幕导出已完成；`pytest` 107 项通过。
-- Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；`flutter analyze` 与 `flutter test` 160 项通过。
+- Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；`flutter analyze` 与 `flutter test` 162 项通过。
 - 平台验收：macOS 真实模型、Android API 35 模拟器、Windows CI 完整模型 E2E 已通过。
 - 发布能力：`v1.0.1` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/ZIP。
 - 明确范围：个人使用，不做商店发布、公证和正式签名证书；真实第三方翻译 API 网络验收不作为自动化门禁。
@@ -43,11 +43,15 @@
 
 目标：不申请签名证书时，macOS 仍可完成第三方翻译功能。
 
-任务：
+本轮已完成：
 
-- 设置页明确显示 API Key 是系统安全存储还是当前会话存储。
-- 增加“测试 API 连接”操作，显示 endpoint、模型和认证错误，但不显示 API Key。
-- 增加目标语言选择，默认中文，保留自定义 OpenAI-compatible endpoint 和模型名。
+- 设置页增加目标语言选择，默认中文，并持久化到普通设置。
+- 文件、视频和实时字幕翻译都会使用已保存的目标语言。
+- 设置页增加“测试 API 连接”，通过最小请求验证 endpoint、模型和 API Key；状态文本不显示 API Key，并隐藏 endpoint 中的 userinfo、query 和 fragment。
+
+待完成：
+
+- 设置页继续明确显示 API Key 是系统安全存储还是当前会话存储。
 - 实时翻译失败时允许单条字幕重新翻译，不影响原始识别结果。
 - 在翻译前提示：字幕文本会发送给用户配置的第三方服务商。
 
