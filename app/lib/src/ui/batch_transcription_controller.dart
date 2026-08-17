@@ -126,6 +126,13 @@ class BatchTranscriptionController extends ChangeNotifier {
         item.status == BatchItemStatus.translationFailed,
   );
 
+  bool get hasExportableItems => _items.any(
+    (BatchItem item) =>
+        (item.status == BatchItemStatus.completed ||
+            item.status == BatchItemStatus.translated) &&
+        item.result != null,
+  );
+
   int get completedCount => _items
       .where(
         (BatchItem item) =>

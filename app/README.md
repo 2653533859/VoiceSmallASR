@@ -16,7 +16,7 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 | 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道 |
 | 字幕导入/导出（`lib/src/subtitles/`） | ✅ SRT/VTT/JSON 导入，SRT/VTT/JSON/TXT 导出，含双语字幕 |
 | 翻译层（`lib/src/translation/`） | ✅ 第三方 OpenAI-compatible provider、批量/重试/进度、批量文件翻译复用 provider、双语导出、目标语言持久化、API 连接测试、文件/实时/视频字幕翻译已完成；真实网络验收按个人使用范围主动跳过 |
-| 界面（`lib/src/ui/`） | ✅ M1、M2、M3、M5、M11 完成，M12 多文件队列与批量翻译首项完成：文件转写、实时字幕、视频播放、字幕联动、外部字幕加载、批量转写/翻译、字幕校对编辑、项目保存/打开/最近项目 |
+| 界面（`lib/src/ui/`） | ✅ M1、M2、M3、M5、M11 完成，M12 多文件队列、批量翻译与安全导出首项完成：文件转写、实时字幕、视频播放、字幕联动、外部字幕加载、批量转写/翻译/导出、字幕校对编辑、项目保存/打开/最近项目 |
 
 ## 开发
 
@@ -26,7 +26,7 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 
 flutter pub get
 flutter analyze     # 验收标准：No issues found
-flutter test        # 189 项，不依赖模型与设备
+flutter test        # 191 项，不依赖模型与设备
 
 # Android release 构建（需要 Android SDK/JDK；当前 release 使用 debug signing 做验证）
 flutter build apk --release

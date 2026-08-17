@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
+import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 
 class BatchPage extends StatefulWidget {
@@ -13,11 +14,13 @@ class BatchPage extends StatefulWidget {
     required this.controller,
     required this.pickFiles,
     this.onTranslate,
+    this.onExport,
   });
 
   final BatchTranscriptionController controller;
   final PickBatchFiles pickFiles;
   final Future<void> Function()? onTranslate;
+  final Future<void> Function(String format)? onExport;
 
   @override
   State<BatchPage> createState() => _BatchPageState();
@@ -25,6 +28,7 @@ class BatchPage extends StatefulWidget {
 
 class _BatchPageState extends State<BatchPage> {
   bool _translationStarting = false;
+  bool _exporting = false;
 
   Future<void> _pickFiles() async {
     try {
@@ -133,6 +137,18 @@ class _BatchPageState extends State<BatchPage> {
                       icon: const Icon(Icons.translate),
                       label: const Text('批量翻译'),
                     ),
+                    OutlinedButton.icon(
+                      key: const Key('batchExport'),
+                      onPressed:
+                          batch.running ||
+                              !batch.hasExportableItems ||
+                              widget.onExport == null ||
+                              _exporting
+                          ? null
+                          : _export,
+                      icon: const Icon(Icons.save_alt),
+                      label: const Text('批量导出'),
+                    ),
                     Text('已完成 ${batch.completedCount}/${batch.items.length}'),
                     Text('已翻译 ${batch.translatedCount}/${batch.items.length}'),
                   ],
@@ -192,7 +208,43 @@ class _BatchPageState extends State<BatchPage> {
           .showSnackBar(SnackBar(content: Text('重试翻译失败：$error')));
     }
   }
+
+  Future<void> _export() async {
+    final Future<void> Function(String format)? export = widget.onExport;
+    if (export == null || _exporting) return;
+    final String? format = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => SimpleDialog(
+        title: const Text('批量导出格式'),
+        children: <Widget>[
+          for (final String value in kSubtitleFormats)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, value),
+              child: Text('${value.toUpperCase()} — ${_formatHints[value]}'),
+            ),
+        ],
+      ),
+    );
+    if (format == null || !mounted) return;
+    setState(() => _exporting = true);
+    try {
+      await export(format);
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('批量导出失败：$error')));
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
 }
+
+const Map<String, String> _formatHints = <String, String>{
+  'srt': '最通用的字幕格式',
+  'vtt': '网页播放器用',
+  'json': '带 token 级时间戳',
+  'txt': '纯文本，不含时间',
+};
 
 class _BatchItemTile extends StatelessWidget {
   const _BatchItemTile({super.key, required this.item, this.onRetry});

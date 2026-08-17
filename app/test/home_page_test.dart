@@ -187,6 +187,82 @@ void main() {
     expect(find.textContaining('已完成翻译'), findsNWidgets(2));
   });
 
+  testWidgets('批量导出支持四种格式并为同名文件生成不冲突的文件名', (WidgetTester tester) async {
+    final List<(String, String)> saved = <(String, String)>[];
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      pickBatchFiles: () async => <String>[
+        '/tmp/left/episode.wav',
+        '/tmp/right/episode.mp3',
+      ],
+      saveFile: (String name, String content) async {
+        saved.add((name, content));
+        return '/tmp/$name';
+      },
+    );
+
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchPickFiles')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchStart')));
+    await tester.pumpAndSettle();
+
+    for (final String format in kSubtitleFormats) {
+      await tester.tap(find.byKey(const Key('batchExport')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('${format.toUpperCase()} —'));
+      await tester.pumpAndSettle();
+    }
+
+    expect(saved.map((entry) => entry.$1), <String>[
+      'episode.srt',
+      'episode-2.srt',
+      'episode.vtt',
+      'episode-2.vtt',
+      'episode.json',
+      'episode-2.json',
+      'episode.txt',
+      'episode-2.txt',
+    ]);
+    expect(saved[0].$2, contains('00:00:00,000 --> 00:00:01,000'));
+    expect(saved[2].$2, startsWith('WEBVTT'));
+    expect(saved[4].$2, contains('"segments"'));
+    expect(saved[6].$2, contains('呢几个字都表达唔到'));
+  });
+
+  testWidgets('批量导出取消一个保存后停止后续文件', (WidgetTester tester) async {
+    int saveCalls = 0;
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      pickBatchFiles: () async => <String>['/tmp/one.wav', '/tmp/two.wav'],
+      saveFile: (String name, String content) async {
+        saveCalls++;
+        return null;
+      },
+    );
+
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchPickFiles')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchStart')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchExport')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('SRT —'));
+    await tester.pumpAndSettle();
+
+    expect(saveCalls, 1);
+    expect(find.textContaining('已导出 0/2 个文件，已取消剩余导出'), findsOneWidget);
+  });
+
   testWidgets('模型准备失败时显示错误并把按钮改成重试', (WidgetTester tester) async {
     final TranscribeController controller = TranscribeController(
       models: ModelManager(root: workspace.path),
