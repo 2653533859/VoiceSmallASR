@@ -36,7 +36,7 @@ import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
 
-/** Android 系统视频转码：MediaCodec + OpenGL 叠加字幕，MediaMuxer 保留 AAC 音轨。 */
+/** Android 系统视频转码：MediaCodec + OpenGL 叠加字幕，MediaMuxer 复用或生成 AAC 音轨。 */
 object HardSubtitleEncoderChannel {
     const val NAME = "vsasr/hard_subtitle"
 
@@ -180,16 +180,23 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
                 .coerceIn(1, 120)
 
             val audioInfo = findAudioTrack(inputPath)
+            var audioFormat: MediaFormat? = null
+            var audioSamples: List<EncodedAudioSample>? = null
             if (audioInfo != null) {
-                try {
-                    val audioMime = audioInfo.format.getString(MediaFormat.KEY_MIME).orEmpty()
-                    require(audioMime == "audio/mp4a-latm" || audioMime == "audio/aac") {
-                        "Android 硬字幕目前只支持直接复用 AAC 音轨：$audioMime"
-                    }
+                val audioMime = audioInfo.format.getString(MediaFormat.KEY_MIME).orEmpty()
+                if (audioMime == "audio/mp4a-latm" || audioMime == "audio/aac") {
+                    audioFormat = audioInfo.format
                     audioExtractor = audioInfo.extractor
-                } catch (error: Throwable) {
+                } else {
+                    // 非 AAC 音轨不能直接交给 MediaMuxer，先用系统编解码器转成 AAC。
                     audioInfo.extractor.release()
-                    throw error
+                    val transcodedAudio = transcodeAudio(
+                        inputPath,
+                        audioInfo.trackIndex,
+                        audioInfo.format,
+                    )
+                    audioFormat = transcodedAudio.format
+                    audioSamples = transcodedAudio.samples
                 }
             }
 
@@ -216,7 +223,12 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
             encoder.start()
             decoder.start()
 
-            val state = EncodeState(muxerHandle.muxer, audioInfo?.format, audioExtractor)
+            val state = EncodeState(
+                muxerHandle.muxer,
+                audioFormat,
+                audioExtractor,
+                audioSamples,
+            )
             var lastCueIndex = -1
             var inputDone = false
             var decoderDone = false
@@ -318,7 +330,7 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
                 null
             } else {
                 extractor.selectTrack(track)
-                AudioTrackInfo(extractor, extractor.getTrackFormat(track))
+                AudioTrackInfo(extractor, track, extractor.getTrackFormat(track))
             }
         } catch (error: Throwable) {
             extractor.release()
@@ -332,6 +344,144 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
             if (mime?.startsWith(prefix) == true) return index
         }
         return -1
+    }
+
+    /** 将系统可解码但不是 AAC 的音轨转成可由 MediaMuxer 写入的 AAC 样本。 */
+    private fun transcodeAudio(
+        inputPath: String,
+        trackIndex: Int,
+        inputFormat: MediaFormat,
+    ): TranscodedAudio {
+        val extractor = MediaExtractor()
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+        try {
+            extractor.setDataSource(inputPath)
+            extractor.selectTrack(trackIndex)
+            val mime = inputFormat.getString(MediaFormat.KEY_MIME)
+                ?: throw IllegalArgumentException("音轨缺少 MIME 类型")
+            val sampleRate = readInteger(inputFormat, MediaFormat.KEY_SAMPLE_RATE, 0)
+            val channelCount = readInteger(inputFormat, MediaFormat.KEY_CHANNEL_COUNT, 0)
+            require(sampleRate > 0 && channelCount > 0) {
+                "音轨采样率或声道数无效：${sampleRate}Hz/${channelCount}ch"
+            }
+
+            val outputFormat = MediaFormat.createAudioFormat(
+                "audio/mp4a-latm",
+                sampleRate,
+                channelCount,
+            ).apply {
+                setInteger(
+                    MediaFormat.KEY_AAC_PROFILE,
+                    MediaCodecInfo.CodecProfileLevel.AACObjectLC,
+                )
+                setInteger(MediaFormat.KEY_BIT_RATE, audioBitrate(sampleRate, channelCount))
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16 * 1024)
+            }
+            decoder = try {
+                MediaCodec.createDecoderByType(mime)
+            } catch (error: Exception) {
+                throw IllegalArgumentException("系统没有 $mime 的解码器")
+            }
+            encoder = try {
+                MediaCodec.createEncoderByType("audio/mp4a-latm")
+            } catch (error: Exception) {
+                throw IllegalArgumentException("系统没有 AAC 音频编码器")
+            }
+            decoder.configure(inputFormat, null, null, 0)
+            encoder.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            decoder.start()
+            encoder.start()
+
+            val state = AudioEncodeState()
+            val decoderInfo = MediaCodec.BufferInfo()
+            var extractorDone = false
+            var decoderDone = false
+            var encoderDone = false
+            var encoderEosQueued = false
+            var idleRounds = 0
+            while (!encoderDone) {
+                var madeProgress = false
+                if (!extractorDone) {
+                    val inputIndex = decoder.dequeueInputBuffer(TIMEOUT_US)
+                    if (inputIndex >= 0) {
+                        val buffer = decoder.getInputBuffer(inputIndex)
+                            ?: throw IllegalStateException("取不到音频解码输入缓冲")
+                        buffer.clear()
+                        val size = extractor.readSampleData(buffer, 0)
+                        if (size < 0) {
+                            decoder.queueInputBuffer(
+                                inputIndex,
+                                0,
+                                0,
+                                0,
+                                MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                            )
+                            extractorDone = true
+                        } else {
+                            decoder.queueInputBuffer(
+                                inputIndex,
+                                0,
+                                size,
+                                extractor.sampleTime,
+                                extractor.sampleFlags,
+                            )
+                            extractor.advance()
+                        }
+                        madeProgress = true
+                    }
+                }
+
+                when (val outputIndex = decoder.dequeueOutputBuffer(decoderInfo, TIMEOUT_US)) {
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED,
+                    MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED,
+                    MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+                    else -> {
+                        madeProgress = true
+                        val outputIsEos =
+                            decoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        if (decoderInfo.size > 0) {
+                            val decoded = decoder.getOutputBuffer(outputIndex)
+                                ?: throw IllegalStateException("取不到音频解码输出缓冲")
+                            state.queuePcm(
+                                encoder,
+                                decoded,
+                                decoderInfo.offset,
+                                decoderInfo.size,
+                                decoderInfo.presentationTimeUs,
+                            )
+                        }
+                        decoder.releaseOutputBuffer(outputIndex, false)
+                        if (outputIsEos) decoderDone = true
+                    }
+                }
+
+                if (decoderDone && !encoderEosQueued) {
+                    state.signalEndOfStream(encoder)
+                    encoderEosQueued = true
+                    madeProgress = true
+                }
+                if (state.drain(encoder, false)) {
+                    encoderDone = true
+                    madeProgress = true
+                }
+                if (madeProgress) {
+                    idleRounds = 0
+                } else if (++idleRounds > MAX_IDLE_ROUNDS) {
+                    throw IllegalStateException("音频转码超时，文件可能已损坏")
+                }
+            }
+            val encodedFormat = state.format
+                ?: throw IllegalStateException("音频编码器没有产生输出格式")
+            require(state.samples.isNotEmpty()) { "音轨为空" }
+            return TranscodedAudio(encodedFormat, state.samples.toList())
+        } finally {
+            runCatching { decoder?.stop() }
+            runCatching { encoder?.stop() }
+            decoder?.release()
+            encoder?.release()
+            extractor.release()
+        }
     }
 
     private fun openMuxer(outputPath: String): MuxerHandle {
@@ -359,6 +509,9 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
 
     private fun videoBitrate(width: Int, height: Int): Int =
         (width.toLong() * height.toLong() * 5L).coerceIn(2_000_000L, 20_000_000L).toInt()
+
+    private fun audioBitrate(sampleRate: Int, channelCount: Int): Int =
+        (sampleRate.toLong() * channelCount * 2L).coerceIn(64_000L, 256_000L).toInt()
 
     private fun readInteger(format: MediaFormat, key: String, fallback: Int): Int =
         runCatching { format.getInteger(key) }.getOrDefault(fallback)
@@ -452,7 +605,19 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
 
 private data class AudioTrackInfo(
     val extractor: MediaExtractor,
+    val trackIndex: Int,
     val format: MediaFormat,
+)
+
+private data class EncodedAudioSample(
+    val data: ByteArray,
+    val presentationTimeUs: Long,
+    val flags: Int,
+)
+
+private data class TranscodedAudio(
+    val format: MediaFormat,
+    val samples: List<EncodedAudioSample>,
 )
 
 private class MuxerHandle(
@@ -469,6 +634,7 @@ private class EncodeState(
     private val muxer: MediaMuxer,
     private val audioFormat: MediaFormat?,
     private val audioExtractor: MediaExtractor?,
+    private val audioSamples: List<EncodedAudioSample>?,
 ) {
     var started = false
         private set
@@ -517,7 +683,18 @@ private class EncodeState(
     }
 
     private fun copyAudioIfNeeded() {
-        if (audioCopied || audioTrack < 0 || audioExtractor == null) return
+        if (audioCopied || audioTrack < 0) return
+        if (audioSamples != null) {
+            val info = MediaCodec.BufferInfo()
+            for (sample in audioSamples) {
+                val buffer = ByteBuffer.wrap(sample.data)
+                info.set(0, sample.data.size, sample.presentationTimeUs, sample.flags)
+                muxer.writeSampleData(audioTrack, buffer, info)
+            }
+            audioCopied = true
+            return
+        }
+        if (audioExtractor == null) return
         val info = MediaCodec.BufferInfo()
         var buffer = ByteBuffer.allocateDirect(initialAudioBufferSize())
             .order(ByteOrder.nativeOrder())
@@ -540,6 +717,109 @@ private class EncodeState(
     }
 
     private fun initialAudioBufferSize(): Int = 1 shl 20
+
+    private companion object {
+        const val TIMEOUT_US = 10_000L
+        const val MAX_IDLE_ROUNDS = 3000
+    }
+}
+
+/** 收集 AAC 编码器输出，并在输入缓冲暂时不可用时主动排空输出。 */
+private class AudioEncodeState {
+    var format: MediaFormat? = null
+        private set
+    val samples = mutableListOf<EncodedAudioSample>()
+
+    fun queuePcm(
+        encoder: MediaCodec,
+        source: ByteBuffer,
+        offset: Int,
+        size: Int,
+        presentationTimeUs: Long,
+    ) {
+        val pcm = source.duplicate().apply {
+            clear()
+            position(offset)
+            limit(offset + size)
+        }
+        var idleRounds = 0
+        while (true) {
+            val inputIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
+            if (inputIndex >= 0) {
+                val buffer = encoder.getInputBuffer(inputIndex)
+                    ?: throw IllegalStateException("取不到 AAC 编码输入缓冲")
+                buffer.clear()
+                require(pcm.remaining() <= buffer.remaining()) {
+                    "音频解码帧超过 AAC 编码器输入缓冲"
+                }
+                buffer.put(pcm)
+                encoder.queueInputBuffer(inputIndex, 0, size, presentationTimeUs, 0)
+                return
+            }
+            drain(encoder, false)
+            if (++idleRounds > MAX_IDLE_ROUNDS) {
+                throw IllegalStateException("AAC 编码器输入超时")
+            }
+        }
+    }
+
+    fun signalEndOfStream(encoder: MediaCodec) {
+        var idleRounds = 0
+        while (true) {
+            val inputIndex = encoder.dequeueInputBuffer(TIMEOUT_US)
+            if (inputIndex >= 0) {
+                encoder.queueInputBuffer(
+                    inputIndex,
+                    0,
+                    0,
+                    0,
+                    MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                )
+                return
+            }
+            drain(encoder, false)
+            if (++idleRounds > MAX_IDLE_ROUNDS) {
+                throw IllegalStateException("AAC 编码器结束超时")
+            }
+        }
+    }
+
+    fun drain(encoder: MediaCodec, endOfStream: Boolean): Boolean {
+        val info = MediaCodec.BufferInfo()
+        while (true) {
+            when (val index = encoder.dequeueOutputBuffer(info, TIMEOUT_US)) {
+                MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    check(format == null) { "AAC 编码器重复产生输出格式" }
+                    format = encoder.outputFormat
+                }
+                MediaCodec.INFO_TRY_AGAIN_LATER -> {
+                    if (!endOfStream) return false
+                }
+                MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
+                else -> {
+                    val buffer = encoder.getOutputBuffer(index)
+                    if (
+                        buffer != null &&
+                        info.size > 0 &&
+                        info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0
+                    ) {
+                        val data = ByteArray(info.size)
+                        val sample = buffer.duplicate().apply {
+                            position(info.offset)
+                            limit(info.offset + info.size)
+                        }
+                        sample.get(data)
+                        samples.add(
+                            EncodedAudioSample(data, info.presentationTimeUs, info.flags),
+                        )
+                    }
+                    val eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                    encoder.releaseOutputBuffer(index, false)
+                    if (eos) return true
+                }
+            }
+        }
+    }
 
     private companion object {
         const val TIMEOUT_US = 10_000L

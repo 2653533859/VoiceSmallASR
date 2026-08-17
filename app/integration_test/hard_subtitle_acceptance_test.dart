@@ -1,4 +1,5 @@
 /// 真实硬字幕视频编码验收：桌面使用 FFmpeg，Android 使用 MediaCodec。
+/// Android 的 AAC 音轨会直通，系统可解码的非 AAC 音轨会先转成 AAC。
 ///
 /// 默认跳过，不依赖系统 FFmpeg。运行时提供一个本地视频文件：
 ///
