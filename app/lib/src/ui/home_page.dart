@@ -18,6 +18,8 @@ import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/settings_page.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
+import 'package:vsasr_app/src/ui/batch_page.dart';
+import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
@@ -61,6 +63,7 @@ class HomePage extends StatefulWidget {
     this.live,
     this.video,
     this.pickFile,
+    this.pickBatchFiles,
     this.pickProjectFile,
     this.pickSubtitleFile,
     this.loadProjectFile,
@@ -82,6 +85,7 @@ class HomePage extends StatefulWidget {
 
   /// 文件选择与保存。测试注入替身，默认走 `file_picker`。
   final PickFile? pickFile;
+  final PickBatchFiles? pickBatchFiles;
   final PickProjectFile? pickProjectFile;
   final PickSubtitleFile? pickSubtitleFile;
   final LoadProjectFile? loadProjectFile;
@@ -103,6 +107,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  late final BatchTranscriptionController _batch;
   bool _translationDisclosureAccepted = false;
   bool _liveTranslationDisclosureAccepted = false;
   List<String> _recentProjects = <String>[];
@@ -125,6 +130,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _batch = BatchTranscriptionController(transcriber: widget.controller);
     WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_onControllerChanged);
     // build 之后再查模型，避免在 initState 里同步 notifyListeners。
@@ -372,6 +378,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       allowedExtensions: kSupportedAudioExtensions,
     );
     return picked?.path;
+  }
+
+  Future<List<String>> _pickBatchFiles() async {
+    final PickBatchFiles? injected = widget.pickBatchFiles;
+    if (injected != null) return injected();
+    final List<PlatformFile> picked = await FilePicker.pickFiles(
+      dialogTitle: '选择多个音频或视频文件',
+      type: FileType.custom,
+      allowedExtensions: kSupportedAudioExtensions,
+    );
+    if (picked.any((PlatformFile file) => file.path == null)) {
+      throw const FormatException('批量转写需要可访问的本地文件路径，请逐个选择或先将文件保存到本机');
+    }
+    return picked
+        .map((PlatformFile file) => file.path)
+        .whereType<String>()
+        .toList(growable: false);
+  }
+
+  Future<void> _openBatch() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) =>
+            BatchPage(controller: _batch, pickFiles: _pickBatchFiles),
+      ),
+    );
   }
 
   Future<String?> _saveFile(
@@ -725,11 +757,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // 两个控制器都要监听：语言下拉在录音时必须禁用（切语言会重启 isolate）。
       listenable: Listenable.merge(<Listenable>[
         widget.controller,
+        _batch,
         ?live,
         ?widget.video,
       ]),
       builder: (BuildContext context, Widget? _) {
         final TranscribeController c = widget.controller;
+        final bool batchBusy = _batch.running || _batch.paused;
         final Widget body;
         if (!c.modelReady) {
           body = _ModelSetupView(controller: c);
@@ -745,6 +779,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onEdit: _openEditor,
             onTranslate: _translate,
             onImport: _importSubtitle,
+            onBatch: _openBatch,
+            batchBusy: batchBusy,
           );
         } else {
           body = _Tabs(
@@ -759,6 +795,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               onEdit: _openEditor,
               onTranslate: _translate,
               onImport: _importSubtitle,
+              onBatch: _openBatch,
+              batchBusy: batchBusy,
             ),
             live: live == null
                 ? null
@@ -805,6 +843,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     _detached = true;
     _autosaveTimer?.cancel();
+    _batch.dispose();
     widget.controller.removeListener(_onControllerChanged);
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_endSessionOnExit());
@@ -953,6 +992,8 @@ class _TranscribeView extends StatelessWidget {
     required this.onEdit,
     required this.onTranslate,
     required this.onImport,
+    required this.onBatch,
+    this.batchBusy = false,
   });
 
   final TranscribeController controller;
@@ -965,6 +1006,8 @@ class _TranscribeView extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onTranslate;
   final VoidCallback onImport;
+  final VoidCallback onBatch;
+  final bool batchBusy;
 
   @override
   Widget build(BuildContext context) {
@@ -980,14 +1023,22 @@ class _TranscribeView extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
               FilledButton.icon(
-                onPressed: controller.busy ? null : onOpen,
+                onPressed: controller.busy || batchBusy ? null : onOpen,
                 icon: const Icon(Icons.folder_open),
                 label: const Text('选择音频/视频'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('openBatchProcessing'),
+                onPressed: controller.busy || batchBusy ? null : onBatch,
+                icon: const Icon(Icons.playlist_play),
+                label: const Text('批量处理'),
               ),
               PopupMenuButton<String>(
                 key: const Key('recentProjects'),
                 tooltip: '最近项目',
-                onSelected: controller.busy ? null : onOpenRecentProject,
+                onSelected: controller.busy || batchBusy
+                    ? null
+                    : onOpenRecentProject,
                 itemBuilder: (BuildContext context) {
                   if (recentProjects.isEmpty) {
                     return <PopupMenuEntry<String>>[
@@ -1013,37 +1064,41 @@ class _TranscribeView extends StatelessWidget {
                 icon: const Icon(Icons.history),
               ),
               OutlinedButton.icon(
-                onPressed: controller.busy ? null : onOpenProject,
+                onPressed: controller.busy || batchBusy ? null : onOpenProject,
                 icon: const Icon(Icons.folder_zip_outlined),
                 label: const Text('打开项目'),
               ),
               OutlinedButton.icon(
-                onPressed: result == null || controller.busy
+                onPressed: result == null || controller.busy || batchBusy
                     ? null
                     : onSaveProject,
                 icon: const Icon(Icons.save_outlined),
                 label: const Text('保存项目'),
               ),
               OutlinedButton.icon(
-                onPressed: result == null || controller.busy ? null : onExport,
+                onPressed: result == null || controller.busy || batchBusy
+                    ? null
+                    : onExport,
                 icon: const Icon(Icons.save_alt),
                 label: const Text('导出字幕'),
               ),
               OutlinedButton.icon(
                 key: const Key('importSubtitle'),
-                onPressed: controller.busy ? null : onImport,
+                onPressed: controller.busy || batchBusy ? null : onImport,
                 icon: const Icon(Icons.file_download_outlined),
                 label: const Text('导入字幕'),
               ),
               OutlinedButton.icon(
                 key: const Key('openSubtitleEditor'),
-                onPressed: result == null || controller.busy ? null : onEdit,
+                onPressed: result == null || controller.busy || batchBusy
+                    ? null
+                    : onEdit,
                 icon: const Icon(Icons.edit_note),
                 label: const Text('校对字幕'),
               ),
               OutlinedButton.icon(
                 key: const Key('translateSubtitle'),
-                onPressed: result == null || controller.busy
+                onPressed: result == null || controller.busy || batchBusy
                     ? null
                     : onTranslate,
                 icon: const Icon(Icons.translate),

@@ -17,6 +17,7 @@ import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
+import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
@@ -56,6 +57,7 @@ void main() {
     WidgetTester tester,
     TranscribeController controller, {
     PickFile? pickFile,
+    PickBatchFiles? pickBatchFiles,
     PickProjectFile? pickProjectFile,
     PickSubtitleFile? pickSubtitleFile,
     LoadProjectFile? loadProjectFile,
@@ -70,6 +72,7 @@ void main() {
         home: HomePage(
           controller: controller,
           pickFile: pickFile,
+          pickBatchFiles: pickBatchFiles,
           pickProjectFile: pickProjectFile,
           pickSubtitleFile: pickSubtitleFile,
           loadProjectFile: loadProjectFile,
@@ -124,6 +127,30 @@ void main() {
     expect(controller.result?.segments.single.text, '外部字幕');
     expect(find.text('外部字幕'), findsOneWidget);
     expect(find.textContaining('已导入字幕：captions.srt'), findsOneWidget);
+  });
+
+  testWidgets('首页可以打开批量处理页并顺序完成多个文件', (WidgetTester tester) async {
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      pickBatchFiles: () async => <String>['/tmp/one.wav', '/tmp/two.wav'],
+    );
+
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+    expect(find.text('批量处理'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('batchPickFiles')));
+    await tester.pumpAndSettle();
+    expect(find.text('one.wav'), findsOneWidget);
+    expect(find.text('two.wav'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('batchStart')));
+    await tester.pumpAndSettle();
+    expect(find.text('已完成 2/2'), findsOneWidget);
+    expect(controller.result, isNotNull);
   });
 
   testWidgets('模型准备失败时显示错误并把按钮改成重试', (WidgetTester tester) async {

@@ -12,7 +12,7 @@ SenseVoice-Small（int8 ONNX）+ silero-vad，纯 CPU，模型仅首次运行联
 | 端 | 位置 | 状态 |
 | --- | --- | --- |
 | Python 库 + CLI | `src/voice_small_asr/` | 已完成，107 项测试 |
-| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成**：文件转写、实时字幕、视频播放、字幕联动、外部字幕加载与字幕校对编辑（180 项 `flutter test` + Android API 35 模拟器端到端 7 项 + Windows runner 完整模型端到端 7 项）。macOS/Android 模拟器/Windows CI 真实 mp4 已验收，Android 真机性能和 Windows 用户桌面运行仍待验证；真实翻译验收为个人使用范围外的可选项 |
+| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成，M12 多文件队列首项已完成**：文件转写、实时字幕、视频播放、字幕联动、外部字幕加载、批量转写队列与字幕校对编辑（186 项 `flutter test` + Android API 35 模拟器端到端 7 项 + Windows runner 完整模型端到端 7 项）。macOS/Android 模拟器/Windows CI 真实 mp4 已验收，Android 真机性能和 Windows 用户桌面运行仍待验证；真实翻译验收为个人使用范围外的可选项 |
 
 两端固定 sherpa-onnx **1.13.5**，因此识别结果应逐字一致 —— **Python 端是 Flutter 端的对照基准**。
 阶段计划（M0–M9）、待决策事项与踩坑记录在 `DEVELOPMENT_PLAN.md`，动 Flutter 端前先读。
@@ -46,7 +46,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"   # 本机 Flutter 3.47.0 装�
 
 cd app && flutter pub get
 flutter analyze                # 验收标准：No issues found
-flutter test                   # 180 项，不需要模型也不需要设备
+flutter test                   # 186 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
 flutter build apk --release   # Android release APK；需要 Android SDK/JDK
 flutter build appbundle --release # Android release AAB；无签名变量时使用 debug signing 做构建验证

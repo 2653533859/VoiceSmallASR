@@ -82,6 +82,7 @@ class TranscribeController extends ChangeNotifier {
   TranscriptionResult? _result;
   Duration? _elapsed;
   int _projectRevision = 0;
+  int _cancelGeneration = 0;
 
   /// 当前阶段。
   JobStage get stage => _stage;
@@ -225,6 +226,7 @@ class TranscribeController extends ChangeNotifier {
   /// 重复调用是安全的（已就绪时直接返回）。
   Future<void> prepare({bool? allowDownload}) async {
     if (_worker != null || busy) return;
+    final int generation = _cancelGeneration;
     _stage = JobStage.preparingModel;
     _errorText = null;
     _progress = null;
@@ -242,7 +244,7 @@ class TranscribeController extends ChangeNotifier {
       // 模型下载/加载要几十秒，这期间界面可能已经被销毁。此时 dispose()
       // 看到的 _worker 还是 null，什么都没关；必须由这里收掉迟到的 worker，
       // 否则 isolate 与它加载的 240 MB 模型会漏到进程结束。
-      if (_disposed) {
+      if (_disposed || generation != _cancelGeneration) {
         await worker.dispose();
         return;
       }
@@ -355,6 +357,7 @@ class TranscribeController extends ChangeNotifier {
   /// 解码并识别一个文件。这是主流程的入口。
   Future<void> transcribeFile(String path) async {
     if (busy) return;
+    final int generation = _cancelGeneration;
     _filePath = path;
     _result = null;
     _elapsed = null;
@@ -363,6 +366,7 @@ class TranscribeController extends ChangeNotifier {
 
     if (_worker == null) {
       await prepare();
+      if (generation != _cancelGeneration) return;
       if (_worker == null) return; // prepare 已经把错误写进 _errorText
     }
 
@@ -375,6 +379,7 @@ class TranscribeController extends ChangeNotifier {
       // 解码留在主 isolate：平台通道只在 root isolate 可用，
       // 而原生侧本身已经在后台线程解码，不会卡界面。
       final Float32List samples = await _decoder.decodeFile(path);
+      if (generation != _cancelGeneration) return;
 
       _stage = JobStage.transcribing;
       _statusText = '正在识别…';
@@ -388,15 +393,18 @@ class TranscribeController extends ChangeNotifier {
           notifyListeners();
         },
       );
+      if (generation != _cancelGeneration) return;
       _result = result;
       _elapsed = watch.elapsed;
       _statusText = '识别完成：${result.length} 段';
       _progress = 1;
       _markProjectChanged();
     } on AudioDecodeException catch (error) {
+      if (generation != _cancelGeneration) return;
       _errorText = error.message;
       _statusText = '解码失败';
     } on Object catch (error) {
+      if (generation != _cancelGeneration) return;
       _errorText = _humanize(error);
       _statusText = '识别失败';
     } finally {
@@ -417,6 +425,7 @@ class TranscribeController extends ChangeNotifier {
     Duration retryDelay = const Duration(milliseconds: 250),
   }) async {
     if (busy) return;
+    final int generation = _cancelGeneration;
     final TranscriptionResult? source = _result;
     if (source == null) throw StateError('还没有可翻译的识别结果');
     _stage = JobStage.translating;
@@ -440,13 +449,13 @@ class TranscribeController extends ChangeNotifier {
           notifyListeners();
         },
       );
-      if (_disposed) return;
+      if (_disposed || generation != _cancelGeneration) return;
       _result = translated;
       _progress = 1;
       _statusText = '翻译完成：${translated.length} 段';
       _markProjectChanged();
     } on Object catch (error) {
-      if (_disposed) return;
+      if (_disposed || generation != _cancelGeneration) return;
       _errorText = _humanize(error);
       _progress = null;
       _statusText = '翻译失败';
@@ -493,8 +502,23 @@ class TranscribeController extends ChangeNotifier {
 
   /// 关闭识别 isolate。`dispose()` 不能 await，测试与显式收尾用这个。
   Future<void> shutdown() async {
+    _cancelGeneration++;
     final Transcriber? worker = _worker;
     _worker = null;
+    await worker?.dispose();
+  }
+
+  /// 取消当前准备、解码、识别或翻译操作，并阻止迟到的异步结果写回。
+  Future<void> cancelCurrentTask() async {
+    if (!busy) return;
+    _cancelGeneration++;
+    _result = null;
+    _progress = null;
+    _errorText = null;
+    _statusText = '处理已取消';
+    final Transcriber? worker = _worker;
+    _worker = null;
+    notifyListeners();
     await worker?.dispose();
   }
 
