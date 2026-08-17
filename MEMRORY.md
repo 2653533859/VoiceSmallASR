@@ -24,12 +24,12 @@
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
 - 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.1。
-- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线代码已完成，下一步是云端 `v1.0.2` Tag 验收，再补无签名 macOS 翻译体验、Android 真机性能、Windows 用户桌面运行、项目保存与字幕导入。
+- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线代码已完成，M9 无签名翻译体验已完成，下一步是云端 `v1.0.2` Tag 验收、Android 真机性能、Windows 用户桌面运行、项目保存与字幕导入。
 
 ## 已验证结果
 
 - Python：`pytest` 107 项通过，`ruff check .` 通过。
-- Flutter：`flutter analyze` 通过，162 项单测通过；Python 端 107 项测试通过。
+- Flutter：`flutter analyze` 通过，164 项单测通过；Python 端 107 项测试通过。
 - macOS：无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；安全存储不可用时 API Key 退回当前会话，不影响个人使用的无签名包交付。
 - M7 打包：已生成 `dist/macos/VoiceSmallASR.app`（通用二进制，约 161 MB）和 `VoiceSmallASR-unsigned.dmg`（约 64 MB），并用 `hdiutil imageinfo` 验证为 UDZO 镜像。
 - Android M7 构建：`app/build/app/outputs/flutter-apk/app-release.apk`（169 MiB，177,219,459 bytes）和 `app/build/app/outputs/bundle/release/app-release.aab`（124 MiB，129,974,495 bytes）构建成功；APK 含 arm64-v8a、armeabi-v7a、x86_64，`apksigner verify --verbose` 通过 v2 签名校验，APK/AAB 均未打入 `.onnx`、tar 或 `tokens.txt` 模型文件。
@@ -58,7 +58,7 @@
 - Windows 完整模型 e2e 使用 expanded reporter，避免默认 GitHub reporter 在 Windows 测试收尾时仅显示退出码而隐藏实际测试进度。
 - v1.0.2 稳定化修复：实时字幕测试改为有限帧推进，实时控制器无翻译任务时不等待空队列；无签名 macOS 安全存储不可用时 API Key 仅保留当前会话；Python/Flutter 模型缓存增加解压后 SHA-256 校验；Release workflow 增加 Python/Flutter 质量门禁并从 Tag 注入三端版本。
 - M8 发布质量基线已落地：`scripts/verify_model_exclusion.sh` 及各平台 workflow 检查最终产物不含模型，macOS 额外挂载 DMG 检查；Release job 生成 `SHA256SUMS.txt`/`BUILD_INFO.txt`。模型完整性失败会清理旧压缩包，避免重复复用坏缓存。
-- M9 翻译体验首项已完成：设置页支持目标语言持久化和 API 连接测试；文件、视频、实时翻译共用目标语言配置；连接结果隐藏 API Key 和 endpoint 敏感部分。实时失败重试和翻译前第三方数据提示仍待完成。
+- M9 翻译体验已完成：增加第三方数据发送提示、实时字幕单条翻译重试，并确保实时翻译关闭时不会因重试按钮隐式联网；测试总数增至 164 项。
 
 ## 尚未验证的环境
 

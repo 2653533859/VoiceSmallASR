@@ -98,6 +98,21 @@ void main() {
     expect(find.text('点「开始录音」，边说边出字幕'), findsOneWidget);
   });
 
+  testWidgets('首次开启实时翻译前提示第三方数据发送', (WidgetTester tester) async {
+    final (LiveController live, _) = await show(tester);
+
+    await tester.tap(find.byKey(const Key('liveTranslationToggle')));
+    await tester.pump();
+
+    expect(find.text('发送字幕到第三方服务？'), findsOneWidget);
+    expect(live.translationEnabled, isFalse);
+
+    await tester.tap(find.text('继续翻译'));
+    await tester.pump();
+
+    expect(live.translationEnabled, isTrue);
+  });
+
   testWidgets('点开始录音后按钮变成停止，再点停止回到初始态', (WidgetTester tester) async {
     final (LiveController live, _) = await show(tester);
 

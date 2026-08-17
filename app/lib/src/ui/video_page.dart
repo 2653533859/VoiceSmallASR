@@ -10,6 +10,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
+import 'package:vsasr_app/src/translation/translation_disclosure.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 import 'package:vsasr_app/src/video/video_timeline.dart';
@@ -40,6 +41,7 @@ class VideoPage extends StatefulWidget {
 }
 
 class _VideoPageState extends State<VideoPage> {
+  bool _translationDisclosureAccepted = false;
   Future<String?> _pickFile() async {
     final PickVideoFile? injected = widget.pickFile;
     if (injected != null) return injected();
@@ -87,6 +89,11 @@ class _VideoPageState extends State<VideoPage> {
             const SnackBar(content: Text('请先在设置中保存第三方翻译 API Key')),
           );
           return;
+        }
+        if (!_translationDisclosureAccepted) {
+          final bool confirmed = await confirmThirdPartyTranslation(context);
+          if (!confirmed || !mounted) return;
+          _translationDisclosureAccepted = true;
         }
         await widget.transcription.translateCurrentResult(
           provider,

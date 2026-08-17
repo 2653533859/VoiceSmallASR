@@ -75,6 +75,8 @@ class LiveController extends ChangeNotifier {
   Object? _translationProviderError;
   StackTrace? _translationProviderErrorStack;
   bool _translationProviderResolved = false;
+  final Set<String> _retryingTranslations = <String>{};
+  final Set<String> _failedTranslations = <String>{};
 
   LiveStage _stage = LiveStage.idle;
   String? _errorText;
@@ -110,6 +112,12 @@ class LiveController extends ChangeNotifier {
   }
 
   bool get hasResult => _finals.isNotEmpty;
+
+  bool isRetrying(Segment segment) =>
+      _retryingTranslations.contains(_segmentKey(segment));
+
+  bool canRetryTranslation(Segment segment) =>
+      _failedTranslations.contains(_segmentKey(segment));
 
   /// 面向用户的一行状态。
   String get statusText => switch (_stage) {
@@ -191,7 +199,38 @@ class LiveController extends ChangeNotifier {
     _finals.clear();
     _partial = null;
     _errorText = null;
+    _retryingTranslations.clear();
+    _failedTranslations.clear();
     notifyListeners();
+  }
+
+  /// 重试单条实时字幕翻译；失败只更新错误提示，不修改原文段。
+  Future<void> retryTranslation(Segment segment) async {
+    if (_disposed) return;
+    final String key = _segmentKey(segment);
+    if (!_failedTranslations.contains(key) ||
+        _retryingTranslations.contains(key)) {
+      return;
+    }
+    _retryingTranslations.add(key);
+    _errorText = null;
+    notifyListeners();
+    final Future<void> previous = _translationQueue ?? Future<void>.value();
+    final Future<void> task = previous.then<void>((_) async {
+      try {
+        await _translateFinal(segment, _translationGeneration);
+      } on Object catch (error) {
+        if (!_disposed) {
+          _failedTranslations.add(key);
+          _errorText = _humanize(error);
+        }
+      } finally {
+        _retryingTranslations.remove(key);
+        notifyListeners();
+      }
+    });
+    _translationQueue = task;
+    await task;
   }
 
   /// 开关实时翻译。关闭只停止后续请求，不清除已经得到的译文。
@@ -228,6 +267,7 @@ class LiveController extends ChangeNotifier {
         await _translateFinal(segment, generation);
       } on Object catch (error) {
         if (_disposed) return;
+        _failedTranslations.add(_segmentKey(segment));
         _errorText = _humanize(error);
         notifyListeners();
       }
@@ -276,8 +316,12 @@ class LiveController extends ChangeNotifier {
     _finals[index] = _finals[index].copyWith(
       translation: translated.single.trim(),
     );
+    _failedTranslations.remove(_segmentKey(segment));
     notifyListeners();
   }
+
+  String _segmentKey(Segment segment) =>
+      '${segment.index}:${segment.start}:${segment.end}';
 
   void _onStreamError(Object error) {
     _errorText = _humanize(error);

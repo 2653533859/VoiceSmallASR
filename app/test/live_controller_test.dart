@@ -131,6 +131,41 @@ void main() {
     expect(() => f.live.setTranslationTargetLanguage(' '), throwsArgumentError);
   });
 
+  test('单条实时翻译失败后可以重试，原文和时间轴保持不变', () async {
+    final _FakeLiveTranslationProvider provider = _FakeLiveTranslationProvider()
+      ..failuresRemaining = 1;
+    final _Fixture f = _Fixture(translationProvider: () async => provider);
+    addTearDown(f.dispose);
+    await f.live.start();
+    f.live.setTranslationEnabled(true);
+    const Segment original = Segment(
+      text: 'hello',
+      start: 0.0,
+      end: 1.0,
+      language: 'en',
+      index: 0,
+    );
+    f.session.emit(original);
+    await pumpEventQueue();
+
+    expect(f.live.finals.single.text, original.text);
+    expect(f.live.finals.single.translation, isNull);
+    expect(f.live.finals.single.start, original.start);
+    expect(f.live.errorText, contains('临时翻译失败'));
+    expect(f.live.canRetryTranslation(f.live.finals.single), isTrue);
+
+    await f.live.retryTranslation(f.live.finals.single);
+
+    expect(f.live.finals.single.translation, '译文：hello');
+    expect(f.live.finals.single.start, original.start);
+    expect(provider.calls, 2);
+    expect(f.live.canRetryTranslation(f.live.finals.single), isFalse);
+
+    f.live.setTranslationEnabled(false);
+    await f.live.retryTranslation(f.live.finals.single);
+    expect(provider.calls, 2);
+  });
+
   test('停止录音：先停设备再收会话，尾句能进来', () async {
     final _Fixture f = _Fixture();
     addTearDown(f.dispose);
@@ -361,6 +396,7 @@ class _FakeLiveTranslationProvider implements ClosableTranslationProvider {
   String? to;
   bool closed = false;
   int calls = 0;
+  int failuresRemaining = 0;
 
   @override
   Future<List<String>> translate(
@@ -371,6 +407,10 @@ class _FakeLiveTranslationProvider implements ClosableTranslationProvider {
     calls++;
     this.from = from;
     this.to = to;
+    if (failuresRemaining > 0) {
+      failuresRemaining--;
+      throw StateError('临时翻译失败');
+    }
     return texts.map((String text) => '译文：$text').toList();
   }
 

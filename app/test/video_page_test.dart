@@ -61,6 +61,9 @@ void main() {
 
     await tester.tap(find.byKey(const Key('videoTranslateSubtitle')));
     await tester.pumpAndSettle();
+    expect(find.text('发送字幕到第三方服务？'), findsOneWidget);
+    await tester.tap(find.text('继续翻译'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
     expect(translation.calls, 1);
   });
@@ -68,6 +71,7 @@ void main() {
 
 class _FakeTranslationProvider implements TranslationProvider {
   int calls = 0;
+  String? targetLanguage;
 
   @override
   Future<List<String>> translate(
@@ -76,6 +80,7 @@ class _FakeTranslationProvider implements TranslationProvider {
     required String to,
   }) async {
     calls++;
+    targetLanguage = to;
     return texts.map((String text) => '译文：$text').toList();
   }
 }

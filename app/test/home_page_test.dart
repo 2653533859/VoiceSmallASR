@@ -221,6 +221,9 @@ void main() {
     }
     await tester.tap(find.byKey(const Key('translateSubtitle')));
     await tester.pumpAndSettle();
+    expect(find.text('发送字幕到第三方服务？'), findsOneWidget);
+    await tester.tap(find.text('继续翻译'));
+    await tester.pumpAndSettle();
 
     expect(provider.calls, 1);
     expect(controller.result?.segments.single.translation, '译文：hello');

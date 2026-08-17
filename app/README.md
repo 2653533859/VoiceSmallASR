@@ -26,7 +26,7 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 
 flutter pub get
 flutter analyze     # 验收标准：No issues found
-flutter test        # 162 项，不依赖模型与设备
+flutter test        # 164 项，不依赖模型与设备
 
 # Android release 构建（需要 Android SDK/JDK；当前 release 使用 debug signing 做验证）
 flutter build apk --release

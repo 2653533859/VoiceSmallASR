@@ -1,6 +1,7 @@
 /// 主页面：模型准备、文件转写与实时字幕两个页签、分段列表、导出字幕。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -18,6 +19,7 @@ import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
+import 'package:vsasr_app/src/translation/translation_disclosure.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
@@ -68,6 +70,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  bool _translationDisclosureAccepted = false;
+  bool _liveTranslationDisclosureAccepted = false;
+
   @override
   void initState() {
     super.initState();
@@ -197,6 +202,11 @@ class _HomePageState extends State<HomePage> {
         );
         return;
       }
+      if (!_translationDisclosureAccepted) {
+        final bool confirmed = await confirmThirdPartyTranslation(context);
+        if (!confirmed || !mounted) return;
+        _translationDisclosureAccepted = true;
+      }
       final TranslationProvider provider =
           widget.translationProviderFactory?.call(apiKey) ??
           ApiTranslationProvider(
@@ -216,6 +226,19 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text('翻译失败：$error')));
     }
+  }
+
+  Future<void> _setLiveTranslation(bool enabled) async {
+    final LiveController? live = widget.live;
+    if (live == null) return;
+    if (!enabled || _liveTranslationDisclosureAccepted) {
+      live.setTranslationEnabled(enabled);
+      return;
+    }
+    final bool confirmed = await confirmThirdPartyTranslation(context);
+    if (!mounted || !confirmed) return;
+    _liveTranslationDisclosureAccepted = true;
+    live.setTranslationEnabled(true);
   }
 
   @override
@@ -252,7 +275,13 @@ class _HomePageState extends State<HomePage> {
             ),
             live: live == null
                 ? null
-                : _LiveView(controller: live, onExport: _exportLive),
+                : _LiveView(
+                    controller: live,
+                    onExport: _exportLive,
+                    onTranslationChanged: (bool enabled) {
+                      unawaited(_setLiveTranslation(enabled));
+                    },
+                  ),
             video: widget.video == null
                 ? null
                 : VideoPage(
@@ -508,10 +537,15 @@ class _TranscribeView extends StatelessWidget {
 
 /// 实时字幕页：录音按钮 + 定稿列表 + 末尾一行临时结果。
 class _LiveView extends StatelessWidget {
-  const _LiveView({required this.controller, required this.onExport});
+  const _LiveView({
+    required this.controller,
+    required this.onExport,
+    required this.onTranslationChanged,
+  });
 
   final LiveController controller;
   final VoidCallback onExport;
+  final ValueChanged<bool> onTranslationChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -560,7 +594,7 @@ class _LiveView extends StatelessWidget {
                   Switch.adaptive(
                     key: const Key('liveTranslationToggle'),
                     value: controller.translationEnabled,
-                    onChanged: controller.setTranslationEnabled,
+                    onChanged: onTranslationChanged,
                   ),
                 ],
               ),
@@ -649,6 +683,23 @@ class _LiveList extends StatelessWidget {
             '${formatTimestamp(segment.end, sep: '.')}',
             style: theme.textTheme.bodySmall,
           ),
+          trailing:
+              controller.translationEnabled &&
+                  controller.canRetryTranslation(segment)
+              ? IconButton(
+                  key: ValueKey<String>('retryTranslation_${segment.index}'),
+                  tooltip: '重试翻译',
+                  onPressed: controller.isRetrying(segment)
+                      ? null
+                      : () => unawaited(controller.retryTranslation(segment)),
+                  icon: controller.isRetrying(segment)
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                )
+              : null,
         );
       },
     );
