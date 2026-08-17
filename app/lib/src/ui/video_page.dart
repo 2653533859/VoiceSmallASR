@@ -19,6 +19,7 @@ import 'package:vsasr_app/src/translation/translation_disclosure.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 import 'package:vsasr_app/src/video/video_timeline.dart';
+import 'package:vsasr_app/src/video/hard_subtitle_encoder.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 
@@ -31,6 +32,9 @@ typedef SaveVideoSubtitleFile = Future<String?> Function(
   String content,
 );
 
+/// 选择硬字幕视频输出路径；测试可以注入本地临时路径。
+typedef SaveHardSubtitleVideo = Future<String?> Function(String fileName);
+
 class VideoPage extends StatefulWidget {
   const VideoPage({
     super.key,
@@ -39,6 +43,8 @@ class VideoPage extends StatefulWidget {
     this.pickFile,
     this.pickSubtitleFile,
     this.saveSubtitleFile,
+    this.saveHardSubtitleVideo,
+    this.hardSubtitleEncoder,
     this.settings,
     this.translationProviderResolver,
   });
@@ -48,6 +54,8 @@ class VideoPage extends StatefulWidget {
   final PickVideoFile? pickFile;
   final PickSubtitleFile? pickSubtitleFile;
   final SaveVideoSubtitleFile? saveSubtitleFile;
+  final SaveHardSubtitleVideo? saveHardSubtitleVideo;
+  final HardSubtitleEncoder? hardSubtitleEncoder;
   final AppSettingsRepository? settings;
   final Future<TranslationProvider?> Function()? translationProviderResolver;
 
@@ -58,6 +66,8 @@ class VideoPage extends StatefulWidget {
 class _VideoPageState extends State<VideoPage> {
   bool _translationDisclosureAccepted = false;
   SubtitleStyle _subtitleStyle = const SubtitleStyle();
+  bool _encodingHardSubtitles = false;
+  double? _hardSubtitleProgress;
 
   @override
   void initState() {
@@ -185,6 +195,76 @@ class _VideoPageState extends State<VideoPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('导出字幕失败：$error')));
+    }
+  }
+
+  Future<String?> _saveHardSubtitleVideo(String fileName) async {
+    final SaveHardSubtitleVideo? injected = widget.saveHardSubtitleVideo;
+    if (injected != null) return injected(fileName);
+    final Uri? saved = await FilePicker.saveFile(
+      dialogTitle: '导出硬字幕视频',
+      fileName: fileName,
+      bytes: Uint8List(0),
+      mimeType: 'video/mp4',
+    );
+    if (saved == null) return null;
+    if (!saved.isScheme('file')) {
+      throw const HardSubtitleEncodeException('当前平台只能把硬字幕视频保存到本地文件路径');
+    }
+    return saved.toFilePath();
+  }
+
+  Future<void> _encodeHardSubtitles(TranscriptionResult result) async {
+    final String? inputPath = widget.controller.filePath;
+    if (inputPath == null ||
+        widget.transcription.busy ||
+        _encodingHardSubtitles) {
+      return;
+    }
+    if (Platform.isAndroid || Platform.isIOS) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('硬字幕视频编码目前需要桌面版 FFmpeg，Android 暂不支持')),
+      );
+      return;
+    }
+    final String fileName =
+        '${p.basenameWithoutExtension(inputPath)}_hard_subtitles.mp4';
+    try {
+      final String? outputPath = await _saveHardSubtitleVideo(fileName);
+      if (outputPath == null || !mounted) return;
+      setState(() {
+        _encodingHardSubtitles = true;
+        _hardSubtitleProgress = 0;
+      });
+      final HardSubtitleEncoder encoder =
+          widget.hardSubtitleEncoder ?? FfmpegHardSubtitleEncoder();
+      await encoder.encode(
+        inputPath: inputPath,
+        outputPath: outputPath,
+        result: result,
+        style: _subtitleStyle,
+        onProgress: (double? progress) {
+          if (!mounted) return;
+          setState(() => _hardSubtitleProgress = progress);
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('硬字幕视频已导出：$outputPath')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      final String message = error is HardSubtitleEncodeException
+          ? error.message
+          : '$error';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('硬字幕编码失败：$message')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _encodingHardSubtitles = false;
+          _hardSubtitleProgress = null;
+        });
+      }
     }
   }
 
@@ -363,17 +443,33 @@ class _VideoPageState extends State<VideoPage> {
                     ),
                     OutlinedButton.icon(
                       key: const Key('videoExportSubtitles'),
-                      onPressed: video.busy || widget.transcription.busy
+                      onPressed:
+                          video.busy ||
+                              widget.transcription.busy ||
+                              _encodingHardSubtitles
                           ? null
                           : () => _exportSubtitles(result),
                       icon: const Icon(Icons.file_download_outlined),
                       label: const Text('导出字幕'),
                     ),
+                    OutlinedButton.icon(
+                      key: const Key('videoBurnSubtitles'),
+                      onPressed:
+                          video.busy ||
+                              widget.transcription.busy ||
+                              _encodingHardSubtitles
+                          ? null
+                          : () => _encodeHardSubtitles(result),
+                      icon: const Icon(Icons.local_fire_department_outlined),
+                      label: const Text('生成硬字幕视频'),
+                    ),
                   ],
                   if (video.filePath != null)
                     OutlinedButton.icon(
                       key: const Key('videoSubtitleStyle'),
-                      onPressed: video.busy ? null : _editSubtitleStyle,
+                      onPressed: video.busy || _encodingHardSubtitles
+                          ? null
+                          : _editSubtitleStyle,
                       icon: const Icon(Icons.format_color_text_outlined),
                       label: const Text('字幕样式'),
                     ),
@@ -399,6 +495,20 @@ class _VideoPageState extends State<VideoPage> {
                   vertical: 4,
                 ),
                 child: Text(widget.transcription.statusText),
+              ),
+            ],
+            if (_encodingHardSubtitles) ...<Widget>[
+              LinearProgressIndicator(value: _hardSubtitleProgress),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                child: Text(
+                  _hardSubtitleProgress == null
+                      ? '正在生成硬字幕视频…'
+                      : '正在生成硬字幕视频… ${(_hardSubtitleProgress! * 100).round()}%',
+                ),
               ),
             ],
             Expanded(

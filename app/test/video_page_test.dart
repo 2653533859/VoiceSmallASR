@@ -7,11 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
+import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
+import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
+import 'package:vsasr_app/src/video/hard_subtitle_encoder.dart';
 
 import 'support/fake_asr.dart';
 
@@ -38,6 +41,9 @@ void main() {
     final _FakeTranslationProvider translation = _FakeTranslationProvider();
     String? savedFileName;
     String? savedContent;
+    String? hardSubtitleFileName;
+    final _FakeHardSubtitleEncoder hardSubtitleEncoder =
+        _FakeHardSubtitleEncoder();
     addTearDown(() async {
       video.dispose();
       await transcription.shutdown();
@@ -63,6 +69,11 @@ void main() {
               savedContent = content;
               return '/tmp/$name';
             },
+            saveHardSubtitleVideo: (String name) async {
+              hardSubtitleFileName = name;
+              return '${workspace.path}/hard-subtitles.mp4';
+            },
+            hardSubtitleEncoder: hardSubtitleEncoder,
             translationProviderResolver: () async => translation,
           ),
         ),
@@ -106,6 +117,11 @@ void main() {
     await tester.tap(find.byKey(const Key('saveSubtitleStyle')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('saveSubtitleStyle')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('videoBurnSubtitles')));
+    await tester.pumpAndSettle();
+    expect(hardSubtitleFileName, 'movie_hard_subtitles.mp4');
+    expect(hardSubtitleEncoder.calls, 1);
   });
 }
 
@@ -122,6 +138,23 @@ class _FakeTranslationProvider implements TranslationProvider {
     calls++;
     targetLanguage = to;
     return texts.map((String text) => '译文：$text').toList();
+  }
+}
+
+class _FakeHardSubtitleEncoder implements HardSubtitleEncoder {
+  int calls = 0;
+
+  @override
+  Future<void> encode({
+    required String inputPath,
+    required String outputPath,
+    required TranscriptionResult result,
+    required SubtitleStyle style,
+    HardSubtitleProgress? onProgress,
+  }) async {
+    calls++;
+    onProgress?.call(0.5);
+    onProgress?.call(1.0);
   }
 }
 
