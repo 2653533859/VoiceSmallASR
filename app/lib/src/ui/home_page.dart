@@ -61,6 +61,7 @@ class HomePage extends StatefulWidget {
     this.pickProjectFile,
     this.loadProjectFile,
     this.saveFile,
+    this.autosaveStore,
     this.settings,
     this.translationProviderFactory,
     this.translationProviderResolver,
@@ -80,6 +81,9 @@ class HomePage extends StatefulWidget {
   final LoadProjectFile? loadProjectFile;
   final SaveFile? saveFile;
 
+  /// 自动保存与恢复存储。生产环境使用应用支持目录，测试可注入内存实现。
+  final ProjectAutosaveStore? autosaveStore;
+
   /// 设置存储。测试注入替身；生产环境由顶层应用复用同一个仓库。
   final AppSettingsRepository? settings;
 
@@ -90,23 +94,192 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _translationDisclosureAccepted = false;
   bool _liveTranslationDisclosureAccepted = false;
   List<String> _recentProjects = <String>[];
   int _recentProjectsGeneration = 0;
+  Timer? _autosaveTimer;
+  Future<void>? _autosaveFuture;
+  int _autosaveRequestedRevision = 0;
+  int _autosavedRevision = 0;
+  bool _autosaveFailureNotified = false;
+  bool _recoveryPromptShown = false;
+  bool _detached = false;
+  bool _sessionEnded = false;
 
   AppSettingsRepository get _settingsRepository =>
       widget.settings ?? AppSettingsRepository();
 
+  ProjectAutosaveStore get _autosaveRepository =>
+      widget.autosaveStore ?? const FileProjectAutosaveStore();
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    widget.controller.addListener(_onControllerChanged);
     // build 之后再查模型，避免在 initState 里同步 notifyListeners。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshModel();
       unawaited(_loadRecentProjects());
+      unawaited(_loadRecovery());
     });
+  }
+
+  void _onControllerChanged() {
+    if (_detached) return;
+    final TranscribeController controller = widget.controller;
+    if (controller.result == null ||
+        controller.projectRevision <= _autosavedRevision) {
+      return;
+    }
+    _autosaveRequestedRevision = controller.projectRevision;
+    _autosaveFailureNotified = false;
+    _autosaveTimer?.cancel();
+    _autosaveTimer = Timer(const Duration(milliseconds: 400), () {
+      _autosaveTimer = null;
+      unawaited(_flushAutosave());
+    });
+  }
+
+  Future<void> _flushAutosave() async {
+    if (_detached || _autosaveFuture != null) return;
+    final TranscribeController controller = widget.controller;
+    final int revision = _autosaveRequestedRevision;
+    if (revision <= _autosavedRevision || controller.result == null) return;
+    final VsasrProject project;
+    try {
+      project = controller.projectSnapshot;
+    } on Object {
+      return;
+    }
+    final Future<void> operation = _autosaveRepository.save(project);
+    _autosaveFuture = operation;
+    try {
+      await operation;
+      _autosavedRevision = revision;
+    } on Object catch (error) {
+      if (mounted && !_autosaveFailureNotified) {
+        _autosaveFailureNotified = true;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('自动保存失败，仍可手动保存项目：$error')));
+      }
+    } finally {
+      if (identical(_autosaveFuture, operation)) _autosaveFuture = null;
+      if (!_detached &&
+          controller.projectRevision > _autosavedRevision &&
+          controller.result != null) {
+        _onControllerChanged();
+      }
+    }
+  }
+
+  Future<void> _loadRecovery() async {
+    try {
+      final bool unclean = await _autosaveRepository
+          .wasPreviousSessionUnclean();
+      await _autosaveRepository.beginSession();
+      if (_detached) {
+        await _autosaveRepository.endSession();
+        return;
+      }
+      _sessionEnded = false;
+      if (!unclean) return;
+      final VsasrProject? project = await _autosaveRepository.load();
+      if (!mounted || project == null || _detached) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_recoveryPromptShown && !_detached) {
+          unawaited(_showRecoveryPrompt(project));
+        }
+      });
+    } on Object {
+      // 恢复快照是辅助数据，读取失败不能阻塞主界面启动。
+    }
+  }
+
+  Future<void> _showRecoveryPrompt(VsasrProject project) async {
+    if (_recoveryPromptShown) return;
+    _recoveryPromptShown = true;
+    final String mediaName = project.mediaPath == null
+        ? '未关联媒体文件'
+        : p.basename(project.mediaPath!);
+    final bool? recover = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('发现未完成的项目'),
+        content: Text('检测到上次退出前的自动保存快照（媒体：$mediaName）。\n是否恢复字幕和译文？'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('放弃恢复'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('恢复项目'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (recover == false) {
+      try {
+        await _autosaveRepository.clear();
+      } on Object {
+        // 用户已明确放弃；清理失败不影响主界面继续使用。
+      }
+      return;
+    }
+    if (recover != true) return;
+    try {
+      await widget.controller.loadProject(project);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已恢复上次自动保存的项目')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('恢复项目失败：$error')));
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      _detached = true;
+      _autosaveTimer?.cancel();
+      unawaited(_endSessionOnExit());
+      return;
+    }
+    if (state == AppLifecycleState.resumed && _detached) {
+      _detached = false;
+      unawaited(_beginSession());
+    }
+  }
+
+  Future<void> _beginSession() async {
+    try {
+      await _autosaveRepository.beginSession();
+      _sessionEnded = false;
+    } on Object {
+      // 会话锁只是恢复提示的辅助信息，写入失败不阻塞主流程。
+    }
+  }
+
+  Future<void> _endSessionOnExit() async {
+    if (_sessionEnded) return;
+    _sessionEnded = true;
+    try {
+      await _autosaveFuture;
+    } on Object {
+      // 当前写入失败也不应阻止结束会话。
+    }
+    try {
+      await _autosaveRepository.endSession();
+    } on Object {
+      // 进程退出时无法保证平台文件操作完成；快照仍保留作下次兜底。
+    }
   }
 
   Future<void> _loadRecentProjects() async {
@@ -512,6 +685,16 @@ class _HomePageState extends State<HomePage> {
         );
       },
     );
+  }
+
+  @override
+  void dispose() {
+    _detached = true;
+    _autosaveTimer?.cancel();
+    widget.controller.removeListener(_onControllerChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_endSessionOnExit());
+    super.dispose();
   }
 }
 

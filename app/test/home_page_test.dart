@@ -58,6 +58,7 @@ void main() {
     PickProjectFile? pickProjectFile,
     LoadProjectFile? loadProjectFile,
     SaveFile? saveFile,
+    ProjectAutosaveStore? autosaveStore,
     AppSettingsRepository? settings,
     TranslationProviderFactory? translationProviderFactory,
   }) async {
@@ -69,6 +70,7 @@ void main() {
           pickProjectFile: pickProjectFile,
           loadProjectFile: loadProjectFile,
           saveFile: saveFile,
+          autosaveStore: autosaveStore ?? _FakeAutosaveStore(),
           settings: settings,
           translationProviderFactory: translationProviderFactory,
         ),
@@ -170,6 +172,56 @@ void main() {
     expect(controller.filePath, '/tmp/restored.wav');
     expect(controller.language, 'en');
     expect(find.text('已打开项目：demo.vsasr.json'), findsOneWidget);
+  });
+
+  testWidgets('识别完成后会自动保存可恢复快照', (WidgetTester tester) async {
+    final _FakeAutosaveStore autosave = _FakeAutosaveStore();
+    final TranscribeController controller = build(text: '自动保存的字幕');
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      autosaveStore: autosave,
+      pickFile: () async => '/tmp/autosave.wav',
+    );
+
+    await tester.tap(find.text('选择音频/视频'));
+    for (int i = 0; i < 6; i++) {
+      await tester.pump();
+    }
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pump();
+
+    expect(autosave.saves, 1);
+    expect(autosave.project?.mediaPath, '/tmp/autosave.wav');
+    expect(autosave.project?.result.segments.single.text, '自动保存的字幕');
+  });
+
+  testWidgets('启动时可以恢复上次自动保存的项目', (WidgetTester tester) async {
+    final VsasrProject project = VsasrProject(
+      mediaPath: '/tmp/recovery.wav',
+      config: AsrConfig(language: 'en'),
+      result: const TranscriptionResult(
+        language: 'en',
+        duration: 1,
+        segments: <Segment>[
+          Segment(text: '恢复快照字幕', start: 0, end: 1, language: 'en'),
+        ],
+      ),
+    );
+    final _FakeAutosaveStore autosave = _FakeAutosaveStore(project);
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(tester, controller, autosaveStore: autosave);
+    await tester.pumpAndSettle();
+
+    expect(find.text('发现未完成的项目'), findsOneWidget);
+    await tester.tap(find.text('恢复项目'));
+    await tester.pumpAndSettle();
+
+    expect(controller.filePath, '/tmp/recovery.wav');
+    expect(controller.language, 'en');
+    expect(find.text('恢复快照字幕'), findsOneWidget);
   });
 
   testWidgets('没有本地路径时也可以从 SAF 字节打开项目', (WidgetTester tester) async {
@@ -433,6 +485,45 @@ class _FakeTranslationProvider implements TranslationProvider {
   }) async {
     calls++;
     return texts.map((String text) => '译文：$text').toList();
+  }
+}
+
+class _FakeAutosaveStore implements ProjectAutosaveStore {
+  _FakeAutosaveStore([this.project]) : previousSessionUnclean = project != null;
+
+  VsasrProject? project;
+  int saves = 0;
+  int clears = 0;
+  bool sessionActive = false;
+  bool previousSessionUnclean;
+
+  @override
+  Future<bool> wasPreviousSessionUnclean() async => previousSessionUnclean;
+
+  @override
+  Future<void> beginSession() async {
+    sessionActive = true;
+    previousSessionUnclean = false;
+  }
+
+  @override
+  Future<void> endSession() async {
+    sessionActive = false;
+  }
+
+  @override
+  Future<VsasrProject?> load() async => project;
+
+  @override
+  Future<void> save(VsasrProject value) async {
+    project = value;
+    saves++;
+  }
+
+  @override
+  Future<void> clear() async {
+    project = null;
+    clears++;
   }
 }
 

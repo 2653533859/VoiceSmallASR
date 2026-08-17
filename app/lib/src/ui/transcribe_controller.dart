@@ -81,6 +81,7 @@ class TranscribeController extends ChangeNotifier {
   String? _filePath;
   TranscriptionResult? _result;
   Duration? _elapsed;
+  int _projectRevision = 0;
 
   /// 当前阶段。
   JobStage get stage => _stage;
@@ -109,6 +110,9 @@ class TranscribeController extends ChangeNotifier {
   /// 最近一次识别结果。
   TranscriptionResult? get result => _result;
 
+  /// 当前项目快照的递增版本。首页用它区分识别进度通知与需要自动保存的变更。
+  int get projectRevision => _projectRevision;
+
   /// 当前结果的可持久化项目快照。
   VsasrProject get projectSnapshot {
     final TranscriptionResult? current = _result;
@@ -119,13 +123,16 @@ class TranscribeController extends ChangeNotifier {
   /// 从项目文件恢复当前字幕和识别配置；媒体文件仍由调用方按路径重新打开。
   Future<void> loadProject(VsasrProject project) async {
     if (busy) throw StateError('识别进行中，暂时不能打开项目');
-    await applyConfig(project.config);
+    // 配置切换和结果替换必须作为一个快照提交，避免首页在旧结果上先自动保存
+    // 新配置，随后才收到本项目的字幕结果。
+    await applyConfig(project.config, markProjectChange: false);
     _filePath = project.mediaPath;
     _result = project.result;
     _elapsed = null;
     _progress = null;
     _errorText = null;
     _statusText = '项目已打开：${project.result.length} 段字幕';
+    _markProjectChanged();
     notifyListeners();
   }
 
@@ -139,6 +146,7 @@ class TranscribeController extends ChangeNotifier {
     _result = edited;
     _statusText = '字幕已更新';
     _errorText = null;
+    _markProjectChanged();
     notifyListeners();
   }
 
@@ -289,9 +297,13 @@ class TranscribeController extends ChangeNotifier {
   /// 识别器创建时会固定语言、线程数、ITN 与 VAD 参数，因此已有 worker
   /// 必须安全关闭，下一次识别/录音再按新配置加载。正在做文件任务时不改配置，
   /// 避免一条音频前后使用两套模型参数。
-  Future<void> applyConfig(AsrConfig config) async {
+  Future<void> applyConfig(
+    AsrConfig config, {
+    bool markProjectChange = true,
+  }) async {
     if (busy || _sameConfig(_config, config)) return;
     _config = config;
+    if (markProjectChange && _result != null) _markProjectChanged();
     notifyListeners();
     final Transcriber? old = _worker;
     if (old == null) return;
@@ -307,7 +319,8 @@ class TranscribeController extends ChangeNotifier {
   }
 
   /// 改识别语言。已加载的 isolate 会被重启（语言在建识别器时定死）。
-  Future<void> setLanguage(String language) => applyConfig(_config.copyWith(language: language));
+  Future<void> setLanguage(String language) =>
+      applyConfig(_config.copyWith(language: language));
 
   /// 解码并识别一个文件。这是主流程的入口。
   Future<void> transcribeFile(String path) async {
@@ -349,6 +362,7 @@ class TranscribeController extends ChangeNotifier {
       _elapsed = watch.elapsed;
       _statusText = '识别完成：${result.length} 段';
       _progress = 1;
+      _markProjectChanged();
     } on AudioDecodeException catch (error) {
       _errorText = error.message;
       _statusText = '解码失败';
@@ -390,7 +404,9 @@ class TranscribeController extends ChangeNotifier {
         retryDelay: retryDelay,
         onProgress: (int done, int total) {
           _progress = total > 0 ? done / total : null;
-          _statusText = total > 0 ? '正在翻译… ${(done / total * 100).round()}%' : '正在翻译…';
+          _statusText = total > 0
+              ? '正在翻译… ${(done / total * 100).round()}%'
+              : '正在翻译…';
           notifyListeners();
         },
       );
@@ -398,6 +414,7 @@ class TranscribeController extends ChangeNotifier {
       _result = translated;
       _progress = 1;
       _statusText = '翻译完成：${translated.length} 段';
+      _markProjectChanged();
     } on Object catch (error) {
       if (_disposed) return;
       _errorText = _humanize(error);
@@ -438,6 +455,10 @@ class TranscribeController extends ChangeNotifier {
         av.minSpeechDuration == bv.minSpeechDuration &&
         av.maxSpeechDuration == bv.maxSpeechDuration &&
         av.windowSize == bv.windowSize;
+  }
+
+  void _markProjectChanged() {
+    _projectRevision++;
   }
 
   /// 关闭识别 isolate。`dispose()` 不能 await，测试与显式收尾用这个。

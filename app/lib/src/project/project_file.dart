@@ -117,3 +117,92 @@ class ProjectFileStore {
     }
   }
 }
+
+/// 自动保存与异常恢复的存储抽象。
+///
+/// 自动保存放在应用私有目录，不会覆盖用户主动保存的项目文件；测试和桌面
+/// 集成可以注入自己的实现，避免依赖平台文件选择器。
+abstract interface class ProjectAutosaveStore {
+  Future<bool> wasPreviousSessionUnclean();
+
+  Future<void> beginSession();
+
+  Future<void> endSession();
+
+  Future<VsasrProject?> load();
+
+  Future<void> save(VsasrProject project);
+
+  Future<void> clear();
+}
+
+/// 把最近一次可恢复快照保存到应用支持目录。
+class FileProjectAutosaveStore implements ProjectAutosaveStore {
+  const FileProjectAutosaveStore({this.rootDirectory});
+
+  final Directory? rootDirectory;
+
+  static const String _directoryName = 'recovery';
+  static const String _fileName = 'autosave.vsasr.json';
+  static const String _sessionFileName = 'session.lock';
+
+  Future<File> _file() async {
+    final Directory support =
+        rootDirectory ?? await getApplicationSupportDirectory();
+    final Directory directory = Directory(p.join(support.path, _directoryName));
+    await directory.create(recursive: true);
+    return File(p.join(directory.path, _fileName));
+  }
+
+  Future<File> _sessionFile() async {
+    final File file = await _file();
+    return File(p.join(file.parent.path, _sessionFileName));
+  }
+
+  @override
+  Future<bool> wasPreviousSessionUnclean() async {
+    return (await _sessionFile()).exists();
+  }
+
+  @override
+  Future<void> beginSession() async {
+    final File file = await _sessionFile();
+    await file.writeAsString(
+      '${DateTime.now().toUtc().toIso8601String()}\n',
+      flush: true,
+    );
+  }
+
+  @override
+  Future<void> endSession() async {
+    final File file = await _sessionFile();
+    if (await file.exists()) await file.delete();
+  }
+
+  @override
+  Future<VsasrProject?> load() async {
+    final File file = await _file();
+    if (!await file.exists()) return null;
+    try {
+      return await const ProjectFileStore().load(file.path);
+    } on Object {
+      // 自动保存是辅助数据。文件被外部截断或版本过旧时清掉，不能阻塞启动。
+      await clear();
+      return null;
+    }
+  }
+
+  @override
+  Future<void> save(VsasrProject project) async {
+    final File file = await _file();
+    await const ProjectFileStore().save(file.path, project);
+  }
+
+  @override
+  Future<void> clear() async {
+    final File file = await _file();
+    final File temporary = File('${file.path}.tmp');
+    if (await file.exists()) await file.delete();
+    if (await temporary.exists()) await temporary.delete();
+  }
+}

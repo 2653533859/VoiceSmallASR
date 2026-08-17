@@ -90,4 +90,44 @@ void main() {
     );
     expect(() => VsasrProject.fromJson(base()), throwsArgumentError);
   });
+
+  test('自动保存可以重复覆盖并清理恢复快照', () async {
+    final Directory directory = await Directory.systemTemp.createTemp(
+      'vsasr_autosave_test',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final VsasrProject project = VsasrProject(
+      mediaPath: '/tmp/audio.wav',
+      config: AsrConfig(),
+      result: const TranscriptionResult(
+        duration: 1,
+        segments: <Segment>[Segment(text: '第一次', start: 0, end: 1)],
+      ),
+    );
+    final FileProjectAutosaveStore store = FileProjectAutosaveStore(
+      rootDirectory: directory,
+    );
+
+    expect(await store.wasPreviousSessionUnclean(), isFalse);
+    await store.beginSession();
+    expect(await store.wasPreviousSessionUnclean(), isTrue);
+    await store.save(project);
+    expect((await store.load())?.result.segments.single.text, '第一次');
+    await store.save(
+      VsasrProject(
+        mediaPath: project.mediaPath,
+        config: project.config,
+        result: const TranscriptionResult(
+          duration: 1,
+          segments: <Segment>[Segment(text: '第二次', start: 0, end: 1)],
+        ),
+      ),
+    );
+    expect((await store.load())?.result.segments.single.text, '第二次');
+
+    await store.clear();
+    expect(await store.load(), isNull);
+    await store.endSession();
+    expect(await store.wasPreviousSessionUnclean(), isFalse);
+  });
 }
