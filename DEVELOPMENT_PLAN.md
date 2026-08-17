@@ -1,6 +1,6 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-18　　当前版本：1.0.1
+> 更新日期：2026-08-18　　当前版本：1.0.2
 
 后续版本的稳定化、发布治理和产品功能计划见 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)。
 
@@ -364,7 +364,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 三端最终产物排除模型文件：Android APK/AAB、macOS App/ZIP/DMG、Windows Release 目录
 - [x] Release job 生成 `SHA256SUMS.txt` 和 `BUILD_INFO.txt`，上传到 GitHub Release
 - [x] 模型完整性校验失败时清理旧压缩包，允许下一次从下载源重新获取
-- [ ] 推送 `v1.0.2` Tag，完成一次云端全流程 Release 验收
+- [x] 推送 `v1.0.2` Tag，完成一次云端全流程 Release 验收：run `32046411140` 的质量门禁、Android APK/AAB、macOS 未签名 DMG/ZIP、Windows 未签名安装包、产物校验和 GitHub Release 上传全部通过；发布页为 [v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2)
 
 ### M9 · 无签名环境的翻译体验（已完成）
 

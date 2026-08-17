@@ -28,8 +28,8 @@
 - Windows 完整模型 e2e 已验收：GitHub Actions run `31919855391` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试，粤语 wav 识别 RTF `0.064`；同一 workflow 的 Windows smoke、产物校验和 artifact 上传也通过。`.github/workflows/windows-build.yml` 的手动 `run_full_e2e=true` 会恢复模型缓存，必要时通过三源 fallback 下载并做最小字节数校验，再用 `VSASR_MODEL_DIR` 指向外部模型目录运行测试。
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
-- 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.1。
-- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线代码已完成，M9 无签名翻译体验已完成，M10 已完成环境审计但真机/用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；下一步完成硬字幕真实平台验收、Android 真机性能和 Windows 用户桌面验收。
+- 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，随后在 run `32046411140` 构建并发布 `v1.0.2`，包含 Android APK/AAB、Windows 未签名安装包、macOS 未签名 DMG/APP 压缩包、`SHA256SUMS.txt` 和 `BUILD_INFO.txt`；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2。
+- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已完成环境审计但真机/用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
 
 ## 已验证结果
 
