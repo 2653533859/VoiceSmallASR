@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/diagnostics/performance_log_store.dart';
 import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/project/batch_translation_cache.dart';
@@ -74,6 +75,7 @@ class HomePage extends StatefulWidget {
     this.autosaveStore,
     this.batchTranslationCache,
     this.batchQueueStore,
+    this.performanceLogStore,
     this.mediaFileExists,
     this.settings,
     this.translationProviderFactory,
@@ -105,6 +107,9 @@ class HomePage extends StatefulWidget {
   /// 批量队列恢复存储。测试可注入内存或临时目录实现。
   final BatchQueueStore? batchQueueStore;
 
+  /// 性能历史存储。测试可注入临时目录；生产环境默认使用应用支持目录。
+  final PerformanceLogStore? performanceLogStore;
+
   final MediaFileExists? mediaFileExists;
 
   /// 设置存储。测试注入替身；生产环境由顶层应用复用同一个仓库。
@@ -119,6 +124,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final BatchTranscriptionController _batch;
+  late final PerformanceLogStore _performanceLogRepository;
   bool _translationDisclosureAccepted = false;
   bool _liveTranslationDisclosureAccepted = false;
   List<String> _recentProjects = <String>[];
@@ -134,6 +140,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _batchQueueSavedRevision = 0;
   bool _batchQueueFailureNotified = false;
   bool _batchQueueRecoveryPromptShown = false;
+  final List<PerformanceLogEntry> _performanceHistory =
+      <PerformanceLogEntry>[];
+  final Set<String> _performanceHistoryKeys = <String>{};
+  Future<void>? _performanceHistoryLoad;
+  Future<void> _performanceWriteChain = Future<void>.value();
+  bool _batchWasRunning = false;
+  bool _liveWasBusy = false;
   bool _recoveryPromptShown = false;
   bool _detached = false;
   bool _sessionEnded = false;
@@ -154,9 +167,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _batch = BatchTranscriptionController(transcriber: widget.controller);
+    _performanceLogRepository =
+        widget.performanceLogStore ?? PerformanceLogStore();
     WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_onControllerChanged);
     _batch.addListener(_onBatchChanged);
+    final LiveController? live = widget.live;
+    if (live != null) {
+      _liveWasBusy = live.busy;
+      live.addListener(_onLiveChanged);
+    }
+    _performanceHistoryLoad = _loadPerformanceHistory();
     // build 之后再查模型，避免在 initState 里同步 notifyListeners。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshModel();
@@ -168,6 +189,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void _onControllerChanged() {
     if (_detached) return;
     final TranscribeController controller = widget.controller;
+    final PerformanceReport? report = controller.performanceReport;
+    if (report != null) {
+      _recordPerformance('file', report.toJson());
+    }
     if (controller.result == null ||
         controller.projectRevision <= _autosavedRevision) {
       return;
@@ -215,6 +240,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _onBatchChanged() {
     if (_detached) return;
+    final bool wasRunning = _batchWasRunning;
+    _batchWasRunning = _batch.running;
+    if (wasRunning && !_batch.running) {
+      final BatchPerformanceReport? report = _batch.performanceReport;
+      if (report != null) _recordPerformance('batch', report.toJson());
+    }
     _batchQueueRequestedRevision++;
     _batchQueueFailureNotified = false;
     _batchQueueTimer?.cancel();
@@ -222,6 +253,76 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _batchQueueTimer = null;
       unawaited(_flushBatchQueue());
     });
+  }
+
+  void _onLiveChanged() {
+    if (_detached) return;
+    final LiveController? live = widget.live;
+    if (live == null) return;
+    final bool wasBusy = _liveWasBusy;
+    _liveWasBusy = live.busy;
+    if (wasBusy && !live.busy) {
+      final LivePerformanceReport? report = live.performanceReport;
+      if (report != null) _recordPerformance('live', report.toJson());
+    }
+  }
+
+  Future<void> _loadPerformanceHistory() async {
+    try {
+      final List<PerformanceLogEntry> entries =
+          await _performanceLogRepository.load();
+      if (_detached) return;
+      _performanceHistory
+        ..clear()
+        ..addAll(entries.reversed);
+      _performanceHistoryKeys
+        ..clear()
+        ..addAll(entries.map((PerformanceLogEntry entry) => entry.key));
+      if (mounted) setState(() {});
+    } on Object {
+      // 性能历史是辅助信息，损坏或不可写时不影响主流程。
+    }
+  }
+
+  void _recordPerformance(String kind, Map<String, Object?> report) {
+    final Object? rawGeneratedAt = report['generated_at'];
+    if (rawGeneratedAt is! String) return;
+    final DateTime? generatedAt = DateTime.tryParse(rawGeneratedAt);
+    if (generatedAt == null) return;
+    unawaited(
+      _persistPerformance(
+        PerformanceLogEntry(
+          kind: kind,
+          generatedAt: generatedAt,
+          report: report,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _persistPerformance(PerformanceLogEntry entry) async {
+    final Future<void>? loading = _performanceHistoryLoad;
+    if (loading != null) await loading;
+    if (_detached || !_performanceHistoryKeys.add(entry.key)) return;
+
+    final Future<void> previous = _performanceWriteChain;
+    final Future<void> operation = previous.then<void>((_) async {
+      if (_detached) return;
+      await _performanceLogRepository.append(entry);
+      if (!mounted) return;
+      setState(() {
+        _performanceHistory.removeWhere(
+          (PerformanceLogEntry item) => item.key == entry.key,
+        );
+        _performanceHistory.insert(0, entry);
+      });
+    });
+    _performanceWriteChain = operation.catchError((Object _) {});
+    try {
+      await operation;
+    } on Object {
+      _performanceHistoryKeys.remove(entry.key);
+    }
   }
 
   Future<void> _flushBatchQueue({bool force = false}) async {
@@ -939,6 +1040,86 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _showPerformanceHistory() async {
+    if (!mounted) return;
+    final Object? selected = await showDialog<Object?>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('性能历史'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 360,
+          child: _performanceHistory.isEmpty
+              ? const Center(child: Text('暂无性能历史记录'))
+              : ListView.separated(
+                  itemCount: _performanceHistory.length,
+                  separatorBuilder: (BuildContext context, int index) =>
+                      const Divider(height: 1),
+                  itemBuilder: (BuildContext context, int index) {
+                    final PerformanceLogEntry entry =
+                        _performanceHistory[index];
+                    return ListTile(
+                      title: Text(entry.label),
+                      subtitle: Text(entry.generatedAt.toLocal().toString()),
+                      onTap: () => Navigator.of(context).pop(entry),
+                    );
+                  },
+                ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('clearPerformanceHistory'),
+            onPressed: _performanceHistory.isEmpty
+                ? null
+                : () => Navigator.of(context).pop('clear'),
+            child: const Text('清空历史'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+    if (selected == 'clear') {
+      try {
+        await _performanceWriteChain;
+        await _performanceLogRepository.clear();
+        if (!mounted) return;
+        setState(() {
+          _performanceHistory.clear();
+          _performanceHistoryKeys.clear();
+        });
+      } on Object catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('清空性能历史失败：$error')));
+      }
+      return;
+    }
+    if (selected is! PerformanceLogEntry || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text('${selected.label}性能报告'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              const JsonEncoder.withIndent('  ').convert(selected.report),
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _exportBatch(String format) async {
     final String normalizedFormat = format.trim().toLowerCase();
     if (!kSubtitleFormats.contains(normalizedFormat)) {
@@ -1280,6 +1461,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onImport: _importSubtitle,
             onBatch: _openBatch,
             onDiagnostics: _showPerformanceReport,
+            onHistory: _showPerformanceHistory,
+            historyAvailable: _performanceHistory.isNotEmpty,
             batchBusy: batchBusy,
           );
         } else {
@@ -1297,6 +1480,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               onImport: _importSubtitle,
               onBatch: _openBatch,
               onDiagnostics: _showPerformanceReport,
+              onHistory: _showPerformanceHistory,
+              historyAvailable: _performanceHistory.isNotEmpty,
               batchBusy: batchBusy,
             ),
             live: live == null
@@ -1305,6 +1490,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     controller: live,
                     onExport: _exportLive,
                     onDiagnostics: _showLivePerformanceReport,
+                    onHistory: _showPerformanceHistory,
+                    historyAvailable: _performanceHistory.isNotEmpty,
                     onTranslationChanged: (bool enabled) {
                       unawaited(_setLiveTranslation(enabled));
                     },
@@ -1349,6 +1536,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _batch.removeListener(_onBatchChanged);
     _batch.dispose();
     widget.controller.removeListener(_onControllerChanged);
+    widget.live?.removeListener(_onLiveChanged);
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_endSessionOnExit());
     super.dispose();
@@ -1498,6 +1686,8 @@ class _TranscribeView extends StatelessWidget {
     required this.onImport,
     required this.onBatch,
     required this.onDiagnostics,
+    required this.onHistory,
+    required this.historyAvailable,
     this.batchBusy = false,
   });
 
@@ -1513,6 +1703,8 @@ class _TranscribeView extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback onBatch;
   final VoidCallback onDiagnostics;
+  final VoidCallback onHistory;
+  final bool historyAvailable;
   final bool batchBusy;
 
   @override
@@ -1597,6 +1789,13 @@ class _TranscribeView extends StatelessWidget {
                   icon: const Icon(Icons.speed_outlined),
                   label: const Text('性能诊断'),
                 ),
+              if (historyAvailable)
+                OutlinedButton.icon(
+                  key: const Key('performanceHistory'),
+                  onPressed: controller.busy || batchBusy ? null : onHistory,
+                  icon: const Icon(Icons.history_toggle_off),
+                  label: const Text('性能历史'),
+                ),
               OutlinedButton.icon(
                 key: const Key('importSubtitle'),
                 onPressed: controller.busy || batchBusy ? null : onImport,
@@ -1664,12 +1863,16 @@ class _LiveView extends StatelessWidget {
     required this.controller,
     required this.onExport,
     required this.onDiagnostics,
+    required this.onHistory,
+    required this.historyAvailable,
     required this.onTranslationChanged,
   });
 
   final LiveController controller;
   final VoidCallback onExport;
   final VoidCallback onDiagnostics;
+  final VoidCallback onHistory;
+  final bool historyAvailable;
   final ValueChanged<bool> onTranslationChanged;
 
   @override
@@ -1718,6 +1921,13 @@ class _LiveView extends StatelessWidget {
                   onPressed: controller.busy ? null : onDiagnostics,
                   icon: const Icon(Icons.speed_outlined),
                   label: const Text('性能诊断'),
+                ),
+              if (historyAvailable)
+                OutlinedButton.icon(
+                  key: const Key('livePerformanceHistory'),
+                  onPressed: controller.busy ? null : onHistory,
+                  icon: const Icon(Icons.history_toggle_off),
+                  label: const Text('性能历史'),
                 ),
               Row(
                 mainAxisSize: MainAxisSize.min,

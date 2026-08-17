@@ -10,6 +10,7 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
+import 'package:vsasr_app/src/diagnostics/performance_log_store.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
@@ -39,6 +40,7 @@ void main() {
     WidgetTester tester, {
     FakeMicrophone? mic,
     SaveFile? saveFile,
+    PerformanceLogStore? performanceLogStore,
   }) async {
     final FakeMicrophone microphone = mic ?? FakeMicrophone();
     final TranscribeController controller = TranscribeController(
@@ -62,7 +64,13 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: HomePage(controller: controller, live: live, saveFile: saveFile),
+        home: HomePage(
+          controller: controller,
+          live: live,
+          saveFile: saveFile,
+          performanceLogStore:
+              performanceLogStore ?? _MemoryPerformanceLogStore(),
+        ),
       ),
     );
     await tester.pump(); // refreshModel
@@ -188,12 +196,15 @@ void main() {
 
   testWidgets('导出：文件名固定为 live，内容只含定稿句', (WidgetTester tester) async {
     final List<(String, String)> saved = <(String, String)>[];
+    final _MemoryPerformanceLogStore performanceLogStore =
+        _MemoryPerformanceLogStore();
     await show(
       tester,
       saveFile: (String name, String content) async {
         saved.add((name, content));
         return '/Users/me/Desktop/$name';
       },
+      performanceLogStore: performanceLogStore,
     );
 
     await tester.tap(find.text('开始录音'));
@@ -205,6 +216,26 @@ void main() {
     );
     await pumpUi(tester);
     await stopRecording(tester);
+
+    await tester.tap(find.byKey(const Key('livePerformanceHistory')));
+    await pumpUi(tester);
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('性能历史'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('实时字幕'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('clearPerformanceHistory')));
+    await pumpUi(tester);
+    expect(find.byKey(const Key('livePerformanceHistory')), findsNothing);
 
     await tester.tap(find.text('导出字幕'));
     await pumpUi(tester);
@@ -260,4 +291,24 @@ void main() {
     expect(find.text('没有麦克风权限，请在系统设置里允许'), findsOneWidget);
     expect(find.text('开始录音'), findsOneWidget); // 回到可重试的状态
   });
+}
+
+class _MemoryPerformanceLogStore extends PerformanceLogStore {
+  _MemoryPerformanceLogStore() : super(rootDirectory: Directory.systemTemp);
+
+  final List<PerformanceLogEntry> entries = <PerformanceLogEntry>[];
+
+  @override
+  Future<List<PerformanceLogEntry>> load() async => List<PerformanceLogEntry>.of(
+    entries,
+  );
+
+  @override
+  Future<void> append(PerformanceLogEntry entry) async {
+    entries.removeWhere((PerformanceLogEntry item) => item.key == entry.key);
+    entries.add(entry);
+  }
+
+  @override
+  Future<void> clear() async => entries.clear();
 }

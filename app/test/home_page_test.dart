@@ -13,6 +13,7 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/diagnostics/performance_log_store.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/project/batch_translation_cache.dart';
 import 'package:vsasr_app/src/ui/batch_queue_store.dart';
@@ -68,6 +69,7 @@ void main() {
     MediaFileExists? mediaFileExists,
     BatchTranslationCache? batchTranslationCache,
     BatchQueueStore? batchQueueStore,
+    PerformanceLogStore? performanceLogStore,
     AppSettingsRepository? settings,
     TranslationProviderFactory? translationProviderFactory,
   }) async {
@@ -86,6 +88,8 @@ void main() {
           batchTranslationCache:
               batchTranslationCache ?? const _NoopBatchTranslationCache(),
           batchQueueStore: batchQueueStore ?? _FakeBatchQueueStore(),
+          performanceLogStore:
+              performanceLogStore ?? PerformanceLogStore(rootDirectory: workspace),
           mediaFileExists:
               mediaFileExists ?? (String path) async => File(path).existsSync(),
           settings: settings,
@@ -353,8 +357,15 @@ void main() {
     final TranscribeController controller = build(
       decoder: FakeDecoder(samples: 2 * kSampleRate),
     );
+    final _MemoryPerformanceLogStore performanceLogStore =
+        _MemoryPerformanceLogStore();
     addTearDown(controller.shutdown);
-    await show(tester, controller, pickFile: () async => '/tmp/yue.wav');
+    await show(
+      tester,
+      controller,
+      pickFile: () async => '/tmp/yue.wav',
+      performanceLogStore: performanceLogStore,
+    );
 
     await tester.tap(find.text('选择音频/视频'));
     for (int i = 0; i < 6; i++) {
@@ -373,6 +384,22 @@ void main() {
     expect(find.textContaining('RTF：'), findsOneWidget);
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
+    final List<PerformanceLogEntry> stored = await performanceLogStore.load();
+    await tester.pump();
+    expect(stored, isNotEmpty);
+    await tester.tap(find.byKey(const Key('performanceHistory')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('性能历史'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('文件转写'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('clearPerformanceHistory')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('performanceHistory')), findsNothing);
   });
 
   testWidgets('打开项目文件后恢复字幕、媒体路径和配置', (WidgetTester tester) async {
@@ -888,6 +915,26 @@ class _NoopBatchTranslationCache extends BatchTranslationCache {
     required String targetLanguage,
     required String providerScope,
   }) => Future<void>.value();
+}
+
+class _MemoryPerformanceLogStore extends PerformanceLogStore {
+  _MemoryPerformanceLogStore() : super(rootDirectory: Directory.systemTemp);
+
+  final List<PerformanceLogEntry> entries = <PerformanceLogEntry>[];
+
+  @override
+  Future<List<PerformanceLogEntry>> load() async => List<PerformanceLogEntry>.of(
+    entries,
+  );
+
+  @override
+  Future<void> append(PerformanceLogEntry entry) async {
+    entries.removeWhere((PerformanceLogEntry item) => item.key == entry.key);
+    entries.add(entry);
+  }
+
+  @override
+  Future<void> clear() async => entries.clear();
 }
 
 class _FakeBatchQueueStore extends BatchQueueStore {
