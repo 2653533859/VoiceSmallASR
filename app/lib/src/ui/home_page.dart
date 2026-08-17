@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/settings_page.dart';
@@ -29,6 +30,9 @@ typedef PickFile = Future<String?> Function();
 /// 保存字幕：给文件名与内容，返回落地位置的描述；用户取消时返回 null。
 typedef SaveFile = Future<String?> Function(String fileName, String content);
 
+/// 加载项目文件。测试可注入内存实现，生产环境默认使用 [ProjectFileStore]。
+typedef LoadProjectFile = Future<VsasrProject> Function(String path);
+
 /// 创建翻译 provider。生产环境使用可配置的第三方 API，测试可以注入不触网的替身。
 typedef TranslationProviderFactory = TranslationProvider Function(
   String apiKey,
@@ -41,6 +45,8 @@ class HomePage extends StatefulWidget {
     this.live,
     this.video,
     this.pickFile,
+    this.pickProjectFile,
+    this.loadProjectFile,
     this.saveFile,
     this.settings,
     this.translationProviderFactory,
@@ -57,6 +63,8 @@ class HomePage extends StatefulWidget {
 
   /// 文件选择与保存。测试注入替身，默认走 `file_picker`。
   final PickFile? pickFile;
+  final PickFile? pickProjectFile;
+  final LoadProjectFile? loadProjectFile;
   final SaveFile? saveFile;
 
   /// 设置存储。测试注入替身；生产环境由顶层应用复用同一个仓库。
@@ -93,13 +101,17 @@ class _HomePageState extends State<HomePage> {
     return picked?.path;
   }
 
-  Future<String?> _saveFile(String fileName, String content) async {
+  Future<String?> _saveFile(
+    String fileName,
+    String content, {
+    String dialogTitle = '导出字幕',
+  }) async {
     final SaveFile? injected = widget.saveFile;
     if (injected != null) return injected(fileName, content);
     // file_picker 12 的 saveFile 自己落盘（Android SAF、macOS sandbox 都由它处理），
     // 因此这里交出字节而不是路径。
     final Uri? saved = await FilePicker.saveFile(
-      dialogTitle: '导出字幕',
+      dialogTitle: dialogTitle,
       fileName: fileName,
       bytes: Uint8List.fromList(utf8.encode(content)),
       mimeType: fileName.endsWith('.json') ? 'application/json' : 'text/plain',
@@ -112,6 +124,57 @@ class _HomePageState extends State<HomePage> {
     final String? path = await _pickFile();
     if (path == null) return;
     await widget.controller.transcribeFile(path);
+  }
+
+  Future<String?> _pickProjectFile() async {
+    final PickFile? injected = widget.pickProjectFile;
+    if (injected != null) return injected();
+    final PlatformFile? picked = await FilePicker.pickFile(
+      dialogTitle: '打开 VoiceSmallASR 项目',
+      type: FileType.custom,
+      allowedExtensions: <String>['json'],
+    );
+    return picked?.path;
+  }
+
+  Future<void> _openProject() async {
+    final String? path = await _pickProjectFile();
+    if (path == null) return;
+    try {
+      final LoadProjectFile load =
+          widget.loadProjectFile ?? const ProjectFileStore().load;
+      final VsasrProject project = await load(path);
+      await widget.controller.loadProject(project);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已打开项目：${p.basename(path)}')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('打开项目失败：$error')));
+    }
+  }
+
+  Future<void> _saveProject() async {
+    if (widget.controller.result == null || widget.controller.busy) return;
+    try {
+      final VsasrProject project = widget.controller.projectSnapshot;
+      final String content = const JsonEncoder.withIndent('  ')
+          .convert(project.toJson());
+      final String? saved = await _saveFile(
+        'VoiceSmallASR.vsasr.json',
+        '$content\n',
+        dialogTitle: '保存 VoiceSmallASR 项目',
+      );
+      if (saved != null && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('项目已保存到 $saved')));
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('保存项目失败：$error')));
+    }
   }
 
   Future<void> _export({
@@ -260,6 +323,8 @@ class _HomePageState extends State<HomePage> {
           body = _TranscribeView(
             controller: c,
             onOpen: _openFile,
+            onOpenProject: _openProject,
+            onSaveProject: _saveProject,
             onExport: _exportFile,
             onEdit: _openEditor,
             onTranslate: _translate,
@@ -269,6 +334,8 @@ class _HomePageState extends State<HomePage> {
             transcribe: _TranscribeView(
               controller: c,
               onOpen: _openFile,
+              onOpenProject: _openProject,
+              onSaveProject: _saveProject,
               onExport: _exportFile,
               onEdit: _openEditor,
               onTranslate: _translate,
@@ -448,6 +515,8 @@ class _TranscribeView extends StatelessWidget {
   const _TranscribeView({
     required this.controller,
     required this.onOpen,
+    required this.onOpenProject,
+    required this.onSaveProject,
     required this.onExport,
     required this.onEdit,
     required this.onTranslate,
@@ -455,6 +524,8 @@ class _TranscribeView extends StatelessWidget {
 
   final TranscribeController controller;
   final VoidCallback onOpen;
+  final VoidCallback onOpenProject;
+  final VoidCallback onSaveProject;
   final VoidCallback onExport;
   final VoidCallback onEdit;
   final VoidCallback onTranslate;
@@ -476,6 +547,18 @@ class _TranscribeView extends StatelessWidget {
                 onPressed: controller.busy ? null : onOpen,
                 icon: const Icon(Icons.folder_open),
                 label: const Text('选择音频/视频'),
+              ),
+              OutlinedButton.icon(
+                onPressed: controller.busy ? null : onOpenProject,
+                icon: const Icon(Icons.folder_zip_outlined),
+                label: const Text('打开项目'),
+              ),
+              OutlinedButton.icon(
+                onPressed: result == null || controller.busy
+                    ? null
+                    : onSaveProject,
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('保存项目'),
               ),
               OutlinedButton.icon(
                 onPressed: result == null || controller.busy ? null : onExport,

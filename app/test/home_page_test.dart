@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
+import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
@@ -51,6 +53,8 @@ void main() {
     WidgetTester tester,
     TranscribeController controller, {
     PickFile? pickFile,
+    PickFile? pickProjectFile,
+    LoadProjectFile? loadProjectFile,
     SaveFile? saveFile,
     AppSettingsRepository? settings,
     TranslationProviderFactory? translationProviderFactory,
@@ -60,6 +64,8 @@ void main() {
         home: HomePage(
           controller: controller,
           pickFile: pickFile,
+          pickProjectFile: pickProjectFile,
+          loadProjectFile: loadProjectFile,
           saveFile: saveFile,
           settings: settings,
           translationProviderFactory: translationProviderFactory,
@@ -126,6 +132,71 @@ void main() {
     // 底部统计与状态行都会提到段数，这里只认底部那条完整统计
     expect(find.textContaining('1 段　音频 2.00s'), findsOneWidget);
     expect(find.text('识别完成：1 段'), findsOneWidget);
+  });
+
+  testWidgets('打开项目文件后恢复字幕、媒体路径和配置', (WidgetTester tester) async {
+    const String projectPath = '/tmp/demo.vsasr.json';
+    final VsasrProject project = VsasrProject(
+      mediaPath: '/tmp/restored.wav',
+      config: AsrConfig(language: 'en'),
+      result: TranscriptionResult(
+        language: 'en',
+        duration: 1.5,
+        segments: <Segment>[
+          Segment(text: '恢复的字幕', start: 0, end: 1.5, language: 'en'),
+        ],
+      ),
+    );
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      pickProjectFile: () async => projectPath,
+      loadProjectFile: (String path) async {
+        expect(path, projectPath);
+        return project;
+      },
+    );
+
+    await tester.tap(find.text('打开项目'));
+    for (int i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+    expect(find.text('恢复的字幕'), findsOneWidget);
+    expect(controller.filePath, '/tmp/restored.wav');
+    expect(controller.language, 'en');
+    expect(find.text('已打开项目：demo.vsasr.json'), findsOneWidget);
+  });
+
+  testWidgets('保存项目会交给保存器并保留项目 JSON', (WidgetTester tester) async {
+    final List<(String, String)> saved = <(String, String)>[];
+    final TranscribeController controller = build(text: '可保存的字幕');
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      pickFile: () async => '/tmp/save.wav',
+      saveFile: (String name, String content) async {
+        saved.add((name, content));
+        return '/tmp/$name';
+      },
+    );
+
+    await tester.tap(find.text('选择音频/视频'));
+    for (int i = 0; i < 6; i++) {
+      await tester.pump();
+    }
+    await tester.tap(find.text('保存项目'));
+    for (int i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+
+    expect(saved, hasLength(1));
+    expect(saved.single.$1, 'VoiceSmallASR.vsasr.json');
+    expect(saved.single.$2, contains('voicesmallasr.project'));
+    expect(saved.single.$2, contains('可保存的字幕'));
+    expect(find.text('项目已保存到 /tmp/VoiceSmallASR.vsasr.json'), findsOneWidget);
   });
 
   testWidgets('解码失败时把中文说明显示在错误框里', (WidgetTester tester) async {
