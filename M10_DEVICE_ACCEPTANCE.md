@@ -78,6 +78,21 @@ flutter test integration_test/device_acceptance_test.dart -d emulator-5554 \
 这份数据只说明 API 35 模拟器上的功能和基线性能，不移除 M10 的 Android 真机性能、内存、
 实时 RTF 待验收项，也不能推断中低端真机或厂商 Codec 表现。
 
+### API 35 ARM64 模拟器视频补充基线（非真机）
+
+随后使用 `/data/local/tmp/m10-device-acceptance.mp4`（H.264 + AAC，320×180，约 3 秒）
+再次运行同一入口，模型完整性和文件识别仍通过；视频音轨解码、播放器打开及播放推进也通过：
+
+| 指标 | 结果 |
+| --- | --- |
+| 音轨 | 48,128 samples |
+| 音轨解码 | 528 ms |
+| 播放器打开 | 146 ms |
+| 播放器读取时长 | 3.021 s |
+| 麦克风 | 未设置 `VSASR_DEVICE_TEST_MIC_SECONDS`，明确跳过 |
+
+视频项仍是 API 35 模拟器的软件渲染结果，不替代 Android 真机的播放性能或厂商解码器验收。
+
 ## Windows 用户桌面
 
 自动化性能测试需要 Flutter/Visual Studio 开发环境，运行的是同一份桌面代码；它不能替代
