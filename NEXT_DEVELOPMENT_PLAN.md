@@ -72,7 +72,7 @@
 已完成的自动化补强：
 
 - Windows CI 已安装带附加库的 `ffmpeg-full`，先检查 `ass/libass` 滤镜，再用真实 MP4 运行硬字幕编码 smoke；run `32048430484` 的 Flutter analyze、桌面 smoke、硬字幕 smoke、Release 构建和产物校验全部通过。
-- 已提供 `app/integration_test/device_acceptance_test.dart` 和 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)：可在 Android 真机或 Windows 桌面实际下载/校验模型，记录文件 RTF、视频播放和可选真实麦克风实时 RTF；可选项未传入时会明确跳过，不伪造实机结果。
+- 已提供 `app/integration_test/device_acceptance_test.dart` 和 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)：可在 Android 真机或 Windows 桌面实际下载/校验模型，记录文件 RTF、视频播放和可选真实麦克风实时 RTF；可选项未传入时会明确跳过，不伪造实机结果。提交 `344034e` 的 Windows 回归 run `32050804305` 已通过。
 
 验收标准：真机实时识别不会持续积压；Windows 安装包能在干净用户目录启动；模型校验失败会删除坏缓存并允许重试。
 
