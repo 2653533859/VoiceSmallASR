@@ -38,6 +38,7 @@ const String _definedVideo = String.fromEnvironment('VSASR_DEVICE_TEST_VIDEO');
 const String _definedReport = String.fromEnvironment(
   'VSASR_DEVICE_TEST_REPORT',
 );
+const String _definedDeviceLabel = String.fromEnvironment('VSASR_DEVICE_LABEL');
 const String _definedMicSeconds = String.fromEnvironment(
   'VSASR_DEVICE_TEST_MIC_SECONDS',
 );
@@ -54,6 +55,7 @@ void main() {
   late ModelManager models;
   late ModelPaths paths;
   late String audioPath;
+  late AsrConfig deviceConfig;
   late Map<String, Object?> report;
 
   setUpAll(() async {
@@ -71,11 +73,17 @@ void main() {
     audioPath =
         _setting(_definedAudio, 'VSASR_DEVICE_TEST_AUDIO') ??
         p.join(p.dirname(paths.asrModel), 'test_wavs', 'yue.wav');
+    deviceConfig = _deviceConfig();
     report = <String, Object?>{
       'schema_version': 1,
       'generated_at': DateTime.now().toUtc().toIso8601String(),
+      'device_label': _setting(_definedDeviceLabel, 'VSASR_DEVICE_LABEL'),
       'platform': Platform.operatingSystem,
       'operating_system_version': Platform.operatingSystemVersion,
+      'configuration': <String, Object?>{
+        'language': deviceConfig.language,
+        'num_threads': deviceConfig.numThreads,
+      },
       'process_memory': <String, Object?>{
         'source': 'dart:io ProcessInfo',
         'unit': 'bytes',
@@ -116,7 +124,7 @@ void main() {
 
     _recordProcessMemory(report, 'before_file_worker');
     final TranscriptionWorker worker = await TranscriptionWorker.start(
-      config: _deviceConfig(),
+      config: deviceConfig,
       allowDownload: false,
     );
     _recordProcessMemory(report, 'after_file_worker_start');
@@ -220,9 +228,13 @@ void main() {
     final double maxRtf =
         _positiveSetting(_definedMaxLiveRtf, 'VSASR_DEVICE_MAX_LIVE_RTF') ??
         1.25;
+    final Map<String, Object?> configuration =
+        report['configuration']! as Map<String, Object?>;
+    configuration['max_live_rtf'] = maxRtf;
+    configuration['microphone_seconds'] = seconds;
     _recordProcessMemory(report, 'before_microphone_worker');
     final TranscriptionWorker worker = await TranscriptionWorker.start(
-      config: _deviceConfig(),
+      config: deviceConfig,
       allowDownload: false,
     );
     _recordProcessMemory(report, 'after_microphone_worker_start');
