@@ -33,6 +33,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late double _minSilenceDuration;
   late final TextEditingController _apiEndpoint;
   late final TextEditingController _apiModel;
+  late final TextEditingController _apiGlossary;
   late final TextEditingController _apiKey;
 
   bool _loading = true;
@@ -56,6 +57,7 @@ class _SettingsPageState extends State<SettingsPage> {
         .toDouble();
     _apiEndpoint = TextEditingController();
     _apiModel = TextEditingController();
+    _apiGlossary = TextEditingController();
     _apiKey = TextEditingController();
     widget.controller.addListener(_onControllerChanged);
     _loadTranslationSettings();
@@ -74,6 +76,7 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       _apiEndpoint.text = settings.endpoint;
       _apiModel.text = settings.model;
+      _apiGlossary.text = settings.glossary;
       _apiKey.text = key ?? '';
       _targetLanguage = kTranslationLanguages.contains(settings.targetLanguage)
           ? settings.targetLanguage
@@ -93,6 +96,7 @@ class _SettingsPageState extends State<SettingsPage> {
     widget.controller.removeListener(_onControllerChanged);
     _apiEndpoint.dispose();
     _apiModel.dispose();
+    _apiGlossary.dispose();
     _apiKey.dispose();
     super.dispose();
   }
@@ -123,6 +127,7 @@ class _SettingsPageState extends State<SettingsPage> {
           endpoint: _apiEndpoint.text,
           model: _apiModel.text,
           targetLanguage: _targetLanguage,
+          glossary: _apiGlossary.text,
         ),
       );
       final String key = _apiKey.text.trim();
@@ -156,6 +161,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     final String endpoint = _apiEndpoint.text.trim();
     final String model = _apiModel.text.trim();
+    final String glossary = _apiGlossary.text;
     setState(() {
       _testingConnection = true;
       _errorText = null;
@@ -167,6 +173,7 @@ class _SettingsPageState extends State<SettingsPage> {
         apiKey: apiKey,
         endpoint: endpoint,
         model: model,
+        glossary: glossary,
       );
       try {
         await provider.testConnection(targetLanguage: _targetLanguage);
@@ -338,6 +345,22 @@ class _SettingsPageState extends State<SettingsPage> {
                   decoration: const InputDecoration(
                     labelText: '翻译模型',
                     hintText: '例如 gpt-4o-mini 或第三方模型名',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  key: const Key('translationGlossary'),
+                  controller: _apiGlossary,
+                  enabled: !disabled,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.multiline,
+                  minLines: 3,
+                  maxLines: 8,
+                  decoration: const InputDecoration(
+                    labelText: '翻译术语表（可选）',
+                    hintText: '每行填写：原词=译词；空行或 # 开头的行会被忽略',
                     border: OutlineInputBorder(),
                   ),
                 ),

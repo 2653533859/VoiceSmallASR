@@ -76,6 +76,35 @@ void main() {
     ]);
   });
 
+  test('术语表会注入系统提示，并校验每行格式和重复原词', () async {
+    final _FakeClient client = _FakeClient(
+      _jsonResponse(<String, Object>{
+        'translations': <String>['你好'],
+      }),
+    );
+    final ApiTranslationProvider provider = ApiTranslationProvider(
+      apiKey: 'key',
+      glossary: '# 注释\nASR = 自动语音识别\nVoiceSmall=语音小助手',
+      client: client,
+    );
+
+    await provider.translate(<String>['ASR'], to: 'zh-CN');
+
+    final Map<String, dynamic> body =
+        jsonDecode(client.body) as Map<String, dynamic>;
+    final List<dynamic> messages = body['messages'] as List<dynamic>;
+    final String systemPrompt = messages[0]['content'] as String;
+    expect(systemPrompt, contains('ASR'));
+    expect(systemPrompt, contains('自动语音识别'));
+    expect(systemPrompt, contains('VoiceSmall'));
+
+    expect(() => parseTranslationGlossary('a=b\na=c'), throwsArgumentError);
+    expect(parseTranslationGlossary(' # comment\n a = b '), <String, String>{
+      'a': 'b',
+    });
+    expect(() => parseTranslationGlossary('invalid-line'), throwsArgumentError);
+  });
+
   test('HTTP 错误不泄露 API Key，响应数量不一致时拒绝映射', () async {
     final _FakeClient client = _FakeClient(
       _jsonResponse(<String, Object>{

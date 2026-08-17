@@ -954,6 +954,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             apiKey: apiKey,
             endpoint: settings.endpoint,
             model: settings.model,
+            glossary: settings.glossary,
           );
       try {
         await widget.controller.translateCurrentResult(
@@ -1025,6 +1026,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             apiKey: apiKey,
             endpoint: settings.endpoint,
             model: settings.model,
+            glossary: settings.glossary,
           );
     }
     if (provider == null) {
@@ -1051,8 +1053,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   String _batchProviderScope(TranslationApiSettings settings) {
-    // 不把 API Key 写入缓存；endpoint + model 足以区分默认 API 配置。
-    return '${settings.endpoint.trim()}\n${settings.model.trim()}';
+    // 不把 API Key 写入缓存；术语表变化也必须使旧翻译缓存失效。
+    return '${settings.endpoint.trim()}\n${settings.model.trim()}\n${settings.glossary.trim()}';
   }
 
   Future<Map<int, TranscriptionResult>> _readBatchTranslationCache({

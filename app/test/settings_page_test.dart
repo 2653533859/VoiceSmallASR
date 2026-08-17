@@ -22,14 +22,25 @@ void main() {
         home: SettingsPage(controller: controller, repository: repository),
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('settingsLanguage')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('日文').last);
-    final Finder apiKeyField = find.byKey(const Key('translationApiKey')).first;
-    await tester.ensureVisible(apiKeyField);
+    await tester.pumpAndSettle();
+    await tester.dragFrom(const Offset(400, 500), const Offset(0, -300));
+    await tester.pump();
+    final Finder glossaryField = find.byWidgetPredicate(
+      (Widget widget) => widget is TextField &&
+          widget.key == const Key('translationGlossary'),
+    );
+    await tester.enterText(glossaryField, 'ASR=自动语音识别');
+    await tester.dragFrom(const Offset(400, 500), const Offset(0, -300));
+    await tester.pump();
+    final Finder apiKeyField = find.byWidgetPredicate(
+      (Widget widget) =>
+          widget is TextField && widget.key == const Key('translationApiKey'),
+    );
     await tester.enterText(apiKeyField, '  saved-key  ');
     for (int i = 0; i < 3; i++) {
       await tester.dragFrom(const Offset(400, 300), const Offset(0, -400));
@@ -43,6 +54,10 @@ void main() {
     expect(await repository.loadConfig(), isA<AsrConfig>());
     expect((await repository.loadConfig()).language, 'ja');
     expect(secrets.values[kTranslationApiKeyStorageKey], 'saved-key');
+    expect(
+      (await repository.loadTranslationApiSettings()).glossary,
+      'ASR=自动语音识别',
+    );
     expect(controller.offlineMode, isTrue);
     expect(await repository.loadOfflineMode(), isTrue);
   });
@@ -62,11 +77,17 @@ void main() {
         home: SettingsPage(controller: controller, repository: repository),
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    final Finder apiKeyField = find.byKey(const Key('translationApiKey')).first;
     expect(find.byKey(const Key('translationTargetLanguage')), findsOneWidget);
+    for (int i = 0; i < 2; i++) {
+      await tester.dragFrom(const Offset(400, 500), const Offset(0, -300));
+      await tester.pump();
+    }
+    final Finder apiKeyField = find.byWidgetPredicate(
+      (Widget widget) =>
+          widget is TextField && widget.key == const Key('translationApiKey'),
+    );
     final TextField field = tester.widget<TextField>(apiKeyField);
     expect(field.obscureText, isTrue);
     expect(field.controller?.text, 'saved-key');

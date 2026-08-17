@@ -67,6 +67,7 @@ class _VsasrAppState extends State<VsasrApp> {
       apiKey: apiKey,
       endpoint: settings.endpoint,
       model: settings.model,
+      glossary: settings.glossary,
     );
   }
 

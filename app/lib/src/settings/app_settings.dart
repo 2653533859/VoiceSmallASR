@@ -21,6 +21,7 @@ const String _translationEndpointKey = 'settings.translation.endpoint';
 const String _translationModelKey = 'settings.translation.model';
 const String _translationTargetLanguageKey =
     'settings.translation.target_language';
+const String _translationGlossaryKey = 'settings.translation.glossary';
 const String _recentProjectsKey = 'settings.projects.recent';
 
 /// 最近项目最多保留的路径数，最新打开的项目排在最前面。
@@ -235,6 +236,9 @@ class AppSettingsRepository {
     final String? targetLanguage = await _preferences.readString(
       _translationTargetLanguageKey,
     );
+    final String? glossary = await _preferences.readString(
+      _translationGlossaryKey,
+    );
     return TranslationApiSettings(
       endpoint: endpoint?.trim().isNotEmpty == true
           ? endpoint!.trim()
@@ -243,16 +247,18 @@ class AppSettingsRepository {
       targetLanguage: targetLanguage?.trim().isNotEmpty == true
           ? targetLanguage!.trim()
           : base.targetLanguage,
+      glossary: glossary != null ? glossary.trim() : base.glossary,
     );
   }
 
-  /// 持久化第三方翻译 API 的 endpoint 和模型名，不保存 API Key。
+  /// 持久化第三方翻译 API 的普通配置，不保存 API Key。
   Future<void> saveTranslationApiSettings(
     TranslationApiSettings settings,
   ) async {
     final String endpoint = settings.endpoint.trim();
     final String model = settings.model.trim();
     final String targetLanguage = settings.targetLanguage.trim();
+    final String glossary = settings.glossary.trim();
     if (endpoint.isEmpty) {
       throw ArgumentError.value(settings.endpoint, 'endpoint', 'API 地址不能为空');
     }
@@ -266,12 +272,14 @@ class AppSettingsRepository {
         '目标语言不能为空',
       );
     }
+    parseTranslationGlossary(glossary);
     await _preferences.writeString(_translationEndpointKey, endpoint);
     await _preferences.writeString(_translationModelKey, model);
     await _preferences.writeString(
       _translationTargetLanguageKey,
       targetLanguage,
     );
+    await _preferences.writeString(_translationGlossaryKey, glossary);
   }
 }
 

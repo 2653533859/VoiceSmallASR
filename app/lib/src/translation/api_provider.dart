@@ -36,11 +36,15 @@ class TranslationApiSettings {
     this.endpoint = kDefaultTranslationApiEndpoint,
     this.model = kDefaultTranslationApiModel,
     this.targetLanguage = kDefaultTranslationTargetLanguage,
+    this.glossary = '',
   });
 
   final String endpoint;
   final String model;
   final String targetLanguage;
+
+  /// 每行一个 `原词=译词`，空行和 `#` 开头的行会被忽略。
+  final String glossary;
 }
 
 /// 使用 OpenAI-compatible Chat Completions 协议的翻译服务。
@@ -53,11 +57,13 @@ class ApiTranslationProvider implements ClosableTranslationProvider {
     required String apiKey,
     String endpoint = kDefaultTranslationApiEndpoint,
     String model = kDefaultTranslationApiModel,
+    String glossary = '',
     http.Client? client,
     Duration timeout = const Duration(seconds: 30),
   }) : _apiKey = _requireApiKey(apiKey),
        _endpoint = _buildEndpoint(endpoint),
        _model = _requireModel(model),
+       _glossary = parseTranslationGlossary(glossary),
        _timeout = _requireTimeout(timeout),
        _client = client ?? http.Client(),
        _ownsClient = client == null;
@@ -65,6 +71,7 @@ class ApiTranslationProvider implements ClosableTranslationProvider {
   final String _apiKey;
   final Uri _endpoint;
   final String _model;
+  final Map<String, String> _glossary;
   final http.Client _client;
   final bool _ownsClient;
   final Duration _timeout;
@@ -127,6 +134,9 @@ class ApiTranslationProvider implements ClosableTranslationProvider {
     String target,
   ) {
     final String source = (from ?? '').trim();
+    final String glossaryInstruction = _glossary.isEmpty
+        ? ''
+        : '必须优先使用以下术语表中的译法：${jsonEncode(_glossary)}。术语表中未出现的词按上下文翻译。';
     return <String, Object>{
       'model': _model,
       'temperature': 0,
@@ -135,7 +145,8 @@ class ApiTranslationProvider implements ClosableTranslationProvider {
           'role': 'system',
           'content':
               '你是字幕翻译引擎。将输入的每条文本翻译成目标语言，保持原意、语气和顺序。'
-              '只返回 JSON 字符串数组，数组长度必须与输入文本数量相同，不要添加解释、Markdown 或代码围栏。',
+              '只返回 JSON 字符串数组，数组长度必须与输入文本数量相同，不要添加解释、Markdown 或代码围栏。'
+              '$glossaryInstruction',
         },
         <String, String>{
           'role': 'user',
@@ -150,6 +161,29 @@ class ApiTranslationProvider implements ClosableTranslationProvider {
       ],
     };
   }
+}
+
+/// 解析并校验设置页填写的术语表。
+Map<String, String> parseTranslationGlossary(String raw) {
+  final Map<String, String> terms = <String, String>{};
+  for (final String rawLine in raw.replaceAll('\r\n', '\n').split('\n')) {
+    final String line = rawLine.trim();
+    if (line.isEmpty || line.startsWith('#')) continue;
+    final int separator = line.indexOf('=');
+    if (separator <= 0 || separator == line.length - 1) {
+      throw ArgumentError.value(raw, 'glossary', '术语表每行必须是“原词=译词”，空行和 # 注释行除外');
+    }
+    final String source = line.substring(0, separator).trim();
+    final String target = line.substring(separator + 1).trim();
+    if (source.isEmpty || target.isEmpty) {
+      throw ArgumentError.value(raw, 'glossary', '术语表的原词和译词不能为空');
+    }
+    if (terms.containsKey(source)) {
+      throw ArgumentError.value(raw, 'glossary', '术语表不能包含重复原词：$source');
+    }
+    terms[source] = target;
+  }
+  return Map<String, String>.unmodifiable(terms);
 }
 
 Object? _decodeJson(String body) {

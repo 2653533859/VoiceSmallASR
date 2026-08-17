@@ -122,7 +122,7 @@ void main() {
     expect(recent, <String>['/tmp/b.json']);
   });
 
-  test('第三方翻译 API 地址和模型可以持久化，但不包含 API Key', () async {
+  test('第三方翻译 API 配置和术语表可以持久化，但不包含 API Key', () async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
     final AppSettingsRepository repository = AppSettingsRepository(
       preferences: preferences,
@@ -131,6 +131,7 @@ void main() {
       endpoint: 'https://provider.example/v1/chat/completions',
       model: 'provider-translate',
       targetLanguage: 'ja',
+      glossary: 'ASR=自動音声認識',
     );
 
     await repository.saveTranslationApiSettings(saved);
@@ -140,6 +141,7 @@ void main() {
     expect(loaded.endpoint, saved.endpoint);
     expect(loaded.model, saved.model);
     expect(loaded.targetLanguage, saved.targetLanguage);
+    expect(loaded.glossary, saved.glossary);
     expect(preferences.strings.values, isNot(contains('secret')));
   });
 }

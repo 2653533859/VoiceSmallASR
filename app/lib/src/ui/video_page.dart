@@ -177,6 +177,7 @@ class _VideoPageState extends State<VideoPage> {
       apiKey: apiKey,
       endpoint: settings.endpoint,
       model: settings.model,
+      glossary: settings.glossary,
     );
   }
 
