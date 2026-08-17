@@ -158,6 +158,13 @@ flutter test integration_test/device_acceptance_test.dart -d windows
 
 最终记录应区分“安装包手工结果”和“源码集成测试报告”，不能只用 Windows CI 的结果代替。
 
+截至 2026-08-18，最新 `main` 的 Windows workflow run
+[`32075654714`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32075654714) 已在
+`windows-2022` 上通过完整模型 E2E 7 项：模型缓存恢复、WAV/m4a 原生解码、粤语 WAV/m4a 识别、
+真实 MP4 播放/跳转/抽音轨识别和三句实时识别；日志记录粤语 WAV RTF `0.055`，实时识别定稿 4 句、
+局部结果 4 条。该 run 同时通过桌面 smoke、硬字幕 smoke、Release 构建、运行时依赖和模型排除检查，
+仍不能替代 Windows 用户桌面的干净目录安装和首次启动手工清单。
+
 ## 结果判定
 
 自动化报告满足以下条件后，才可把对应子项从 M10 的待验收列表移除：

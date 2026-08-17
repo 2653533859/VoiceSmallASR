@@ -28,6 +28,7 @@
 - M4 真实验收入口仍可按需扩展：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材；真实第三方 API 网络验收因需要用户自己的服务商密钥，暂不作为当前个人使用交付门禁。
 - Windows M7 构建已完成：GitHub Actions run `31912544699` 在 `windows-2022` runner 上通过 MSVC 编译 Flutter Release，并用 `scripts/build_windows_unsigned.ps1` + Inno Setup 生成未签名安装包；CI 自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，并拒绝模型文件；Release 目录约 111 MiB，安装包约 31 MiB。
 - Windows 完整模型 e2e 已验收：GitHub Actions run `31919855391` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试，粤语 wav 识别 RTF `0.064`；同一 workflow 的 Windows smoke、产物校验和 artifact 上传也通过。`.github/workflows/windows-build.yml` 的手动 `run_full_e2e=true` 会恢复模型缓存，必要时通过三源 fallback 下载并做最小字节数校验，再用 `VSASR_MODEL_DIR` 指向外部模型目录运行测试。
+- Windows 最新完整模型 e2e 已复验：run `32075654714` 在 `windows-2022` 上通过 7 项测试，粤语 WAV RTF `0.055`，实时识别定稿 4 句、局部结果 4 条；覆盖模型目录、WAV/m4a 原生解码、真实 MP4 播放/跳转/抽音轨识别和实时识别，同一 run 的桌面 smoke、硬字幕 smoke、Release 构建、运行时依赖、模型排除和 artifact 上传也通过。该 run 使用 Windows Actions 模型缓存和 `VSASR_MODEL_DIR`，仍不等于 Windows 用户桌面手工验收。
 - Windows 硬字幕 CI 验收已完成：run `32048430484` 在 `windows-2022` 上安装 `ffmpeg-full`，确认 `ass/libass` 滤镜可用，并通过真实 `tone.mp4` 的桌面 smoke、硬字幕编码 smoke、Release 构建、运行时 DLL 和模型排除检查；此前 run `32047737222`/`32048080173` 暴露并修复了 essentials FFmpeg 不含 libass 和检查表达式不稳的问题。
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
