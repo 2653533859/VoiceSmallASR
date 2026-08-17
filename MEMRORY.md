@@ -30,7 +30,7 @@
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
 - 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，随后在 run `32046411140` 构建并发布 `v1.0.2`，包含 Android APK/AAB、Windows 未签名安装包、macOS 未签名 DMG/APP 压缩包、`SHA256SUMS.txt` 和 `BUILD_INFO.txt`；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2。
-- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
+- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收以及 Android/Windows 统一 device acceptance 入口和执行手册，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
 
 ## 已验证结果
 
@@ -67,6 +67,7 @@
 - M8 发布质量基线已落地：`scripts/verify_model_exclusion.sh` 及各平台 workflow 检查最终产物不含模型，macOS 额外挂载 DMG 检查；Release job 生成 `SHA256SUMS.txt`/`BUILD_INFO.txt`。模型完整性失败会清理旧压缩包，避免重复复用坏缓存。
 - M9 翻译体验已完成：增加第三方数据发送提示、实时字幕单条翻译重试，并确保实时翻译关闭时不会因重试按钮隐式联网。
 - M10 环境审计：本机没有 Android 真机或无线设备；Windows 最新 CI run `32048430484` 已通过 analyze、`ffmpeg-full`/`ass` 检查、桌面 smoke、硬字幕编码 smoke、构建和产物校验，完整模型 E2E 仍由 run `31919855391` 提供依据；Android 真机性能和 Windows 用户桌面验收未完成。
+- M10 验收入口：新增 `app/integration_test/device_acceptance_test.dart`，模型缺失时实际下载并校验，使用模型自带 `yue.wav` 记录文件 RTF，按需测视频播放和真实麦克风实时积压；新增 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md) 区分自动化报告与安装包手工清单。`flutter analyze --no-pub` 和模型管理单测 2/2 通过，但尚无真实 Android/Windows 用户桌面数据。
 - M11 项目与外部字幕：新增版本化项目 JSON、配置/字幕/译文/时间轴校验、同目录临时文件保存和控制器快照恢复；首页已支持保存/打开项目与最近项目列表（最多 8 个路径），Android SAF 项目支持字节解析和应用支持目录缓存；新增识别/编辑/配置/翻译后的防抖自动保存、会话锁和启动恢复入口；项目媒体缺失时可重新选择并更新引用；新增 SRT/VTT/JSON 导入、视频外部字幕加载，并复用编辑/翻译/导出链路。
 - M12 队列、批量翻译、安全导出、文本缓存与队列恢复：新增批量处理页和顺序多文件转写，支持去重、每文件进度、暂停/继续、取消和失败重试；批量翻译复用同一个 provider 和现有分批/重试逻辑，逐文件显示翻译状态，单项失败不阻塞后续文件，取消通过操作代次阻止迟到译文写回；批量导出支持 SRT/VTT/JSON/TXT，按原媒体文件名生成建议名，同批次重名自动追加序号，用户取消保存后停止后续导出；新增应用私有目录翻译缓存，按媒体路径、源结果、目标语言、endpoint/model 和术语表指纹匹配，命中前确认复用，损坏/不匹配/缺少译文按未命中处理且缓存写入失败不影响翻译；新增批量队列版本化快照、防抖自动保存、退出前强制保存、异常退出恢复/放弃和进行中状态降级；Android SAF 无本地路径时明确拒绝而不静默丢条目；截至当前全量 Flutter 测试 234 项。
 - M13 字幕批量时间偏移：字幕编辑器新增整份字幕的正负秒数平移，段级和 token 级时间戳同步移动；复用既有时间轴校验，越过音频边界会拒绝且不改变结果；编辑器页面提供批量偏移入口，支持撤销，新增 3 项回归测试。
