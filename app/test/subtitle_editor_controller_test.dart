@@ -59,6 +59,32 @@ void main() {
     expect(editor.result.segments.first.translation, '你好');
   });
 
+  test('批量时间偏移会同步移动 token、保留译文并支持撤销', () {
+    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+
+    editor.shiftTimeOffset(0.5);
+
+    expect(editor.result.segments.first.start, 0.5);
+    expect(editor.result.segments.first.end, 1.5);
+    expect(editor.result.segments.first.words.single.start, 0.5);
+    expect(editor.result.segments.first.words.single.end, 1.5);
+    expect(editor.result.segments.first.translation, '你好');
+    expect(editor.result.segments[1].start, 1.5);
+    editor.undo();
+    expect(editor.result.segments.first.start, 0.0);
+  });
+
+  test('批量时间偏移越过时间轴边界时拒绝且不改变结果', () {
+    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+
+    expect(
+      () => editor.shiftTimeOffset(-0.1),
+      throwsA(isA<SubtitleEditException>()),
+    );
+    expect(editor.result.segments.first.start, 0.0);
+    expect(editor.canUndo, isFalse);
+  });
+
   test('重复应用相同内容不会新增撤销记录', () {
     final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
 

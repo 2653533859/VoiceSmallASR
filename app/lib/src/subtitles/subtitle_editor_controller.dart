@@ -124,6 +124,33 @@ class SubtitleEditorController extends ChangeNotifier {
     _commit(segments);
   }
 
+  /// 将整份字幕和 token 时间戳一起平移 [seconds] 秒。
+  void shiftTimeOffset(double seconds) {
+    if (!seconds.isFinite) {
+      throw const SubtitleEditException('时间偏移必须是有限数字');
+    }
+    if (seconds == 0) return;
+    final List<Segment> segments = _result.segments
+        .map((Segment segment) {
+          final List<Word> words = segment.words
+              .map(
+                (Word word) => Word(
+                  text: word.text,
+                  start: word.start + seconds,
+                  end: word.end + seconds,
+                ),
+              )
+              .toList(growable: false);
+          return segment.copyWith(
+            start: segment.start + seconds,
+            end: segment.end + seconds,
+            words: words,
+          );
+        })
+        .toList(growable: false);
+    _commit(segments);
+  }
+
   void undo() {
     if (_undo.isEmpty) return;
     _redo.add(_result);

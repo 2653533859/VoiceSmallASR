@@ -118,6 +118,37 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
     );
   }
 
+  Future<void> _shiftTime() async {
+    String input = '0.000';
+    final double? seconds = await showDialog<double>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('批量偏移字幕时间'),
+        content: TextFormField(
+          key: const Key('subtitleOffsetSeconds'),
+          initialValue: '0.000',
+          onChanged: (String value) => input = value,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+          decoration: const InputDecoration(labelText: '偏移秒数（正数后移，负数前移）'),
+        ),
+        actions: <Widget>[
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+            key: const Key('subtitleOffsetConfirm'),
+            onPressed: () {
+              final double? value = double.tryParse(input.trim());
+              if (value == null) return;
+              Navigator.pop(context, value);
+            },
+            child: const Text('应用偏移'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || seconds == null) return;
+    _runEdit(() => _editor.shiftTimeOffset(seconds));
+  }
+
   void _seek(double seconds) {
     final VideoPlaybackController? player = widget.player;
     if (player == null) return;
@@ -139,6 +170,7 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
                 errorText: _errorText,
                 onUndo: _editor.undo,
                 onRedo: _editor.redo,
+                onOffset: () => unawaited(_shiftTime()),
                 onSave: _save,
               ),
               Expanded(
@@ -178,6 +210,7 @@ class _EditorToolbar extends StatelessWidget {
     required this.errorText,
     required this.onUndo,
     required this.onRedo,
+    required this.onOffset,
     required this.onSave,
   });
 
@@ -185,6 +218,7 @@ class _EditorToolbar extends StatelessWidget {
   final String? errorText;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
+  final VoidCallback onOffset;
   final VoidCallback onSave;
 
   @override
@@ -206,6 +240,12 @@ class _EditorToolbar extends StatelessWidget {
               tooltip: '重做',
               onPressed: editor.canRedo ? onRedo : null,
               icon: const Icon(Icons.redo),
+            ),
+            IconButton(
+              key: const Key('subtitleOffset'),
+              tooltip: '批量偏移时间',
+              onPressed: onOffset,
+              icon: const Icon(Icons.schedule),
             ),
             Expanded(
               child: errorText == null

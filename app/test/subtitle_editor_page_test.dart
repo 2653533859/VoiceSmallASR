@@ -74,6 +74,38 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('subtitleText_1')), findsOneWidget);
   });
+
+  testWidgets('编辑器支持批量偏移字幕时间', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubtitleEditorPage(initialResult: result, onSave: (_) {}),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('subtitleOffset')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('subtitleOffsetSeconds')),
+      '0.5',
+    );
+    await tester.tap(find.byKey(const Key('subtitleOffsetConfirm')));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('subtitleStart_0')))
+          .controller
+          ?.text,
+      '0.500',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('subtitleEnd_1')))
+          .controller
+          ?.text,
+      '2.500',
+    );
+  });
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {
