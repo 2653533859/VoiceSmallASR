@@ -35,14 +35,15 @@ void main() {
     return TranscribeController(
       decoder: decoder ?? FakeDecoder(failure: decodeFailure),
       models: ModelManager(root: workspace.path),
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        onModelProgress('下载 model.tar.bz2（源 1/3）', 40, 100);
-        return FakeTranscriber(language: config.language, text: text);
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            onModelProgress('下载 model.tar.bz2（源 1/3）', 40, 100);
+            return FakeTranscriber(language: config.language, text: text);
+          },
     );
   }
 
@@ -178,7 +179,10 @@ void main() {
     expect(saved.single.$1, 'zh.srt'); // 文件名跟着音频名走
     expect(saved.single.$2, contains('00:00:00,000 --> 00:00:01,000'));
     expect(saved.single.$2, contains('开饭时间早上9点至下午5点。'));
-    expect(find.textContaining('已导出到 /Users/me/Desktop/zh.srt'), findsOneWidget);
+    expect(
+      find.textContaining('已导出到 /Users/me/Desktop/zh.srt'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('没有结果时导出按钮是禁用的', (WidgetTester tester) async {
@@ -194,7 +198,8 @@ void main() {
   });
 
   testWidgets('配置 API Key 后可以把识别结果翻译为中文', (WidgetTester tester) async {
-    final _FakeSecretStore secrets = _FakeSecretStore()..values[kDeepLApiKeyStorageKey] = 'test-key';
+    final _FakeSecretStore secrets = _FakeSecretStore()
+      ..values[kTranslationApiKeyStorageKey] = 'test-key';
     final AppSettingsRepository settings = AppSettingsRepository(
       preferences: _FakePreferenceStore(),
       secrets: TranslationSecrets(store: secrets),
@@ -244,7 +249,7 @@ void main() {
     await tester.tap(find.byKey(const Key('translateSubtitle')));
     await tester.pump();
 
-    expect(find.text('请先在设置中保存 DeepL API Key'), findsOneWidget);
+    expect(find.text('请先在设置中保存第三方翻译 API Key'), findsOneWidget);
   });
 
   testWidgets('切换语言后新识别结果用新语言', (WidgetTester tester) async {

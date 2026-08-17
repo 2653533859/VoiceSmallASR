@@ -9,7 +9,7 @@
 | 端 | 技术栈 | 状态 | 用途 |
 | --- | --- | --- | --- |
 | **Python 端** | Python 3.11.4+ / sherpa-onnx 1.13.5 | ✅ 已完成，105 项测试通过 | CLI 工具、服务端集成、批处理 |
-| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB、Windows Release/安装包和三端 GitHub Release，Android 可选外部签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行验证；DeepL 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
+| **Flutter 端** | Flutter 3.47.0 / Dart 3.13.0 / sherpa_onnx 1.13.5 | 🚧 **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时字幕/视频字幕翻译工作流已完成，M6 设置页与模型管理已完成首期实现，M7 已完成个人使用所需的 macOS 无签名包、Android APK/AAB、Windows Release/安装包和三端 GitHub Release，Android 可选外部签名配置已接入，Windows 完整模型 e2e 已在 CI 验收**：文件转写、实时字幕、视频播放与字幕联动、字幕校对编辑（149 项单测 + Android API 35 模拟器端到端 7 项，粤语识别 RTF 0.027 + Windows runner 端到端 7 项，粤语识别 RTF 0.064）。个人使用范围内剩余 Android 真机性能和 Windows 用户桌面运行验证；第三方 API 真实网络验收主动跳过，商店/公证发布证书不在个人使用范围 | Windows / macOS / Android 图形界面 |
 
 两端用的是**同一个模型、同一个 sherpa-onnx 版本**（1.13.5），因此识别结果一致，Python 端可以作为 Flutter 端的对照基准。
 
@@ -83,7 +83,7 @@ VoiceSmallASR/
 - CLI 四个子命令；三个集成示例（含服务端复用模式）
 - 105 项测试，单元测试与模型集成测试分层
 
-### Flutter 端（M1、M2、M3、M5 完成，M4 基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，`flutter test` 149 项 + 端到端 7 项）
+### Flutter 端（M1、M2、M3、M5 完成，M4 基础、批量流程、双语导出、第三方 API provider、文件/实时字幕/视频字幕翻译工作流已完成，M6 设置页与模型管理首期已完成：`flutter analyze` 无告警，相关测试通过）
 
 - 三端工程骨架（windows / macos / android）
 - 129 个锁定依赖，含 `sherpa_onnx 1.13.5` 全部平台原生库子包、`media_kit` 视频播放栈和设置持久化插件
@@ -163,20 +163,20 @@ VoiceSmallASR/
   - 新增服务商无关的 `TranslationProvider` 契约，HTTP 协议、认证和重试策略留给具体 provider
   - 新增 `translateResult()`：只发送非空字幕段，校验返回数量后按原位置写入 `Segment.translation`，不改变时间轴
   - 新增 4 项单测覆盖自动语言、空段保留、返回数量不一致和空目标语言
-  - 具体在线翻译服务商随后确定为 DeepL，接口层仍不绑定具体计费方案
+  - 具体在线翻译服务商采用可配置的 OpenAI-compatible 第三方 API，接口层仍不绑定具体品牌或计费方案
 
 - **双语字幕导出（M4，2026-08-16）**：
   - `subtitles.dart` 已接通 `Segment.translation`，SRT/VTT/TXT 输出原文与译文双行，JSON 保留结构化译文
   - 带译文的长段保持单条 Cue，避免原文和译文切分后时间边界错位；新增 4 项导出回归测试
 
-- **DeepL 在线 provider（M4，2026-08-16）**：
-  - 使用 `POST /v2/translate` 和 `Authorization: DeepL-Auth-Key ...`，实现自动/显式源语言、响应顺序校验和错误脱敏
-  - provider 内按 UTF-8 请求体 128 KiB 限制拆分，复用上层批量/重试流程；HTTP client 可注入，provider 本身不持久化 API Key
-  - 新增 6 项无网络单测覆盖请求格式、空输入、HTTP 错误、响应格式、请求拆分和构造参数
-  - 首期服务商决策为 DeepL；真实 API Key 和真实网络验收作为可选验收，不纳入个人使用交付门禁
+- **第三方 API 在线 provider（M4，2026-08-17）**：
+  - 使用可配置的 Chat Completions endpoint、模型和 `Authorization: Bearer ...`，要求返回等长 JSON 字符串数组
+  - provider 支持自定义 HTTP client、超时、错误脱敏和响应数量校验，API Key 仅通过构造参数注入；单次实时录音会话复用 provider，收尾时统一释放
+  - 新增 3 项无网络单测覆盖请求格式、响应格式、HTTP 错误和构造参数
+  - 保留旧 `DeepLTranslationProvider` 及其兼容测试，现有应用工作流不再默认使用 DeepL
 
 - **API Key 安全存储基础（M6 第一项，2026-08-16）**：
-  - 接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，通过平台安全存储保存 DeepL API Key，不写入代码或普通配置
+  - 接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，通过平台安全存储保存第三方翻译 API Key，不写入代码或普通配置
   - 固定 provider-specific 存储键，写入前去空白、拒绝空值，支持读取和删除；新增 3 项无网络测试
   - macOS Debug/Release entitlements 已加入 Keychain Sharing；设置页可保存 API Key 和识别配置，启动时恢复配置，新增 5 项设置页/持久化测试
 
@@ -194,7 +194,8 @@ VoiceSmallASR/
   - 新增 9 项编辑器/页面/导出回归测试，全量 `flutter test` 共 149 项通过
 
 - **应用内翻译工作流（M4，2026-08-16）**：
-  - 主转写页新增“翻译为中文”入口，从系统安全存储读取 DeepL API Key，provider 可注入测试替身
+  - 主转写页和视频播放页新增翻译入口，从系统安全存储读取第三方翻译 API Key，设置页可配置 endpoint/模型，provider 可注入测试替身
+  - 实时字幕页新增“实时翻译”开关，定稿字幕进入串行翻译队列，译文异步显示在原文下方；停止/销毁时使未开始的排队请求失效，避免网络异常逐条阻塞收尾
   - 翻译期间锁定转写状态并显示批量进度；所有批次成功后才一次性写回译文，失败时保留原识别结果
   - 转写列表显示译文，后续 SRT/VTT/TXT/JSON 导出和视频字幕叠加复用同一份结果
   - 新增 4 项状态机/界面回归测试；全量 `flutter test` 已增至 149 项
@@ -314,16 +315,16 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 播放进度与字幕高亮联动，点字幕跳转
 - [x] 验收：模型自带英文语音生成的 `en.mp4` 在 macOS 上通过真实 `media_kit` 播放、跳转、视频抽音轨、识别与字幕时间轴校验；Android API 35 模拟器同样通过真实播放器、跳转、抽音轨与识别测试
 
-### M4 · 翻译（识别语言 → 中文；基础、批量、双语导出、DeepL provider 与应用内工作流已完成）
+### M4 · 翻译（识别语言 → 中文；基础、批量、双语导出、第三方 API provider、文件/实时字幕/视频字幕工作流已完成）
 
 - [x] `TranslationProvider` 抽象：`Future<List<String>> translate(List<String> texts, {String? from, required String to})`；`translateResult()` 已将等长译文安全写入 `Segment.translation`
-- [x] 在线 provider 实现：首期采用 `DeepLTranslationProvider`，支持免费/付费 API base URL，API Key 仅通过构造参数注入
+- [x] 在线 provider 实现：`ApiTranslationProvider` 支持可配置的 OpenAI-compatible Chat Completions endpoint、模型和 Bearer API Key
 - [x] 批量翻译 + 失败重试 + 进度回报；支持 `batchSize`、`maxRetries`、`retryDelay`，所有批次成功后写入 `Segment.translation`
 - [x] 双语字幕导出：SRT/VTT/TXT 输出原文+译文双行，JSON 保留 `Segment.translation`；已有导出链路并通过 4 项回归测试
-- [x] 应用内翻译工作流：从安全存储读取 DeepL API Key，在文件转写页发起翻译、显示进度并回写结果；失败不写入半成品
-- [ ] 验收：英/日视频生成中英双语 SRT，导出的文件在播放器里两行都正常显示
-      已准备独立手工入口 `app/integration_test/deepl_acceptance_test.dart` 和
-      `scripts/prepare_translation_acceptance_media.sh`；按个人使用范围主动跳过，不计入当前交付门禁
+- [x] 应用内翻译工作流：从安全存储读取第三方翻译 API Key，在文件转写页发起翻译、显示进度并回写结果；失败不写入半成品
+- [x] 实时字幕翻译：实时页支持开关；每条定稿字幕异步调用第三方 API，译文显示在原文下方，并按顺序写回
+- [x] 视频播放字幕翻译：视频页可复用同一第三方 API 翻译已转写结果，视频叠加字幕和字幕列表同步显示译文
+- [ ] 验收：英/日视频生成双语字幕，真实 API 网络验收需使用用户自己的第三方服务商密钥，按个人使用范围暂不作为交付门禁
 
 ### M5 · 字幕校对编辑　✅ 首期已完成（2026-08-16）
 
@@ -337,7 +338,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 语言、线程数、VAD 断句灵敏度、临时结果间隔；设置保存到 `shared_preferences`
 - [x] 模型下载/删除/占用空间、离线模式开关
 - [x] API Key 安全存储基础：`flutter_secure_storage` 适配器、固定存储键、非空校验、读取/删除和 macOS Keychain entitlements
-- [x] 设置页接入 DeepL provider 配置（API key 不落明文）
+- [x] 设置页接入第三方翻译 API 配置（endpoint、模型和 API key 不落普通明文配置）
 - [x] 验收：保存后立即应用并重启启动时恢复；控制器重启和持久化分别有测试覆盖
 
 ### M7 · 打包分发
@@ -373,11 +374,10 @@ Dart 侧的契约统一为一个方法：给文件路径，返回 16 kHz float32
 且它**从未支持 Windows**（只有 Android / iOS / macOS），与三端目标直接冲突。体积从来不是它的主要问题。
 社区 fork（如 `ffmpeg-kit-extended`）虽声称覆盖 Windows，但同属个人维护，弃养风险与原包同构，故不采用。
 
-### 已决策 2 · 在线翻译服务商（DeepL 首期，2026-08-16）
+### 已决策 2 · 在线翻译服务商（第三方 OpenAI-compatible API，2026-08-17）
 
-已定方向：可插拔 provider 接口，首期使用 DeepL。实现遵循
-[DeepL Translate Text 官方接口](https://developers.deepl.com/api-reference/translate/request-translation)，
-默认使用免费套餐 endpoint，也支持传入付费套餐 endpoint；未来仍可用同一 `TranslationProvider` 接入腾讯、百度或其他 provider。
+已定方向：保留可插拔 `TranslationProvider` 接口，当前使用可配置的 OpenAI-compatible Chat Completions API，默认 endpoint 为
+`https://api.openai.com/v1/chat/completions`，默认模型为 `gpt-4o-mini`；第三方服务商只要兼容该请求/响应格式即可，也可在设置页替换 endpoint 和模型。若实际服务商协议不兼容，再新增对应 provider 适配器，不改翻译工作流。
 API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.dev/documentation/flutter_secure_storage/latest/)，设置页配置已接入 M6；普通设置使用 [`shared_preferences`](https://pub.dev/packages/shared_preferences) 持久化。真实 API Key 和真实网络验收不写入自动化测试。
 
 ### 已决策 3 · 字幕编辑状态与项目文件格式（M5，2026-08-16）
@@ -434,7 +434,7 @@ API Key 的安全存储基础已接入 [`flutter_secure_storage`](https://pub.de
   entitlements 都要加 `keychain-access-groups`；没有开发证书时可用
   `xcodebuild ... CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO` 验证编译并生成个人使用的无签名包，
   但无法用普通 `flutter build macos --debug` 完成带 Keychain Sharing 的签名包。若个人使用需要 macOS
-  持久化 DeepL API Key，仍需另行提供可用的签名运行环境；这不影响不依赖该能力的本地识别功能。
+  持久化第三方翻译 API Key，仍需另行提供可用的签名运行环境；这不影响不依赖该能力的本地识别功能。
 - **Android 的 `INTERNET` 权限在 release 包里会消失**：Flutter 模板只在
   `debug/` 与 `profile/` 的 manifest 里声明它（那是给 hot reload 用的），
   `main/AndroidManifest.xml` 不写就等于 release 包没有网络权限。
@@ -618,12 +618,11 @@ flutter test integration_test/e2e_test.dart -d macos   # 7 项应全绿（含真
 # Windows 完整模型 e2e（手动触发；首次下载约 155 MB，成功后由 Actions cache 复用）
 gh workflow run windows-build.yml --ref main -f run_full_e2e=true
 
-# 可选：M4 真实 DeepL 英/日视频验收（个人使用可跳过，密钥文件放在仓库外）
+# 可选：M4 真实第三方 API 英/日视频验收（个人使用可跳过，密钥文件放在仓库外）
 WAVS="$SUP/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs"
 bash scripts/prepare_translation_acceptance_media.sh "$WAVS" "$WAVS"
-# 外部 env 文件示例：DEEPL_API_KEY=...；可选 DEEPL_API_BASE_URL=https://api-free.deepl.com
-flutter test integration_test/deepl_acceptance_test.dart -d macos \
-  --dart-define-from-file=/path/to/voicesmallasr-deepl.env
+# 当前集成测试文件仍是旧 DeepL 专用入口；OpenAI-compatible provider 的真实验收
+# 需按实际第三方服务商的 endpoint、模型和响应协议另行配置，密钥文件不得入库。
 
 # 生成不含模型、未签名的 macOS Release .app 与 .dmg（需要 Xcode；个人使用不要求发布签名）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh

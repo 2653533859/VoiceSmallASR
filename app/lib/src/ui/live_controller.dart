@@ -13,12 +13,16 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 
 /// 借用识别器。返回 null 表示模型没准备好（原因由提供方自己展示）。
 typedef WorkerProvider = Future<Transcriber?> Function();
 
 /// 当前识别语言，只用于导出结果里的 `language` 字段。
 typedef LanguageOf = String Function();
+
+/// 按需创建实时翻译 provider；返回 null 表示尚未配置 API Key。
+typedef TranslationProviderResolver = Future<TranslationProvider?> Function();
 
 /// 录音阶段。
 enum LiveStage {
@@ -39,11 +43,15 @@ class LiveController extends ChangeNotifier {
   LiveController({
     required this.provideWorker,
     required this.languageOf,
+    this.provideTranslationProvider,
+    this.translationTargetLanguage = 'zh-CN',
     AudioSource? mic,
   }) : _mic = mic ?? MicrophoneSource();
 
   final WorkerProvider provideWorker;
   final LanguageOf languageOf;
+  final TranslationProviderResolver? provideTranslationProvider;
+  final String translationTargetLanguage;
   final AudioSource _mic;
 
   final List<Segment> _finals = <Segment>[];
@@ -51,10 +59,17 @@ class LiveController extends ChangeNotifier {
   LiveSession? _session;
   StreamSubscription<Segment>? _segments;
   StreamSubscription<Float32List>? _audio;
+  Future<void> _translationQueue = Future<void>.value();
+  int _translationGeneration = 0;
+  TranslationProvider? _translationProvider;
+  Object? _translationProviderError;
+  StackTrace? _translationProviderErrorStack;
+  bool _translationProviderResolved = false;
 
   LiveStage _stage = LiveStage.idle;
   String? _errorText;
   bool _disposed = false;
+  bool _translationEnabled = false;
 
   LiveStage get stage => _stage;
 
@@ -70,6 +85,9 @@ class LiveController extends ChangeNotifier {
   Segment? get partial => _partial;
 
   String? get errorText => _errorText;
+
+  /// 是否在定稿字幕后自动请求第三方翻译 API。
+  bool get translationEnabled => _translationEnabled;
 
   bool get hasResult => _finals.isNotEmpty;
 
@@ -97,6 +115,7 @@ class LiveController extends ChangeNotifier {
   /// 开始录音。权限、设备、模型任一不就绪都会写进 [errorText] 并回到空闲。
   Future<void> start() async {
     if (_stage != LiveStage.idle) return;
+    _resetTranslationProvider();
     _stage = LiveStage.starting;
     _errorText = null;
     notifyListeners();
@@ -119,6 +138,9 @@ class LiveController extends ChangeNotifier {
     } on Object catch (error) {
       _errorText = _humanize(error);
       await _teardown();
+      _translationGeneration++;
+      await _translationQueue;
+      _closeTranslationProvider();
       _stage = LiveStage.idle;
     }
     notifyListeners();
@@ -135,6 +157,10 @@ class LiveController extends ChangeNotifier {
       _errorText = _humanize(error);
     }
     _partial = null;
+    // 使尚未开始的排队请求失效；当前正在进行的请求最多只需等待一次超时。
+    _translationGeneration++;
+    await _translationQueue;
+    _closeTranslationProvider();
     _stage = LiveStage.idle;
     notifyListeners();
   }
@@ -148,6 +174,14 @@ class LiveController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 开关实时翻译。关闭只停止后续请求，不清除已经得到的译文。
+  void setTranslationEnabled(bool enabled) {
+    if (_translationEnabled == enabled) return;
+    _translationEnabled = enabled;
+    _translationGeneration++;
+    notifyListeners();
+  }
+
   /// 把结果渲染成指定格式（`srt`/`vtt`/`json`/`txt`）。落盘由界面层负责。
   String renderResult(String format) {
     if (_finals.isEmpty) throw StateError('还没有可导出的识别结果');
@@ -158,9 +192,69 @@ class LiveController extends ChangeNotifier {
     if (segment.isFinal) {
       _finals.add(segment);
       _partial = null;
+      if (_translationEnabled) {
+        _queueTranslation(segment, _translationGeneration);
+      }
     } else {
       _partial = segment;
     }
+    notifyListeners();
+  }
+
+  void _queueTranslation(Segment segment, int generation) {
+    _translationQueue = _translationQueue.then<void>((_) async {
+      try {
+        await _translateFinal(segment, generation);
+      } on Object catch (error) {
+        if (_disposed) return;
+        _errorText = _humanize(error);
+        notifyListeners();
+      }
+    });
+  }
+
+  Future<void> _translateFinal(Segment segment, int generation) async {
+    final TranslationProviderResolver? resolver = provideTranslationProvider;
+    if (resolver == null ||
+        !_translationEnabled ||
+        generation != _translationGeneration) {
+      return;
+    }
+    final TranslationProvider? provider = await _resolveTranslationProvider(
+      resolver,
+    );
+    if (provider == null) throw StateError('请先在设置中保存第三方翻译 API Key');
+    if (_disposed ||
+        !_translationEnabled ||
+        generation != _translationGeneration) {
+      return;
+    }
+    final String source = segment.language.trim().isEmpty
+        ? languageOf()
+        : segment.language;
+    final List<String> translated = await provider.translate(
+      <String>[segment.text],
+      from: source,
+      to: translationTargetLanguage,
+    );
+    if (translated.length != 1) {
+      throw StateError('翻译服务返回 ${translated.length} 条结果，需要 1 条，无法安全对应实时字幕');
+    }
+    if (_disposed ||
+        !_translationEnabled ||
+        generation != _translationGeneration) {
+      return;
+    }
+    final int index = _finals.indexWhere(
+      (Segment value) =>
+          value.index == segment.index &&
+          value.start == segment.start &&
+          value.end == segment.end,
+    );
+    if (index < 0) return;
+    _finals[index] = _finals[index].copyWith(
+      translation: translated.single.trim(),
+    );
     notifyListeners();
   }
 
@@ -197,7 +291,45 @@ class LiveController extends ChangeNotifier {
   /// 显式收尾。`dispose()` 是同步的，测试与退出流程用这个。
   Future<void> shutdown() async {
     await _teardown();
+    _translationGeneration++;
+    await _translationQueue;
+    _closeTranslationProvider();
     _stage = LiveStage.idle;
+  }
+
+  Future<TranslationProvider?> _resolveTranslationProvider(
+    TranslationProviderResolver resolver,
+  ) async {
+    if (_translationProviderResolved) {
+      final Object? error = _translationProviderError;
+      final StackTrace? stack = _translationProviderErrorStack;
+      if (error != null && stack != null) {
+        Error.throwWithStackTrace(error, stack);
+      }
+      return _translationProvider;
+    }
+    _translationProviderResolved = true;
+    try {
+      _translationProvider = await resolver();
+      return _translationProvider;
+    } on Object catch (error, stack) {
+      _translationProviderError = error;
+      _translationProviderErrorStack = stack;
+      Error.throwWithStackTrace(error, stack);
+    }
+  }
+
+  void _resetTranslationProvider() {
+    _translationProvider = null;
+    _translationProviderError = null;
+    _translationProviderErrorStack = null;
+    _translationProviderResolved = false;
+  }
+
+  void _closeTranslationProvider() {
+    final TranslationProvider? provider = _translationProvider;
+    if (provider is ClosableTranslationProvider) provider.close();
+    _resetTranslationProvider();
   }
 
   @override

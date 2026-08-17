@@ -1,14 +1,19 @@
-/// 应用设置页：识别参数与 DeepL API Key。
+/// 应用设置页：识别参数与第三方翻译 API 配置。
 library;
 
 import 'package:flutter/material.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/translation/api_provider.dart';
 
 /// 设置页。普通配置保存到偏好存储，API Key 始终交给安全存储。
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.controller, required this.repository});
+  const SettingsPage({
+    super.key,
+    required this.controller,
+    required this.repository,
+  });
 
   final TranscribeController controller;
   final AppSettingsRepository repository;
@@ -25,6 +30,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late double _partialInterval;
   late double _vadThreshold;
   late double _minSilenceDuration;
+  late final TextEditingController _apiEndpoint;
+  late final TextEditingController _apiModel;
   late final TextEditingController _apiKey;
 
   bool _loading = true;
@@ -41,20 +48,29 @@ class _SettingsPageState extends State<SettingsPage> {
     _numThreads = config.numThreads.clamp(1, 16).toInt();
     _partialInterval = config.partialInterval.clamp(0.0, 3.0).toDouble();
     _vadThreshold = config.vad.threshold.clamp(0.1, 0.9).toDouble();
-    _minSilenceDuration = config.vad.minSilenceDuration.clamp(0.1, 1.5).toDouble();
+    _minSilenceDuration = config.vad.minSilenceDuration
+        .clamp(0.1, 1.5)
+        .toDouble();
+    _apiEndpoint = TextEditingController();
+    _apiModel = TextEditingController();
     _apiKey = TextEditingController();
     widget.controller.addListener(_onControllerChanged);
-    _loadApiKey();
+    _loadTranslationSettings();
   }
 
   void _onControllerChanged() {
     if (mounted) setState(() {});
   }
 
-  Future<void> _loadApiKey() async {
+  Future<void> _loadTranslationSettings() async {
     try {
-      final String? key = await widget.repository.translationSecrets.readDeepLApiKey();
+      final TranslationApiSettings settings = await widget.repository
+          .loadTranslationApiSettings();
+      final String? key = await widget.repository.translationSecrets
+          .readApiKey();
       if (!mounted) return;
+      _apiEndpoint.text = settings.endpoint;
+      _apiModel.text = settings.model;
       _apiKey.text = key ?? '';
       setState(() => _loading = false);
     } on Object catch (error) {
@@ -69,6 +85,8 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
+    _apiEndpoint.dispose();
+    _apiModel.dispose();
     _apiKey.dispose();
     super.dispose();
   }
@@ -93,11 +111,17 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       await widget.repository.saveConfig(next);
       await widget.repository.saveOfflineMode(_offlineMode);
+      await widget.repository.saveTranslationApiSettings(
+        TranslationApiSettings(
+          endpoint: _apiEndpoint.text,
+          model: _apiModel.text,
+        ),
+      );
       final String key = _apiKey.text.trim();
       if (key.isEmpty) {
-        await widget.repository.translationSecrets.deleteDeepLApiKey();
+        await widget.repository.translationSecrets.deleteApiKey();
       } else {
-        await widget.repository.translationSecrets.saveDeepLApiKey(key);
+        await widget.repository.translationSecrets.saveApiKey(key);
       }
       await widget.controller.applyConfig(next);
       widget.controller.setOfflineMode(_offlineMode);
@@ -113,7 +137,9 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _deleteModel() async {
-    if (_saving || widget.controller.busy || !widget.controller.modelReady) return;
+    if (_saving || widget.controller.busy || !widget.controller.modelReady) {
+      return;
+    }
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
@@ -122,7 +148,10 @@ class _SettingsPageState extends State<SettingsPage> {
           '将删除约 ${_formatBytes(widget.controller.modelBytes)} 的模型文件。下次识别前需要重新下载。',
         ),
         actions: <Widget>[
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('删除'),
@@ -149,9 +178,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   key: const Key('settingsLanguage'),
                   initialValue: _language,
                   decoration: const InputDecoration(labelText: '识别语言'),
-                  onChanged: disabled ? null : (String? value) {
-                    if (value != null) setState(() => _language = value);
-                  },
+                  onChanged: disabled
+                      ? null
+                      : (String? value) {
+                          if (value != null) setState(() => _language = value);
+                        },
                   items: <DropdownMenuItem<String>>[
                     for (final String code in kLanguages)
                       DropdownMenuItem<String>(
@@ -165,12 +196,36 @@ class _SettingsPageState extends State<SettingsPage> {
                   key: const Key('settingsThreads'),
                   initialValue: _numThreads,
                   decoration: const InputDecoration(labelText: '识别线程数'),
-                  onChanged: disabled ? null : (int? value) {
-                    if (value != null) setState(() => _numThreads = value);
-                  },
+                  onChanged: disabled
+                      ? null
+                      : (int? value) {
+                          if (value != null) {
+                            setState(() => _numThreads = value);
+                          }
+                        },
                   items: <DropdownMenuItem<int>>[
-                    for (final int value in <int>[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-                      DropdownMenuItem<int>(value: value, child: Text('$value')),
+                    for (final int value in <int>[
+                      1,
+                      2,
+                      3,
+                      4,
+                      5,
+                      6,
+                      7,
+                      8,
+                      9,
+                      10,
+                      11,
+                      12,
+                      13,
+                      14,
+                      15,
+                      16,
+                    ])
+                      DropdownMenuItem<int>(
+                        value: value,
+                        child: Text('$value'),
+                      ),
                   ],
                 ),
                 SwitchListTile.adaptive(
@@ -178,37 +233,69 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: const Text('启用标点与数字规范化'),
                   subtitle: const Text('输出字幕时保留标点和阿拉伯数字'),
                   value: _useItn,
-                  onChanged: disabled ? null : (bool value) => setState(() => _useItn = value),
+                  onChanged: disabled
+                      ? null
+                      : (bool value) => setState(() => _useItn = value),
                 ),
                 Text('翻译', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
                 TextField(
-                  key: const Key('deepLApiKey'),
+                  key: const Key('translationApiEndpoint'),
+                  controller: _apiEndpoint,
+                  enabled: !disabled,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: '翻译 API 地址',
+                    hintText: 'OpenAI-compatible /v1/chat/completions 地址',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  key: const Key('translationApiModel'),
+                  controller: _apiModel,
+                  enabled: !disabled,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    labelText: '翻译模型',
+                    hintText: '例如 gpt-4o-mini 或第三方模型名',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  key: const Key('translationApiKey'),
                   controller: _apiKey,
                   enabled: !disabled,
                   obscureText: true,
                   autocorrect: false,
                   enableSuggestions: false,
                   decoration: const InputDecoration(
-                    labelText: 'DeepL API Key',
+                    labelText: '第三方翻译 API Key',
                     hintText: '留空可清除已保存的 Key',
                     border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text('API Key 只保存到系统安全存储，不写入普通设置文件。'),
+                const Text('API 地址和模型名保存到普通设置；API Key 只保存到系统安全存储。'),
                 const Divider(height: 24),
                 Text('实时识别', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
                 _ValueSlider(
                   label: '临时结果间隔',
-                  valueText: _partialInterval == 0 ? '关闭' : '${_partialInterval.toStringAsFixed(1)} 秒',
+                  valueText: _partialInterval == 0
+                      ? '关闭'
+                      : '${_partialInterval.toStringAsFixed(1)} 秒',
                   value: _partialInterval,
                   min: 0,
                   max: 3,
                   divisions: 12,
                   enabled: !disabled,
-                  onChanged: (double value) => setState(() => _partialInterval = value),
+                  onChanged: (double value) =>
+                      setState(() => _partialInterval = value),
                 ),
                 const SizedBox(height: 8),
                 _ValueSlider(
@@ -219,7 +306,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   max: 0.9,
                   divisions: 16,
                   enabled: !disabled,
-                  onChanged: (double value) => setState(() => _vadThreshold = value),
+                  onChanged: (double value) =>
+                      setState(() => _vadThreshold = value),
                 ),
                 _ValueSlider(
                   label: '句末静音时长',
@@ -229,7 +317,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   max: 1.5,
                   divisions: 28,
                   enabled: !disabled,
-                  onChanged: (double value) => setState(() => _minSilenceDuration = value),
+                  onChanged: (double value) =>
+                      setState(() => _minSilenceDuration = value),
                 ),
                 const Divider(height: 24),
                 Text('模型', style: Theme.of(context).textTheme.titleMedium),
@@ -244,7 +333,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   title: const Text('离线模式'),
                   subtitle: const Text('自动准备模型时不联网；设置页仍可手动下载'),
                   value: _offlineMode,
-                  onChanged: disabled ? null : (bool value) => setState(() => _offlineMode = value),
+                  onChanged: disabled
+                      ? null
+                      : (bool value) => setState(() => _offlineMode = value),
                 ),
                 if (widget.controller.busy) ...<Widget>[
                   LinearProgressIndicator(value: widget.controller.progress),
@@ -259,7 +350,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     if (!widget.controller.modelReady)
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: disabled ? null : widget.controller.downloadModel,
+                          onPressed: disabled
+                              ? null
+                              : widget.controller.downloadModel,
                           icon: const Icon(Icons.download),
                           label: const Text('下载模型'),
                         ),
@@ -276,7 +369,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 if (_errorText != null) ...<Widget>[
                   const SizedBox(height: 12),
-                  Text(_errorText!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  Text(
+                    _errorText!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
                 ],
                 const SizedBox(height: 24),
                 FilledButton.icon(

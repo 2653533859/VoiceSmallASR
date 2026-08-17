@@ -250,15 +250,15 @@ VoiceSmallASR/
 [`sherpa_onnx`](https://pub.dev/packages/sherpa_onnx) 包，与 Python 端**同版本（1.13.5）、同模型**，
 因此识别结果一致，Python 端可作为对照基准。
 
-当前进度：**M1（文件转写 + 字幕导出）、M2（麦克风实时字幕）、M3（视频播放 + 字幕叠加）与 M5（字幕校对编辑）已完成，M4 翻译基础、批量流程、双语导出、DeepL provider 与应用内翻译工作流已接入** —— 引擎层、音频解码、
+当前进度：**M1（文件转写 + 字幕导出）、M2（麦克风实时字幕）、M3（视频播放 + 字幕叠加）与 M5（字幕校对编辑）已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider、文件/实时字幕/视频字幕翻译工作流已接入** —— 引擎层、音频解码、
 后台识别 isolate、流式识别、视频播放与字幕联动都已接入，M6 首期设置页、模型管理与离线模式已接入，`flutter test` 149 项、macOS 端到端 7 项和 Android API 35 模拟器端到端 7 项通过；模拟器粤语识别 RTF 为 0.027。
 macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输出**逐字一致**
 （`呢几个字都表达唔到，我想讲嘅意思。`），RTF 约 0.06；实时识别把三段素材拼成「三句话」喂进去，
 每句都定稿且时间戳连续不重叠。
-后续计划包括 Android 真机性能和 Windows 用户桌面运行验证；个人使用不要求执行真实 DeepL 网络验收。
+后续计划包括 Android 真机性能和 Windows 用户桌面运行验证；个人使用不要求执行真实第三方 API 网络验收。
 当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`，并已在本机成功构建 Android release APK/AAB；个人使用时未提供签名变量即可使用 Android debug signing 构建 APK，正式发布/商店签名不在本项目范围内。Android signing 配置仍支持 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD` 和 `VSASR_ANDROID_KEY_PASSWORD` 四个环境变量，并已用临时 keystore 验证可选的外部签名链路。
-macOS 无签名包可以完成个人使用所需的编译与打包；但 `flutter_secure_storage` 的 Keychain Sharing 需要签名运行环境，因此 macOS 上要持久化 DeepL API Key 时仍需可用的签名包。
-DeepL provider 和应用内翻译流程已接入，但个人使用可不配置 API Key；真实 DeepL 验收入口为 `app/integration_test/deepl_acceptance_test.dart`，仅在以后需要验证在线翻译时使用，密钥不会写入仓库。
+macOS 无签名包可以完成个人使用所需的编译与打包；但 `flutter_secure_storage` 的 Keychain Sharing 需要签名运行环境，因此 macOS 上要持久化第三方翻译 API Key 时仍需可用的签名包。
+第三方 API provider 和应用内翻译流程已接入，但个人使用可不配置 API Key；实时字幕页可打开“实时翻译”，同一场录音会复用 provider，停止时不会逐条等待已排队请求；视频播放页可点击“翻译字幕”，译文会显示在视频叠加层和字幕列表中。真实网络验收仅在以后需要验证在线翻译时使用，密钥不会写入仓库。
 Windows Release 与 Inno Setup 安装包已由 `.github/workflows/windows-build.yml` 在 Windows runner 上构建通过，CI 同时检查运行时 DLL 和模型文件排除，并通过无模型桌面 smoke 验证 AAC 解码与 MP4 播放；手动 `run_full_e2e=true` 的完整模型 e2e 已在 run `31919855391` 通过 7 项测试，用户桌面验证仍待完成。
 `.github/workflows/release.yml` 已完成三端 GitHub Release：`v1.0.0` 已在云端生成 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包，可从 [GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.0) 下载。
 

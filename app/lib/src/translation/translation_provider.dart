@@ -18,6 +18,23 @@ abstract interface class TranslationProvider {
   });
 }
 
+/// 可由调用方主动释放网络资源的 provider。
+abstract interface class ClosableTranslationProvider
+    implements TranslationProvider {
+  void close();
+}
+
+/// 翻译服务请求或响应无效时抛出的错误。
+class TranslationException implements Exception {
+  const TranslationException(this.message, {this.statusCode});
+
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() => 'TranslationException: $message';
+}
+
 /// 把一批字幕文本交给 [provider] 翻译，并将译文写回对应的识别段。
 ///
 /// 空文本段不会发送给服务商，但会原样保留在结果中。服务商必须返回与
@@ -80,7 +97,9 @@ Future<TranscriptionResult> translateResult(
   final List<Segment> segments = List<Segment>.of(result.segments);
   for (int index = 0; index < positions.length; index++) {
     final int position = positions[index];
-    segments[position] = segments[position].copyWith(translation: translated[index].trim());
+    segments[position] = segments[position].copyWith(
+      translation: translated[index].trim(),
+    );
   }
   return result.copyWith(segments: segments);
 }
@@ -97,7 +116,11 @@ Future<List<String>> _translateBatch(
   StackTrace? lastStack;
   for (int attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      final List<String> translated = await provider.translate(texts, from: from, to: to);
+      final List<String> translated = await provider.translate(
+        texts,
+        from: from,
+        to: to,
+      );
       if (translated.length != texts.length) {
         throw StateError(
           '翻译服务返回 ${translated.length} 条结果，需要 ${texts.length} 条，无法安全对应字幕',

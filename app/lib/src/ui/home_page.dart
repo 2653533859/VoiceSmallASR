@@ -17,7 +17,7 @@ import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
-import 'package:vsasr_app/src/translation/deepl_provider.dart';
+import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
@@ -27,8 +27,10 @@ typedef PickFile = Future<String?> Function();
 /// 保存字幕：给文件名与内容，返回落地位置的描述；用户取消时返回 null。
 typedef SaveFile = Future<String?> Function(String fileName, String content);
 
-/// 创建翻译 provider。生产环境默认使用 DeepL，测试可以注入不触网的替身。
-typedef TranslationProviderFactory = TranslationProvider Function(String apiKey);
+/// 创建翻译 provider。生产环境使用可配置的第三方 API，测试可以注入不触网的替身。
+typedef TranslationProviderFactory = TranslationProvider Function(
+  String apiKey,
+);
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -40,6 +42,7 @@ class HomePage extends StatefulWidget {
     this.saveFile,
     this.settings,
     this.translationProviderFactory,
+    this.translationProviderResolver,
   });
 
   final TranscribeController controller;
@@ -58,6 +61,7 @@ class HomePage extends StatefulWidget {
   final AppSettingsRepository? settings;
 
   final TranslationProviderFactory? translationProviderFactory;
+  final Future<TranslationProvider?> Function()? translationProviderResolver;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -181,19 +185,32 @@ class _HomePageState extends State<HomePage> {
     if (result == null || widget.controller.busy) return;
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
-      final AppSettingsRepository repository = widget.settings ?? AppSettingsRepository();
-      final String? apiKey = await repository.translationSecrets.readDeepLApiKey();
+      final AppSettingsRepository repository =
+          widget.settings ?? AppSettingsRepository();
+      final TranslationApiSettings settings = await repository
+          .loadTranslationApiSettings();
+      final String? apiKey = await repository.translationSecrets.readApiKey();
       if (!mounted) return;
       if (apiKey == null) {
-        messenger.showSnackBar(const SnackBar(content: Text('请先在设置中保存 DeepL API Key')));
+        messenger.showSnackBar(
+          const SnackBar(content: Text('请先在设置中保存第三方翻译 API Key')),
+        );
         return;
       }
       final TranslationProvider provider =
-          widget.translationProviderFactory?.call(apiKey) ?? DeepLTranslationProvider(apiKey: apiKey);
+          widget.translationProviderFactory?.call(apiKey) ??
+          ApiTranslationProvider(
+            apiKey: apiKey,
+            endpoint: settings.endpoint,
+            model: settings.model,
+          );
       try {
-        await widget.controller.translateCurrentResult(provider);
+        await widget.controller.translateCurrentResult(
+          provider,
+          targetLanguage: settings.targetLanguage,
+        );
       } finally {
-        if (provider is DeepLTranslationProvider) provider.close();
+        if (provider is ClosableTranslationProvider) provider.close();
       }
     } on Object catch (error) {
       if (!mounted) return;
@@ -233,10 +250,18 @@ class _HomePageState extends State<HomePage> {
               onEdit: _openEditor,
               onTranslate: _translate,
             ),
-            live: live == null ? null : _LiveView(controller: live, onExport: _exportLive),
+            live: live == null
+                ? null
+                : _LiveView(controller: live, onExport: _exportLive),
             video: widget.video == null
                 ? null
-                : VideoPage(controller: widget.video!, transcription: c),
+                : VideoPage(
+                    controller: widget.video!,
+                    transcription: c,
+                    settings: widget.settings,
+                    translationProviderResolver:
+                        widget.translationProviderResolver,
+                  ),
           );
         }
         return Scaffold(
@@ -246,7 +271,9 @@ class _HomePageState extends State<HomePage> {
               _LanguagePicker(controller: c, enabled: !(live?.busy ?? false)),
               IconButton(
                 tooltip: '设置',
-                onPressed: c.busy || (live?.busy ?? false) ? null : _openSettings,
+                onPressed: c.busy || (live?.busy ?? false)
+                    ? null
+                    : _openSettings,
                 icon: const Icon(Icons.settings_outlined),
               ),
               const SizedBox(width: 12),
@@ -258,6 +285,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
+
 /// 「文件转写 / 实时字幕」两个页签。
 class _Tabs extends StatelessWidget {
   const _Tabs({required this.transcribe, this.live, this.video});
@@ -275,18 +303,17 @@ class _Tabs extends StatelessWidget {
           TabBar(
             tabs: <Widget>[
               const Tab(icon: Icon(Icons.audio_file_outlined), text: '文件转写'),
-              if (live != null) const Tab(icon: Icon(Icons.mic_none), text: '实时字幕'),
-              if (video != null) const Tab(icon: Icon(Icons.video_library_outlined), text: '视频播放'),
+              if (live != null)
+                const Tab(icon: Icon(Icons.mic_none), text: '实时字幕'),
+              if (video != null)
+                const Tab(
+                  icon: Icon(Icons.video_library_outlined),
+                  text: '视频播放',
+                ),
             ],
           ),
           Expanded(
-            child: TabBarView(
-              children: <Widget>[
-                transcribe,
-                ?live,
-                ?video,
-              ],
-            ),
+            child: TabBarView(children: <Widget>[transcribe, ?live, ?video]),
           ),
         ],
       ),
@@ -314,12 +341,17 @@ class _LanguagePicker extends StatelessWidget {
     return DropdownButton<String>(
       value: controller.language,
       underline: const SizedBox.shrink(),
-      onChanged: (controller.busy || !enabled) ? null : (String? value) {
-        if (value != null) controller.setLanguage(value);
-      },
+      onChanged: (controller.busy || !enabled)
+          ? null
+          : (String? value) {
+              if (value != null) controller.setLanguage(value);
+            },
       items: <DropdownMenuItem<String>>[
         for (final String code in kLanguages)
-          DropdownMenuItem<String>(value: code, child: Text(kLanguageLabels[code] ?? code)),
+          DropdownMenuItem<String>(
+            value: code,
+            child: Text(kLanguageLabels[code] ?? code),
+          ),
       ],
     );
   }
@@ -333,7 +365,8 @@ class _ModelSetupView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool working = controller.stage == JobStage.preparingModel ||
+    final bool working =
+        controller.stage == JobStage.preparingModel ||
         controller.stage == JobStage.managingModel;
     return Center(
       child: ConstrainedBox(
@@ -428,14 +461,18 @@ class _TranscribeView extends StatelessWidget {
               ),
               OutlinedButton.icon(
                 key: const Key('translateSubtitle'),
-                onPressed: result == null || controller.busy ? null : onTranslate,
+                onPressed: result == null || controller.busy
+                    ? null
+                    : onTranslate,
                 icon: const Icon(Icons.translate),
                 label: const Text('翻译为中文'),
               ),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 240),
                 child: Text(
-                  controller.filePath == null ? '' : p.basename(controller.filePath!),
+                  controller.filePath == null
+                      ? ''
+                      : p.basename(controller.filePath!),
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.right,
                   style: Theme.of(context).textTheme.bodySmall,
@@ -444,7 +481,8 @@ class _TranscribeView extends StatelessWidget {
             ],
           ),
         ),
-        if (controller.busy) LinearProgressIndicator(value: controller.progress),
+        if (controller.busy)
+          LinearProgressIndicator(value: controller.progress),
         if (controller.statusText.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -461,7 +499,8 @@ class _TranscribeView extends StatelessWidget {
               ? const Center(child: Text('选一个音频或视频文件开始'))
               : _SegmentList(result: result),
         ),
-        if (result != null && !result.isEmpty) _Footer(controller: controller, result: result),
+        if (result != null && !result.isEmpty)
+          _Footer(controller: controller, result: result),
       ],
     );
   }
@@ -482,7 +521,10 @@ class _LiveView extends StatelessWidget {
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: <Widget>[
               FilledButton.icon(
                 onPressed: controller.stage == LiveStage.idle
@@ -497,17 +539,30 @@ class _LiveView extends StatelessWidget {
                       )
                     : null,
               ),
-              const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: controller.hasResult && !controller.busy ? onExport : null,
+                onPressed: controller.hasResult && !controller.busy
+                    ? onExport
+                    : null,
                 icon: const Icon(Icons.save_alt),
                 label: const Text('导出字幕'),
               ),
-              const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: controller.hasResult && !controller.busy ? controller.clear : null,
+                onPressed: controller.hasResult && !controller.busy
+                    ? controller.clear
+                    : null,
                 icon: const Icon(Icons.clear_all),
                 label: const Text('清空'),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Text('实时翻译'),
+                  Switch.adaptive(
+                    key: const Key('liveTranslationToggle'),
+                    value: controller.translationEnabled,
+                    onChanged: controller.setTranslationEnabled,
+                  ),
+                ],
               ),
             ],
           ),
@@ -553,12 +608,17 @@ class _LiveList extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 4),
       itemCount: finals.length + (partial == null ? 0 : 1),
-      separatorBuilder: (BuildContext context, int index) => const Divider(height: 1),
+      separatorBuilder: (BuildContext context, int index) =>
+          const Divider(height: 1),
       itemBuilder: (BuildContext context, int index) {
         if (index >= finals.length) {
           return ListTile(
             dense: true,
-            leading: Icon(Icons.graphic_eq, size: 18, color: theme.colorScheme.primary),
+            leading: Icon(
+              Icons.graphic_eq,
+              size: 18,
+              color: theme.colorScheme.primary,
+            ),
             title: Text(
               '${partial!.text} …',
               style: TextStyle(
@@ -572,7 +632,18 @@ class _LiveList extends StatelessWidget {
         return ListTile(
           dense: true,
           leading: Text('${segment.index + 1}'),
-          title: Text(segment.text),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(segment.text),
+              if ((segment.translation ?? '').trim().isNotEmpty)
+                Text(
+                  segment.translation!.trim(),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: Theme.of(context).colorScheme.primary),
+                ),
+            ],
+          ),
           subtitle: Text(
             '${formatTimestamp(segment.start, sep: '.')} → '
             '${formatTimestamp(segment.end, sep: '.')}',
@@ -584,7 +655,8 @@ class _LiveList extends StatelessWidget {
   }
 }
 
-class _SegmentList extends StatelessWidget {  const _SegmentList({required this.result});
+class _SegmentList extends StatelessWidget {
+  const _SegmentList({required this.result});
 
   final TranscriptionResult result;
 
@@ -593,7 +665,8 @@ class _SegmentList extends StatelessWidget {  const _SegmentList({required this.
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 4),
       itemCount: result.length,
-      separatorBuilder: (BuildContext context, int index) => const Divider(height: 1),
+      separatorBuilder: (BuildContext context, int index) =>
+          const Divider(height: 1),
       itemBuilder: (BuildContext context, int index) {
         final Segment segment = result.segments[index];
         final String span =
@@ -609,9 +682,8 @@ class _SegmentList extends StatelessWidget {  const _SegmentList({required this.
               if ((segment.translation ?? '').trim().isNotEmpty)
                 Text(
                   segment.translation!.trim(),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: Theme.of(context).colorScheme.primary),
                 ),
             ],
           ),
@@ -677,7 +749,12 @@ class _ErrorBox extends StatelessWidget {
         children: <Widget>[
           Icon(Icons.error_outline, color: colors.onErrorContainer, size: 20),
           const SizedBox(width: 8),
-          Expanded(child: Text(message, style: TextStyle(color: colors.onErrorContainer))),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(color: colors.onErrorContainer),
+            ),
+          ),
         ],
       ),
     );

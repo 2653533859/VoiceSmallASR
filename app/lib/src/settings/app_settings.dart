@@ -4,6 +4,7 @@ library;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
+import 'package:vsasr_app/src/translation/api_provider.dart';
 
 const String _languageKey = 'settings.asr.language';
 const String _useItnKey = 'settings.asr.use_itn';
@@ -14,6 +15,8 @@ const String _minSilenceDurationKey = 'settings.vad.min_silence_duration';
 const String _minSpeechDurationKey = 'settings.vad.min_speech_duration';
 const String _maxSpeechDurationKey = 'settings.vad.max_speech_duration';
 const String _offlineModeKey = 'settings.model.offline_mode';
+const String _translationEndpointKey = 'settings.translation.endpoint';
+const String _translationModelKey = 'settings.translation.model';
 
 /// 可替换的普通设置存储，便于在没有平台 channel 的单测里验证持久化逻辑。
 abstract interface class PreferenceStore {
@@ -76,9 +79,11 @@ class SharedPreferencesStore implements PreferenceStore {
 
 /// 负责把普通设置和安全存储的密钥组合起来。
 class AppSettingsRepository {
-  AppSettingsRepository({PreferenceStore? preferences, TranslationSecrets? secrets})
-    : _preferences = preferences ?? SharedPreferencesStore(),
-      translationSecrets = secrets ?? TranslationSecrets();
+  AppSettingsRepository({
+    PreferenceStore? preferences,
+    TranslationSecrets? secrets,
+  }) : _preferences = preferences ?? SharedPreferencesStore(),
+       translationSecrets = secrets ?? TranslationSecrets();
 
   final PreferenceStore _preferences;
   final TranslationSecrets translationSecrets;
@@ -89,19 +94,35 @@ class AppSettingsRepository {
     final String? storedLanguage = await _preferences.readString(_languageKey);
     final bool? storedUseItn = await _preferences.readBool(_useItnKey);
     final int? storedThreads = await _preferences.readInt(_numThreadsKey);
-    final double? storedPartial = await _preferences.readDouble(_partialIntervalKey);
-    final double? storedThreshold = await _preferences.readDouble(_vadThresholdKey);
-    final double? storedSilence = await _preferences.readDouble(_minSilenceDurationKey);
-    final double? storedSpeech = await _preferences.readDouble(_minSpeechDurationKey);
-    final double? storedMaxSpeech = await _preferences.readDouble(_maxSpeechDurationKey);
+    final double? storedPartial = await _preferences.readDouble(
+      _partialIntervalKey,
+    );
+    final double? storedThreshold = await _preferences.readDouble(
+      _vadThresholdKey,
+    );
+    final double? storedSilence = await _preferences.readDouble(
+      _minSilenceDurationKey,
+    );
+    final double? storedSpeech = await _preferences.readDouble(
+      _minSpeechDurationKey,
+    );
+    final double? storedMaxSpeech = await _preferences.readDouble(
+      _maxSpeechDurationKey,
+    );
 
-    final String language = storedLanguage != null && kLanguages.contains(storedLanguage)
+    final String language =
+        storedLanguage != null && kLanguages.contains(storedLanguage)
         ? storedLanguage
         : base.language;
     final int defaultThreads = base.numThreads.clamp(1, 16).toInt();
-    final double defaultPartial = base.partialInterval.clamp(0.0, 3.0).toDouble();
-    final int numThreads = _validInt(storedThreads, min: 1, max: 16) ? storedThreads! : defaultThreads;
-    final double partialInterval = _validDouble(storedPartial, min: 0.0, max: 3.0)
+    final double defaultPartial = base.partialInterval
+        .clamp(0.0, 3.0)
+        .toDouble();
+    final int numThreads = _validInt(storedThreads, min: 1, max: 16)
+        ? storedThreads!
+        : defaultThreads;
+    final double partialInterval =
+        _validDouble(storedPartial, min: 0.0, max: 3.0)
         ? storedPartial!
         : defaultPartial;
     final VadConfig baseVad = base.vad;
@@ -135,15 +156,61 @@ class AppSettingsRepository {
     await _preferences.writeInt(_numThreadsKey, config.numThreads);
     await _preferences.writeDouble(_partialIntervalKey, config.partialInterval);
     await _preferences.writeDouble(_vadThresholdKey, config.vad.threshold);
-    await _preferences.writeDouble(_minSilenceDurationKey, config.vad.minSilenceDuration);
-    await _preferences.writeDouble(_minSpeechDurationKey, config.vad.minSpeechDuration);
-    await _preferences.writeDouble(_maxSpeechDurationKey, config.vad.maxSpeechDuration);
+    await _preferences.writeDouble(
+      _minSilenceDurationKey,
+      config.vad.minSilenceDuration,
+    );
+    await _preferences.writeDouble(
+      _minSpeechDurationKey,
+      config.vad.minSpeechDuration,
+    );
+    await _preferences.writeDouble(
+      _maxSpeechDurationKey,
+      config.vad.maxSpeechDuration,
+    );
   }
 
   /// 读取离线模式。离线模式只影响自动准备模型，不影响设置页的显式下载按钮。
-  Future<bool> loadOfflineMode() async => await _preferences.readBool(_offlineModeKey) ?? false;
+  Future<bool> loadOfflineMode() async =>
+      await _preferences.readBool(_offlineModeKey) ?? false;
 
-  Future<void> saveOfflineMode(bool enabled) => _preferences.writeBool(_offlineModeKey, enabled);
+  Future<void> saveOfflineMode(bool enabled) =>
+      _preferences.writeBool(_offlineModeKey, enabled);
+
+  /// 读取第三方翻译 API 的普通配置；API Key 仍由 [translationSecrets] 单独读取。
+  Future<TranslationApiSettings> loadTranslationApiSettings({
+    TranslationApiSettings? fallback,
+  }) async {
+    final TranslationApiSettings base =
+        fallback ?? const TranslationApiSettings();
+    final String? endpoint = await _preferences.readString(
+      _translationEndpointKey,
+    );
+    final String? model = await _preferences.readString(_translationModelKey);
+    return TranslationApiSettings(
+      endpoint: endpoint?.trim().isNotEmpty == true
+          ? endpoint!.trim()
+          : base.endpoint,
+      model: model?.trim().isNotEmpty == true ? model!.trim() : base.model,
+      targetLanguage: base.targetLanguage,
+    );
+  }
+
+  /// 持久化第三方翻译 API 的 endpoint 和模型名，不保存 API Key。
+  Future<void> saveTranslationApiSettings(
+    TranslationApiSettings settings,
+  ) async {
+    final String endpoint = settings.endpoint.trim();
+    final String model = settings.model.trim();
+    if (endpoint.isEmpty) {
+      throw ArgumentError.value(settings.endpoint, 'endpoint', 'API 地址不能为空');
+    }
+    if (model.isEmpty) {
+      throw ArgumentError.value(settings.model, 'model', '模型名不能为空');
+    }
+    await _preferences.writeString(_translationEndpointKey, endpoint);
+    await _preferences.writeString(_translationModelKey, model);
+  }
 }
 
 bool _validInt(int? value, {required int min, required int max}) =>

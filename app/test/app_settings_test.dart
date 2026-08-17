@@ -2,11 +2,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
+import 'package:vsasr_app/src/translation/api_provider.dart';
 
 void main() {
   test('普通识别设置可以保存并在下一次加载时恢复', () async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
-    final AppSettingsRepository repository = AppSettingsRepository(preferences: preferences);
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
     final AsrConfig saved = AsrConfig(
       language: 'ja',
       useItn: false,
@@ -40,7 +43,9 @@ void main() {
       ..doubles['settings.asr.partial_interval'] = double.nan
       ..doubles['settings.vad.threshold'] = 2.0
       ..doubles['settings.vad.min_silence_duration'] = -1.0;
-    final AppSettingsRepository repository = AppSettingsRepository(preferences: preferences);
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
 
     final AsrConfig loaded = await repository.loadConfig();
     final AsrConfig defaults = AsrConfig();
@@ -61,19 +66,40 @@ void main() {
     );
 
     await repository.saveConfig(AsrConfig(language: 'en'));
-    await repository.translationSecrets.saveDeepLApiKey('key');
+    await repository.translationSecrets.saveApiKey('key');
 
     expect(preferences.strings.values, isNot(contains('key')));
-    expect(secrets.values[kDeepLApiKeyStorageKey], 'key');
+    expect(secrets.values[kTranslationApiKeyStorageKey], 'key');
   });
 
   test('离线模式可以持久化', () async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
-    final AppSettingsRepository repository = AppSettingsRepository(preferences: preferences);
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
 
     expect(await repository.loadOfflineMode(), isFalse);
     await repository.saveOfflineMode(true);
     expect(await repository.loadOfflineMode(), isTrue);
+  });
+
+  test('第三方翻译 API 地址和模型可以持久化，但不包含 API Key', () async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
+    const TranslationApiSettings saved = TranslationApiSettings(
+      endpoint: 'https://provider.example/v1/chat/completions',
+      model: 'provider-translate',
+    );
+
+    await repository.saveTranslationApiSettings(saved);
+    final TranslationApiSettings loaded = await repository
+        .loadTranslationApiSettings();
+
+    expect(loaded.endpoint, saved.endpoint);
+    expect(loaded.model, saved.model);
+    expect(preferences.strings.values, isNot(contains('secret')));
   });
 }
 

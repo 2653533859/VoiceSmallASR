@@ -7,6 +7,8 @@ import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/translation/api_provider.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 顶层 Widget。[controller] / [live] 只在测试里显式传入。
@@ -18,6 +20,7 @@ class VsasrApp extends StatefulWidget {
     this.initialConfig,
     this.initialOfflineMode = false,
     this.settings,
+    this.translationProviderResolver,
   });
 
   final TranscribeController? controller;
@@ -25,6 +28,7 @@ class VsasrApp extends StatefulWidget {
   final AsrConfig? initialConfig;
   final bool initialOfflineMode;
   final AppSettingsRepository? settings;
+  final TranslationProviderResolver? translationProviderResolver;
 
   @override
   State<VsasrApp> createState() => _VsasrAppState();
@@ -45,9 +49,25 @@ class _VsasrAppState extends State<VsasrApp> {
       LiveController(
         provideWorker: _controller.ensureWorker,
         languageOf: () => _controller.language,
+        provideTranslationProvider:
+            widget.translationProviderResolver ?? _loadTranslationProvider,
       );
   late final bool _ownsLive = widget.live == null;
   late final VideoPlaybackController _video = VideoPlaybackController();
+
+  Future<TranslationProvider?> _loadTranslationProvider() async {
+    final AppSettingsRepository repository =
+        widget.settings ?? AppSettingsRepository();
+    final String? apiKey = await repository.translationSecrets.readApiKey();
+    if (apiKey == null) return null;
+    final TranslationApiSettings settings = await repository
+        .loadTranslationApiSettings();
+    return ApiTranslationProvider(
+      apiKey: apiKey,
+      endpoint: settings.endpoint,
+      model: settings.model,
+    );
+  }
 
   @override
   void dispose() {
@@ -73,6 +93,7 @@ class _VsasrAppState extends State<VsasrApp> {
         live: _live,
         video: _video,
         settings: widget.settings,
+        translationProviderResolver: widget.translationProviderResolver,
       ),
     );
   }

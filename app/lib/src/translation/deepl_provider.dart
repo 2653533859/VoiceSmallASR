@@ -1,4 +1,6 @@
-/// DeepL 在线翻译 provider。
+/// 兼容旧配置的 DeepL 在线翻译 provider。
+///
+/// 当前应用默认使用 `ApiTranslationProvider`；本类保留给旧调用方和兼容测试。
 ///
 /// API 细节见：
 /// https://developers.deepl.com/api-reference/translate/request-translation
@@ -8,6 +10,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:vsasr_app/src/translation/translation_provider.dart';
+
+export 'translation_provider.dart' show TranslationException;
 
 /// DeepL 免费套餐的 API 地址；付费套餐可传 `https://api.deepl.com`。
 const String kDeepLFreeApiBaseUrl = 'https://api-free.deepl.com';
@@ -19,7 +23,7 @@ const int kDeepLMaxRequestBytes = 128 * 1024;
 ///
 /// [apiKey] 只在实例内用于请求头，不负责持久化；API Key 的安全存储由
 /// 设置层负责。传入 [client] 后，调用方负责它的生命周期，便于测试和复用连接池。
-class DeepLTranslationProvider implements TranslationProvider {
+class DeepLTranslationProvider implements ClosableTranslationProvider {
   DeepLTranslationProvider({
     required String apiKey,
     String baseUrl = kDeepLFreeApiBaseUrl,
@@ -50,10 +54,18 @@ class DeepLTranslationProvider implements TranslationProvider {
     }
 
     final String source = (from ?? '').trim();
-    final String? sourceLanguage = source.isEmpty || source == 'auto' ? null : source.toUpperCase();
+    final String? sourceLanguage = source.isEmpty || source == 'auto'
+        ? null
+        : source.toUpperCase();
     final List<String> translations = <String>[];
-    for (final List<String> batch in _splitRequestTexts(texts, target, sourceLanguage)) {
-      translations.addAll(await _translateRequest(batch, target, sourceLanguage));
+    for (final List<String> batch in _splitRequestTexts(
+      texts,
+      target,
+      sourceLanguage,
+    )) {
+      translations.addAll(
+        await _translateRequest(batch, target, sourceLanguage),
+      );
     }
     return translations;
   }
@@ -84,11 +96,13 @@ class DeepLTranslationProvider implements TranslationProvider {
         statusCode: response.statusCode,
       );
     }
-    if (decoded is! Map<String, dynamic> || decoded['translations'] is! List<dynamic>) {
+    if (decoded is! Map<String, dynamic> ||
+        decoded['translations'] is! List<dynamic>) {
       throw const TranslationException('DeepL 返回缺少 translations 数组');
     }
 
-    final List<dynamic> rawTranslations = decoded['translations'] as List<dynamic>;
+    final List<dynamic> rawTranslations =
+        decoded['translations'] as List<dynamic>;
     final List<String> translations = <String>[];
     for (final dynamic item in rawTranslations) {
       if (item is! Map<String, dynamic> || item['text'] is! String) {
@@ -105,12 +119,17 @@ class DeepLTranslationProvider implements TranslationProvider {
   }
 
   /// 仅关闭 provider 自己创建的 HTTP client；注入的 client 由调用方管理。
+  @override
   void close() {
     if (_ownsClient) _client.close();
   }
 }
 
-Map<String, Object> _payload(List<String> texts, String target, String? source) {
+Map<String, Object> _payload(
+  List<String> texts,
+  String target,
+  String? source,
+) {
   final Map<String, Object> payload = <String, Object>{
     'text': texts,
     'target_lang': target,
@@ -131,7 +150,8 @@ Iterable<List<String>> _splitRequestTexts(
       current = candidate;
       continue;
     }
-    if (current.isEmpty || _payloadBytes(<String>[text], target, source) > kDeepLMaxRequestBytes) {
+    if (current.isEmpty ||
+        _payloadBytes(<String>[text], target, source) > kDeepLMaxRequestBytes) {
       throw const TranslationException('单条文本超过 DeepL 128 KiB 请求上限');
     }
     yield current;
@@ -142,16 +162,6 @@ Iterable<List<String>> _splitRequestTexts(
 
 int _payloadBytes(List<String> texts, String target, String? source) =>
     utf8.encode(jsonEncode(_payload(texts, target, source))).length;
-
-class TranslationException implements Exception {
-  const TranslationException(this.message, {this.statusCode});
-
-  final String message;
-  final int? statusCode;
-
-  @override
-  String toString() => 'TranslationException: $message';
-}
 
 String _requireApiKey(String value) {
   final String key = value.trim();
@@ -178,7 +188,9 @@ Uri _buildEndpoint(String baseUrl) {
   if (base.host.isEmpty || (base.scheme != 'http' && base.scheme != 'https')) {
     throw ArgumentError.value(baseUrl, 'baseUrl', '必须是 http 或 https URL');
   }
-  final String path = base.path.endsWith('/') ? '${base.path}v2/translate' : '${base.path}/v2/translate';
+  final String path = base.path.endsWith('/')
+      ? '${base.path}v2/translate'
+      : '${base.path}/v2/translate';
   return base.replace(path: path, query: null, fragment: null);
 }
 

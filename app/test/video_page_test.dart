@@ -7,6 +7,7 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 import 'support/fake_asr.dart';
@@ -27,6 +28,7 @@ void main() {
     );
     final _FakeVideoBackend backend = _FakeVideoBackend();
     final VideoPlaybackController video = VideoPlaybackController(backend: backend);
+    final _FakeTranslationProvider translation = _FakeTranslationProvider();
     addTearDown(() async {
       video.dispose();
       await transcription.shutdown();
@@ -41,6 +43,7 @@ void main() {
             controller: video,
             transcription: transcription,
             pickFile: () async => videoPath,
+            translationProviderResolver: () async => translation,
           ),
         ),
       ),
@@ -55,7 +58,26 @@ void main() {
     expect(find.text('字幕第一条'), findsNWidgets(2));
     await tester.tap(find.text('字幕第一条').last);
     expect(backend.lastSeek, Duration.zero);
+
+    await tester.tap(find.byKey(const Key('videoTranslateSubtitle')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
+    expect(translation.calls, 1);
   });
+}
+
+class _FakeTranslationProvider implements TranslationProvider {
+  int calls = 0;
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) async {
+    calls++;
+    return texts.map((String text) => '译文：$text').toList();
+  }
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {

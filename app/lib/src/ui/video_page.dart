@@ -8,6 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/settings/app_settings.dart';
+import 'package:vsasr_app/src/translation/api_provider.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 import 'package:vsasr_app/src/video/video_timeline.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
@@ -22,11 +25,15 @@ class VideoPage extends StatefulWidget {
     required this.controller,
     required this.transcription,
     this.pickFile,
+    this.settings,
+    this.translationProviderResolver,
   });
 
   final VideoPlaybackController controller;
   final TranscribeController transcription;
   final PickVideoFile? pickFile;
+  final AppSettingsRepository? settings;
+  final Future<TranslationProvider?> Function()? translationProviderResolver;
 
   @override
   State<VideoPage> createState() => _VideoPageState();
@@ -54,6 +61,51 @@ class _VideoPageState extends State<VideoPage> {
     final String? path = widget.transcription.filePath;
     if (path == null) return;
     await widget.controller.open(path);
+  }
+
+  Future<void> _translate() async {
+    final TranscriptionResult? result = widget.transcription.result;
+    if (result == null || widget.transcription.busy) return;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    try {
+      final Future<TranslationProvider?> Function()? resolver =
+          widget.translationProviderResolver;
+      final TranslationProvider? provider = resolver == null
+          ? await _loadTranslationProvider()
+          : await resolver();
+      try {
+        if (!mounted) return;
+        if (provider == null) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('请先在设置中保存第三方翻译 API Key')),
+          );
+          return;
+        }
+        await widget.transcription.translateCurrentResult(
+          provider,
+          targetLanguage: 'zh-CN',
+        );
+      } finally {
+        if (provider is ClosableTranslationProvider) provider.close();
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('翻译失败：$error')));
+    }
+  }
+
+  Future<TranslationProvider?> _loadTranslationProvider() async {
+    final AppSettingsRepository repository =
+        widget.settings ?? AppSettingsRepository();
+    final TranslationApiSettings settings = await repository
+        .loadTranslationApiSettings();
+    final String? apiKey = await repository.translationSecrets.readApiKey();
+    if (apiKey == null) return null;
+    return ApiTranslationProvider(
+      apiKey: apiKey,
+      endpoint: settings.endpoint,
+      model: settings.model,
+    );
   }
 
   Future<void> _openEditor(TranscriptionResult result) async {
@@ -89,7 +141,10 @@ class _VideoPageState extends State<VideoPage> {
           children: <Widget>[
             Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
                   FilledButton.icon(
                     onPressed: video.busy ? null : _openVideo,
@@ -97,7 +152,6 @@ class _VideoPageState extends State<VideoPage> {
                     label: const Text('打开视频'),
                   ),
                   if (transcribedVideo) ...<Widget>[
-                    const SizedBox(width: 8),
                     OutlinedButton.icon(
                       onPressed: video.busy ? null : _openTranscribedVideo,
                       icon: const Icon(Icons.subtitles_outlined),
@@ -105,16 +159,23 @@ class _VideoPageState extends State<VideoPage> {
                     ),
                   ],
                   if (hasLinkedResult) ...<Widget>[
-                    const SizedBox(width: 8),
                     OutlinedButton.icon(
                       key: const Key('videoSubtitleEditor'),
                       onPressed: video.busy ? null : () => _openEditor(result),
                       icon: const Icon(Icons.edit_note),
                       label: const Text('编辑字幕'),
                     ),
+                    OutlinedButton.icon(
+                      key: const Key('videoTranslateSubtitle'),
+                      onPressed: video.busy || widget.transcription.busy
+                          ? null
+                          : _translate,
+                      icon: const Icon(Icons.translate),
+                      label: const Text('翻译字幕'),
+                    ),
                   ],
-                  const SizedBox(width: 12),
-                  Expanded(
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 240),
                     child: Text(
                       video.filePath == null ? '尚未打开视频' : p.basename(video.filePath!),
                       overflow: TextOverflow.ellipsis,
@@ -125,6 +186,13 @@ class _VideoPageState extends State<VideoPage> {
                 ],
               ),
             ),
+            if (widget.transcription.stage == JobStage.translating) ...<Widget>[
+              LinearProgressIndicator(value: widget.transcription.progress),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: Text(widget.transcription.statusText),
+              ),
+            ],
             Expanded(
               flex: hasLinkedResult ? 3 : 4,
               child: _VideoSurface(controller: video, current: current),
@@ -260,7 +328,19 @@ class _SubtitleList extends StatelessWidget {
         return ListTile(
           dense: true,
           selected: selected,
-          title: Text(segment.text),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(segment.text),
+              if ((segment.translation ?? '').trim().isNotEmpty)
+                Text(
+                  segment.translation!.trim(),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+            ],
+          ),
           subtitle: Text(
             '${_formatDuration(Duration(milliseconds: (segment.start * 1000).round()))} → '
             '${_formatDuration(Duration(milliseconds: (segment.end * 1000).round()))}',

@@ -10,21 +10,21 @@
 - M4 的第一项已完成：加入服务商无关的 `TranslationProvider` 和 `translateResult()`，可在校验返回数量后把译文安全写入 `Segment.translation`。
 - M4 的批量流程已完成：`translateResult()` 支持分批、失败重试、延迟和累计进度回报，全部批次成功后才写回译文。
 - M4 的双语字幕导出已完成：SRT/VTT/TXT 输出原文与译文双行，JSON 保留结构化译文；带译文的长段不切分以保持时间边界一致。
-- M4 的首期在线 provider 已完成：`DeepLTranslationProvider` 使用官方 v2 接口，支持 API 错误脱敏、自动/显式源语言和 128 KiB 请求体拆分。
-- M4 的应用内翻译工作流已完成：文件转写页从安全存储读取 DeepL API Key，显示批量进度，成功后回写译文，失败时保留原结果；译文会显示在列表并进入后续导出/视频叠加链路。
-- M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数和 DeepL API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
+- M4 的首期在线 provider 已完成：`ApiTranslationProvider` 支持可配置的 OpenAI-compatible 第三方 Chat Completions API，包含 endpoint、模型、API Key、错误脱敏和响应数量校验。
+- M4 的应用内翻译工作流已完成：文件转写页和视频播放页从安全存储读取第三方翻译 API Key，显示批量进度，成功后回写译文，失败时保留原结果；实时字幕页支持逐条翻译，单次录音会话复用 provider，停止时取消未开始的排队请求，译文会显示在列表、视频叠加字幕并进入后续导出链路。
+- M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数、第三方翻译 endpoint/模型/API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
 - M7 macOS 个人使用打包已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；App Store/公证所需的开发者签名不在本项目范围内。
 - M7 Android 个人使用构建已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，未提供签名变量时使用 debug signing，APK 可用于个人安装和测试。
 - Android 可选外部签名配置已接入 `app/android/app/build.gradle.kts`：显式提供四个 `VSASR_ANDROID_*` 环境变量时使用外部 keystore，变量不完整或文件不存在会直接失败；JDK 17 与构建链路已验证，本机已用隔离的临时 keystore 构建 APK，`apksigner` v2 校验通过；个人使用不要求开发者 keystore。
 - Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；2026-08-16 重跑 7/7，粤语识别 RTF `0.027`；模拟器使用软件渲染，真机性能仍未验证。
-- M4 真实验收入口已准备：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材，`app/integration_test/deepl_acceptance_test.dart` 使用仓库外的 `--dart-define-from-file` 密钥文件验证真实 DeepL、双语 SRT 和视频字幕叠加；按个人使用范围主动跳过，不作为当前交付门禁。
+- M4 真实验收入口仍可按需扩展：`scripts/prepare_translation_acceptance_media.sh` 生成英/日视频素材；真实第三方 API 网络验收因需要用户自己的服务商密钥，暂不作为当前个人使用交付门禁。
 - Windows M7 构建已完成：GitHub Actions run `31912544699` 在 `windows-2022` runner 上通过 MSVC 编译 Flutter Release，并用 `scripts/build_windows_unsigned.ps1` + Inno Setup 生成未签名安装包；CI 自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，并拒绝模型文件；Release 目录约 111 MiB，安装包约 31 MiB。
 - Windows 完整模型 e2e 已验收：GitHub Actions run `31919855391` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试，粤语 wav 识别 RTF `0.064`；同一 workflow 的 Windows smoke、产物校验和 artifact 上传也通过。`.github/workflows/windows-build.yml` 的手动 `run_full_e2e=true` 会恢复模型缓存，必要时通过三源 fallback 下载并做最小字节数校验，再用 `VSASR_MODEL_DIR` 指向外部模型目录运行测试。
-- 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，DeepL 真实网络验收已主动跳过。
+- 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
 - 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31978719431` 云端构建并发布 `v1.0.0`，包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包；发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.0。
-- 当前下一步是补 Android 真机性能和 Windows 用户桌面运行验证；DeepL 真实网络验收仅在以后需要在线翻译时再执行。
+- 当前下一步是补 Android 真机性能和 Windows 用户桌面运行验证；第三方 API 真实网络验收仅在以后需要在线翻译时再执行。
 
 ## 已验证结果
 
@@ -39,11 +39,11 @@
 - Android API 35 模拟器 e2e：2026-08-16 重跑 7 项全部通过，真实模型识别结果与 Python 基线一致，RTF `0.027`；该结果仅作为模拟器基线，不代表真机性能。
 - 播放器：`media_kit 1.2.6` + `media_kit_video 2.0.1` + `media_kit_libs_video 1.0.7` 已接入；macOS 无签名编译通过，插件当前由 CocoaPods 集成。
 - M3 测试覆盖：播放器状态/生命周期、字幕时间边界、视频页加载/叠加/点击跳转；7 项集成测试包含真实 `en.mp4` 播放、跳转、抽音轨和识别。
-- M4 测试覆盖：6 项翻译抽象/批量流程测试、4 项双语导出测试、6 项 DeepL provider 测试。
+- M4 测试覆盖：翻译抽象/批量流程、双语导出、旧 DeepL provider 兼容、第三方 API provider、文件页/视频页/实时字幕翻译测试。
 - 双语字幕导出测试：4 项，覆盖 SRT/VTT/TXT/JSON、译文顺序、关闭双语和长段时间边界。
 - M6 测试覆盖：3 项 API Key 安全存储测试、4 项普通设置/离线模式持久化测试、2 项设置页测试、1 项配置变更后 worker 重启测试，以及 4 项模型/worker 生命周期测试。
 - M5 测试覆盖：9 项字幕编辑器、页面交互和导出时间轴校验测试。
-- M4 翻译工作流新增 4 项状态机/页面测试；真实 DeepL 网络验收按个人使用范围主动跳过。
+- M4 翻译工作流新增状态机、文件页、视频页和实时字幕翻译测试；真实第三方 API 网络验收按个人使用范围主动跳过。
 - macOS 真模型端到端验收已完成：Flutter 与 Python 对粤语素材逐字一致，实时识别链路的定稿序号和时间戳连续。
 
 ## 最近修复

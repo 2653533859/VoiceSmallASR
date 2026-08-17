@@ -7,7 +7,7 @@ import 'package:vsasr_app/src/settings/settings_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 
 void main() {
-  testWidgets('设置页保存普通配置和 DeepL API Key，并立即应用到控制器', (WidgetTester tester) async {
+  testWidgets('设置页保存普通配置和第三方翻译 API Key，并立即应用到控制器', (WidgetTester tester) async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
     final _FakeSecretStore secrets = _FakeSecretStore();
     final AppSettingsRepository repository = AppSettingsRepository(
@@ -18,7 +18,9 @@ void main() {
     addTearDown(controller.shutdown);
 
     await tester.pumpWidget(
-      MaterialApp(home: SettingsPage(controller: controller, repository: repository)),
+      MaterialApp(
+        home: SettingsPage(controller: controller, repository: repository),
+      ),
     );
     await tester.pump();
     await tester.pump();
@@ -26,7 +28,7 @@ void main() {
     await tester.tap(find.byKey(const Key('settingsLanguage')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('日文').last);
-    final Finder apiKeyField = find.byKey(const Key('deepLApiKey')).first;
+    final Finder apiKeyField = find.byKey(const Key('translationApiKey')).first;
     await tester.enterText(apiKeyField, '  saved-key  ');
     for (int i = 0; i < 3; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -400));
@@ -39,13 +41,14 @@ void main() {
     expect(controller.config.language, 'ja');
     expect(await repository.loadConfig(), isA<AsrConfig>());
     expect((await repository.loadConfig()).language, 'ja');
-    expect(secrets.values[kDeepLApiKeyStorageKey], 'saved-key');
+    expect(secrets.values[kTranslationApiKeyStorageKey], 'saved-key');
     expect(controller.offlineMode, isTrue);
     expect(await repository.loadOfflineMode(), isTrue);
   });
 
   testWidgets('设置页打开时恢复已保存的 API Key，但不显示明文', (WidgetTester tester) async {
-    final _FakeSecretStore secrets = _FakeSecretStore()..values[kDeepLApiKeyStorageKey] = 'saved-key';
+    final _FakeSecretStore secrets = _FakeSecretStore()
+      ..values[kTranslationApiKeyStorageKey] = 'saved-key';
     final AppSettingsRepository repository = AppSettingsRepository(
       preferences: _FakePreferenceStore(),
       secrets: TranslationSecrets(store: secrets),
@@ -54,16 +57,23 @@ void main() {
     addTearDown(controller.shutdown);
 
     await tester.pumpWidget(
-      MaterialApp(home: SettingsPage(controller: controller, repository: repository)),
+      MaterialApp(
+        home: SettingsPage(controller: controller, repository: repository),
+      ),
     );
     await tester.pump();
     await tester.pump();
 
-    final Finder apiKeyField = find.byKey(const Key('deepLApiKey')).first;
+    final Finder apiKeyField = find.byKey(const Key('translationApiKey')).first;
     final TextField field = tester.widget<TextField>(apiKeyField);
     expect(field.obscureText, isTrue);
     expect(field.controller?.text, 'saved-key');
-    expect(find.byWidgetPredicate((Widget widget) => widget is Text && widget.data == 'saved-key'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (Widget widget) => widget is Text && widget.data == 'saved-key',
+      ),
+      findsNothing,
+    );
   });
 }
 

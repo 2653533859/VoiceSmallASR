@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_engine.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
+import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 
 import 'support/fake_asr.dart';
@@ -46,25 +47,80 @@ void main() {
     int notified = 0;
     f.live.addListener(() => notified++);
 
-    f.session.emit(const Segment(text: '今日天', start: 0.0, end: 1.0, isFinal: false));
+    f.session.emit(
+      const Segment(text: '今日天', start: 0.0, end: 1.0, isFinal: false),
+    );
     await pumpEventQueue();
     expect(f.live.partial?.text, '今日天');
     expect(f.live.finals, isEmpty);
 
     // 同一句的第二条局部结果：替换而不是追加
-    f.session.emit(const Segment(text: '今日天气', start: 0.0, end: 1.4, isFinal: false));
+    f.session.emit(
+      const Segment(text: '今日天气', start: 0.0, end: 1.4, isFinal: false),
+    );
     await pumpEventQueue();
     expect(f.live.partial?.text, '今日天气');
     expect(f.live.finals, isEmpty);
 
     // 定稿：进列表，局部清空
-    f.session.emit(const Segment(text: '今日天气几好。', start: 0.0, end: 1.8, index: 0));
+    f.session.emit(
+      const Segment(text: '今日天气几好。', start: 0.0, end: 1.8, index: 0),
+    );
     await pumpEventQueue();
     expect(f.live.partial, isNull);
     expect(f.live.finals.map((Segment s) => s.text), <String>['今日天气几好。']);
     expect(f.live.hasResult, isTrue);
     expect(f.live.statusText, contains('已定稿 1 句'));
     expect(notified, 3);
+  });
+
+  test('开启实时翻译后，定稿字幕异步写回译文并保持时间轴', () async {
+    final _FakeLiveTranslationProvider provider =
+        _FakeLiveTranslationProvider();
+    int resolveCount = 0;
+    final _Fixture f = _Fixture(
+      translationProvider: () async {
+        resolveCount++;
+        return provider;
+      },
+    );
+    addTearDown(f.dispose);
+    await f.live.start();
+    f.live.setTranslationEnabled(true);
+
+    f.session.emit(
+      const Segment(
+        text: 'hello',
+        start: 0.0,
+        end: 1.0,
+        language: 'en',
+        index: 0,
+      ),
+    );
+    await pumpEventQueue();
+
+    expect(f.live.finals.single.translation, '译文：hello');
+    expect(provider.from, 'en');
+    expect(provider.to, 'zh-CN');
+    expect(provider.calls, 1);
+    expect(resolveCount, 1);
+    expect(provider.closed, isFalse);
+
+    f.session.emit(
+      const Segment(
+        text: 'world',
+        start: 1.2,
+        end: 2.0,
+        language: 'en',
+        index: 1,
+      ),
+    );
+    await pumpEventQueue();
+    expect(provider.calls, 2);
+    expect(resolveCount, 1);
+
+    await f.live.stop();
+    expect(provider.closed, isTrue);
   });
 
   test('停止录音：先停设备再收会话，尾句能进来', () async {
@@ -74,7 +130,12 @@ void main() {
 
     f.session.emit(const Segment(text: '第一句。', start: 0.0, end: 1.0, index: 0));
     // 停录时 flush 补出来的尾句 —— 往往正是用户最后说的那句话
-    f.session.tail = const Segment(text: '最后一句。', start: 1.2, end: 2.4, index: 1);
+    f.session.tail = const Segment(
+      text: '最后一句。',
+      start: 1.2,
+      end: 2.4,
+      index: 1,
+    );
     await pumpEventQueue();
 
     await f.live.stop();
@@ -91,7 +152,9 @@ void main() {
     addTearDown(f.dispose);
     await f.live.start();
 
-    f.session.emit(const Segment(text: '说到一半', start: 0.0, end: 0.8, isFinal: false));
+    f.session.emit(
+      const Segment(text: '说到一半', start: 0.0, end: 0.8, isFinal: false),
+    );
     await pumpEventQueue();
     expect(f.live.partial, isNotNull);
 
@@ -112,7 +175,9 @@ void main() {
 
   test('没有麦克风权限：错误里是原生给的中文说明，会话被收掉', () async {
     final _Fixture f = _Fixture(
-      mic: FakeMicrophone(failure: const MicrophoneException('没有麦克风权限，请在系统设置里允许')),
+      mic: FakeMicrophone(
+        failure: const MicrophoneException('没有麦克风权限，请在系统设置里允许'),
+      ),
     );
     addTearDown(f.dispose);
 
@@ -198,7 +263,9 @@ void main() {
     addTearDown(f.dispose);
     await f.live.start();
 
-    f.session.emit(const Segment(text: '半句', start: 2.0, end: 2.5, isFinal: false));
+    f.session.emit(
+      const Segment(text: '半句', start: 2.0, end: 2.5, isFinal: false),
+    );
     f.session.emit(const Segment(text: '第一句。', start: 0.0, end: 1.0, index: 0));
     await pumpEventQueue();
 
@@ -217,7 +284,13 @@ void main() {
 
     expect(
       () => f.live.renderResult('srt'),
-      throwsA(isA<StateError>().having((StateError e) => e.message, 'message', contains('还没有'))),
+      throwsA(
+        isA<StateError>().having(
+          (StateError e) => e.message,
+          'message',
+          contains('还没有'),
+        ),
+      ),
     );
   });
 
@@ -250,10 +323,12 @@ class _Fixture {
     FakeMicrophone? mic,
     Future<Transcriber?> Function()? worker,
     String Function()? language,
+    TranslationProviderResolver? translationProvider,
   }) : mic = mic ?? FakeMicrophone() {
     live = LiveController(
       provideWorker: worker ?? () async => transcriber,
       languageOf: language ?? () => 'auto',
+      provideTranslationProvider: translationProvider,
       // 必须写 this.mic：构造体里的 mic 是那个可空的形参，传进去等于没传，
       // LiveController 会退回真实的 MicrophoneSource
       mic: this.mic,
@@ -271,4 +346,26 @@ class _Fixture {
     await live.shutdown();
     live.dispose();
   }
+}
+
+class _FakeLiveTranslationProvider implements ClosableTranslationProvider {
+  String? from;
+  String? to;
+  bool closed = false;
+  int calls = 0;
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) async {
+    calls++;
+    this.from = from;
+    this.to = to;
+    return texts.map((String text) => '译文：$text').toList();
+  }
+
+  @override
+  void close() => closed = true;
 }
