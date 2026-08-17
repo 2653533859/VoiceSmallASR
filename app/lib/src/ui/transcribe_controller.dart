@@ -136,6 +136,18 @@ class TranscribeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 只替换项目引用的媒体文件，不重新识别已有字幕。
+  void relocateMedia(String path) {
+    if (busy) throw StateError('识别进行中，暂时不能更换媒体文件');
+    final String value = path.trim();
+    if (value.isEmpty) throw ArgumentError('媒体文件路径不能为空');
+    _filePath = value;
+    _errorText = null;
+    _statusText = '媒体文件已重新定位';
+    _markProjectChanged();
+    notifyListeners();
+  }
+
   /// 接收字幕校对页保存后的结果。
   ///
   /// 校对页只在空闲时打开；这里仍做一次时间轴校验，避免其他调用方绕过编辑器

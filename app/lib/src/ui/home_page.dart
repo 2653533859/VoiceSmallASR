@@ -28,6 +28,9 @@ import 'package:vsasr_app/src/video/video_playback_controller.dart';
 /// 选择要转写的文件，返回绝对路径；用户取消时返回 null。
 typedef PickFile = Future<String?> Function();
 
+/// 检查媒体引用是否仍可读；测试可注入内存或临时文件实现。
+typedef MediaFileExists = Future<bool> Function(String path);
+
 /// 保存字幕：给文件名与内容，返回落地位置的描述；用户取消时返回 null。
 typedef SaveFile = Future<String?> Function(String fileName, String content);
 
@@ -62,6 +65,7 @@ class HomePage extends StatefulWidget {
     this.loadProjectFile,
     this.saveFile,
     this.autosaveStore,
+    this.mediaFileExists,
     this.settings,
     this.translationProviderFactory,
     this.translationProviderResolver,
@@ -83,6 +87,8 @@ class HomePage extends StatefulWidget {
 
   /// 自动保存与恢复存储。生产环境使用应用支持目录，测试可注入内存实现。
   final ProjectAutosaveStore? autosaveStore;
+
+  final MediaFileExists? mediaFileExists;
 
   /// 设置存储。测试注入替身；生产环境由顶层应用复用同一个仓库。
   final AppSettingsRepository? settings;
@@ -234,6 +240,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (recover != true) return;
     try {
       await widget.controller.loadProject(project);
+      await _checkProjectMedia();
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已恢复上次自动保存的项目')));
@@ -331,10 +338,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     required VsasrProject project,
     required String? externalPath,
     required String identity,
+    bool refreshCache = false,
   }) async {
     if (Platform.isAndroid &&
         externalPath != null &&
-        _recentProjects.contains(externalPath)) {
+        _recentProjects.contains(externalPath) &&
+        !refreshCache) {
       return externalPath;
     }
     if (!Platform.isAndroid && externalPath != null) {
@@ -433,10 +442,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         project = await load(path);
       }
       await widget.controller.loadProject(project);
+      await _checkProjectMedia();
+      final VsasrProject currentProject = widget.controller.projectSnapshot;
       final String? recentPath = await _projectPathForRecent(
-        project: project,
+        project: currentProject,
         externalPath: selected.path,
         identity: selected.path ?? selected.name,
+        refreshCache: currentProject.mediaPath != project.mediaPath,
       );
       if (recentPath != null) await _rememberRecentProject(recentPath);
       if (!mounted) return;
@@ -447,6 +459,52 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('打开项目失败：$error')));
     }
+  }
+
+  Future<bool> _mediaFileExists(String? path) async {
+    if (path == null) return false;
+    final String? normalized = _normalizeRecentProjectPath(path);
+    if (normalized == null) return false;
+    return widget.mediaFileExists?.call(normalized) ??
+        File(normalized).exists();
+  }
+
+  Future<void> _checkProjectMedia() async {
+    if (await _mediaFileExists(widget.controller.filePath)) return;
+    if (!mounted) return;
+    final bool? relocate = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('媒体文件不存在'),
+        content: const Text('项目中的原媒体文件已不可用。你仍可以继续查看和编辑字幕，或重新选择对应的音频/视频文件。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('继续使用字幕'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('重新选择媒体'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || relocate != true) return;
+    final String? path = await _pickFile();
+    if (!mounted || path == null) return;
+    final String? normalized = _normalizeRecentProjectPath(path);
+    if (normalized == null || !await _mediaFileExists(normalized)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('所选媒体文件不存在，请重新选择')));
+      return;
+    }
+    widget.controller.relocateMedia(normalized);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('媒体文件已重新定位：${p.basename(normalized)}')),
+    );
   }
 
   Future<void> _saveProject() async {

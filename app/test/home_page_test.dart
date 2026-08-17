@@ -59,6 +59,7 @@ void main() {
     LoadProjectFile? loadProjectFile,
     SaveFile? saveFile,
     ProjectAutosaveStore? autosaveStore,
+    MediaFileExists? mediaFileExists,
     AppSettingsRepository? settings,
     TranslationProviderFactory? translationProviderFactory,
   }) async {
@@ -71,6 +72,8 @@ void main() {
           loadProjectFile: loadProjectFile,
           saveFile: saveFile,
           autosaveStore: autosaveStore ?? _FakeAutosaveStore(),
+          mediaFileExists:
+              mediaFileExists ?? (String path) async => File(path).existsSync(),
           settings: settings,
           translationProviderFactory: translationProviderFactory,
         ),
@@ -140,8 +143,10 @@ void main() {
 
   testWidgets('打开项目文件后恢复字幕、媒体路径和配置', (WidgetTester tester) async {
     const String projectPath = '/tmp/demo.vsasr.json';
+    final String restoredMediaPath = '${workspace.path}/restored.wav';
+    File(restoredMediaPath).writeAsStringSync('media');
     final VsasrProject project = VsasrProject(
-      mediaPath: '/tmp/restored.wav',
+      mediaPath: restoredMediaPath,
       config: AsrConfig(language: 'en'),
       result: TranscriptionResult(
         language: 'en',
@@ -165,13 +170,61 @@ void main() {
     );
 
     await tester.tap(find.text('打开项目'));
-    for (int i = 0; i < 4; i++) {
-      await tester.pump();
+    for (int i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
     }
     expect(find.text('恢复的字幕'), findsOneWidget);
-    expect(controller.filePath, '/tmp/restored.wav');
+    expect(controller.filePath, restoredMediaPath);
     expect(controller.language, 'en');
     expect(find.text('已打开项目：demo.vsasr.json'), findsOneWidget);
+  });
+
+  testWidgets('项目媒体缺失时可以重新定位并更新项目引用', (WidgetTester tester) async {
+    final String missingMediaPath = '${workspace.path}/missing.wav';
+    final String relocatedMediaPath = '${workspace.path}/relocated.wav';
+    File(relocatedMediaPath).writeAsStringSync('media');
+    final VsasrProject project = VsasrProject(
+      mediaPath: missingMediaPath,
+      config: AsrConfig(language: 'en'),
+      result: const TranscriptionResult(
+        language: 'en',
+        duration: 1,
+        segments: <Segment>[
+          Segment(text: '媒体缺失字幕', start: 0, end: 1, language: 'en'),
+        ],
+      ),
+    );
+    final _FakeAutosaveStore autosave = _FakeAutosaveStore();
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      autosaveStore: autosave,
+      pickFile: () async => relocatedMediaPath,
+      pickProjectFile: () async => const PickedProjectFile(
+        name: 'missing.vsasr.json',
+        path: '/tmp/missing.vsasr.json',
+      ),
+      loadProjectFile: (String path) async => project,
+    );
+
+    await tester.tap(find.text('打开项目'));
+    for (int i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(find.text('媒体文件不存在'), findsOneWidget);
+
+    await tester.tap(find.text('重新选择媒体'));
+    for (int i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(controller.filePath, relocatedMediaPath);
+    expect(find.text('媒体文件已重新定位：relocated.wav'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pump();
+    expect(autosave.project?.mediaPath, relocatedMediaPath);
   });
 
   testWidgets('识别完成后会自动保存可恢复快照', (WidgetTester tester) async {
@@ -198,8 +251,10 @@ void main() {
   });
 
   testWidgets('启动时可以恢复上次自动保存的项目', (WidgetTester tester) async {
+    final String recoveryMediaPath = '${workspace.path}/recovery.wav';
+    File(recoveryMediaPath).writeAsStringSync('media');
     final VsasrProject project = VsasrProject(
-      mediaPath: '/tmp/recovery.wav',
+      mediaPath: recoveryMediaPath,
       config: AsrConfig(language: 'en'),
       result: const TranscriptionResult(
         language: 'en',
@@ -219,14 +274,16 @@ void main() {
     await tester.tap(find.text('恢复项目'));
     await tester.pumpAndSettle();
 
-    expect(controller.filePath, '/tmp/recovery.wav');
+    expect(controller.filePath, recoveryMediaPath);
     expect(controller.language, 'en');
     expect(find.text('恢复快照字幕'), findsOneWidget);
   });
 
   testWidgets('没有本地路径时也可以从 SAF 字节打开项目', (WidgetTester tester) async {
+    final String safMediaPath = '${workspace.path}/saf.wav';
+    File(safMediaPath).writeAsStringSync('media');
     final VsasrProject project = VsasrProject(
-      mediaPath: '/tmp/saf.wav',
+      mediaPath: safMediaPath,
       config: AsrConfig(language: 'zh'),
       result: const TranscriptionResult(
         language: 'zh',
@@ -254,7 +311,7 @@ void main() {
     }
 
     expect(find.text('SAF 字节字幕'), findsOneWidget);
-    expect(controller.filePath, '/tmp/saf.wav');
+    expect(controller.filePath, safMediaPath);
   });
 
   testWidgets('保存项目会交给保存器并保留项目 JSON', (WidgetTester tester) async {
