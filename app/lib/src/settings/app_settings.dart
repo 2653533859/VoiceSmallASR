@@ -22,10 +22,15 @@ const String _translationModelKey = 'settings.translation.model';
 const String _translationTargetLanguageKey =
     'settings.translation.target_language';
 const String _translationGlossaryKey = 'settings.translation.glossary';
+const String _translationProviderPresetsKey =
+    'settings.translation.provider_presets';
 const String _recentProjectsKey = 'settings.projects.recent';
 
 /// 最近项目最多保留的路径数，最新打开的项目排在最前面。
 const int kMaxRecentProjects = 8;
+
+/// 普通设置中最多保留的翻译服务预设数量。
+const int kMaxTranslationProviderPresets = 12;
 
 /// 可替换的普通设置存储，便于在没有平台 channel 的单测里验证持久化逻辑。
 abstract interface class PreferenceStore {
@@ -255,6 +260,107 @@ class AppSettingsRepository {
   Future<void> saveTranslationApiSettings(
     TranslationApiSettings settings,
   ) async {
+    final TranslationApiSettings normalized = _normalizeTranslationSettings(
+      settings,
+    );
+    await _writeTranslationApiSettings(normalized);
+  }
+
+  /// 读取用户保存的翻译服务预设。单个损坏条目不会阻塞其他设置加载。
+  Future<List<TranslationProviderPreset>>
+  loadTranslationProviderPresets() async {
+    final String? raw = await _preferences.readString(
+      _translationProviderPresetsKey,
+    );
+    if (raw == null || raw.trim().isEmpty) return <TranslationProviderPreset>[];
+    try {
+      final Object? decoded = jsonDecode(raw);
+      if (decoded is! List) return <TranslationProviderPreset>[];
+      final Set<String> seenIds = <String>{};
+      final Set<String> seenNames = <String>{};
+      final List<TranslationProviderPreset> presets =
+          <TranslationProviderPreset>[];
+      for (final Object? item in decoded) {
+        try {
+          final TranslationProviderPreset preset =
+              TranslationProviderPreset.fromJson(item);
+          if (!seenIds.add(preset.id) || !seenNames.add(preset.name)) continue;
+          presets.add(preset);
+          if (presets.length == kMaxTranslationProviderPresets) break;
+        } on Object {
+          // 跳过损坏条目，保留同一列表中的其他预设。
+        }
+      }
+      return presets;
+    } on Object {
+      return <TranslationProviderPreset>[];
+    }
+  }
+
+  /// 新增或按名称更新翻译服务预设；API Key 不会写入预设。
+  Future<List<TranslationProviderPreset>> saveTranslationProviderPreset({
+    required String name,
+    required TranslationApiSettings settings,
+    String? id,
+  }) async {
+    final String normalizedName = name.trim();
+    if (normalizedName.isEmpty) {
+      throw ArgumentError.value(name, 'name', '预设名称不能为空');
+    }
+    final TranslationApiSettings normalized = _normalizeTranslationSettings(
+      settings,
+    );
+    final List<TranslationProviderPreset> current =
+        await loadTranslationProviderPresets();
+    final int sameName = current.indexWhere(
+      (TranslationProviderPreset preset) => preset.name == normalizedName,
+    );
+    final int sameId = id == null
+        ? -1
+        : current.indexWhere(
+            (TranslationProviderPreset preset) => preset.id == id,
+          );
+    final int existing = sameName >= 0 ? sameName : sameId;
+    final String presetId = existing >= 0
+        ? current[existing].id
+        : (id?.trim().isNotEmpty == true
+              ? id!.trim()
+              : 'preset-${DateTime.now().microsecondsSinceEpoch}');
+    final TranslationProviderPreset preset = TranslationProviderPreset(
+      id: presetId,
+      name: normalizedName,
+      settings: normalized,
+    );
+    final List<TranslationProviderPreset> updated = <TranslationProviderPreset>[
+      preset,
+      ...current.where(
+        (TranslationProviderPreset value) =>
+            value.id != presetId && value.name != normalizedName,
+      ),
+    ].take(kMaxTranslationProviderPresets).toList(growable: false);
+    await _writeTranslationProviderPresets(updated);
+    return updated;
+  }
+
+  /// 删除指定翻译服务预设；未知 id 按幂等操作处理。
+  Future<List<TranslationProviderPreset>> deleteTranslationProviderPreset(
+    String id,
+  ) async {
+    final String normalizedId = id.trim();
+    final List<TranslationProviderPreset> current =
+        await loadTranslationProviderPresets();
+    final List<TranslationProviderPreset> updated = current
+        .where((TranslationProviderPreset preset) => preset.id != normalizedId)
+        .toList(growable: false);
+    if (updated.length != current.length) {
+      await _writeTranslationProviderPresets(updated);
+    }
+    return updated;
+  }
+
+  TranslationApiSettings _normalizeTranslationSettings(
+    TranslationApiSettings settings,
+  ) {
     final String endpoint = settings.endpoint.trim();
     final String model = settings.model.trim();
     final String targetLanguage = settings.targetLanguage.trim();
@@ -273,13 +379,37 @@ class AppSettingsRepository {
       );
     }
     parseTranslationGlossary(glossary);
-    await _preferences.writeString(_translationEndpointKey, endpoint);
-    await _preferences.writeString(_translationModelKey, model);
+    return TranslationApiSettings(
+      endpoint: endpoint,
+      model: model,
+      targetLanguage: targetLanguage,
+      glossary: glossary,
+    );
+  }
+
+  Future<void> _writeTranslationApiSettings(
+    TranslationApiSettings settings,
+  ) async {
+    await _preferences.writeString(_translationEndpointKey, settings.endpoint);
+    await _preferences.writeString(_translationModelKey, settings.model);
     await _preferences.writeString(
       _translationTargetLanguageKey,
-      targetLanguage,
+      settings.targetLanguage,
     );
-    await _preferences.writeString(_translationGlossaryKey, glossary);
+    await _preferences.writeString(_translationGlossaryKey, settings.glossary);
+  }
+
+  Future<void> _writeTranslationProviderPresets(
+    List<TranslationProviderPreset> presets,
+  ) async {
+    await _preferences.writeString(
+      _translationProviderPresetsKey,
+      jsonEncode(
+        presets
+            .map((TranslationProviderPreset preset) => preset.toJson())
+            .toList(growable: false),
+      ),
+    );
   }
 }
 

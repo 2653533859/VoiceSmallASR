@@ -35,6 +35,9 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _apiModel;
   late final TextEditingController _apiGlossary;
   late final TextEditingController _apiKey;
+  List<TranslationProviderPreset> _translationPresets =
+      <TranslationProviderPreset>[];
+  String? _selectedPresetId;
 
   bool _loading = true;
   bool _saving = false;
@@ -71,6 +74,8 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final TranslationApiSettings settings = await widget.repository
           .loadTranslationApiSettings();
+      final List<TranslationProviderPreset> presets = await widget.repository
+          .loadTranslationProviderPresets();
       final String? key = await widget.repository.translationSecrets
           .readApiKey();
       if (!mounted) return;
@@ -78,10 +83,14 @@ class _SettingsPageState extends State<SettingsPage> {
       _apiModel.text = settings.model;
       _apiGlossary.text = settings.glossary;
       _apiKey.text = key ?? '';
-      _targetLanguage = kTranslationLanguages.contains(settings.targetLanguage)
-          ? settings.targetLanguage
-          : kDefaultTranslationTargetLanguage;
-      setState(() => _loading = false);
+      _targetLanguage = settings.targetLanguage.trim().isEmpty
+          ? kDefaultTranslationTargetLanguage
+          : settings.targetLanguage.trim();
+      setState(() {
+        _translationPresets = presets;
+        _selectedPresetId = null;
+        _loading = false;
+      });
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -198,6 +207,161 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  TranslationApiSettings _currentTranslationSettings() =>
+      TranslationApiSettings(
+        endpoint: _apiEndpoint.text,
+        model: _apiModel.text,
+        targetLanguage: _targetLanguage,
+        glossary: _apiGlossary.text,
+      );
+
+  void _onTranslationFieldChanged(String _) {
+    if (_selectedPresetId != null) {
+      setState(() => _selectedPresetId = null);
+    }
+  }
+
+  void _applyTranslationPreset(String id) {
+    TranslationProviderPreset? selected;
+    for (final TranslationProviderPreset preset in _translationPresets) {
+      if (preset.id == id) {
+        selected = preset;
+        break;
+      }
+    }
+    if (selected == null) return;
+    final TranslationApiSettings settings = selected.settings;
+    _apiEndpoint.text = settings.endpoint;
+    _apiModel.text = settings.model;
+    _apiGlossary.text = settings.glossary;
+    _targetLanguage = settings.targetLanguage.trim().isEmpty
+        ? kDefaultTranslationTargetLanguage
+        : settings.targetLanguage.trim();
+    setState(() => _selectedPresetId = selected!.id);
+  }
+
+  Future<void> _saveTranslationPreset() async {
+    if (_loading || _saving || _testingConnection) return;
+    final TextEditingController nameController = TextEditingController(
+      text: _translationPresets
+          .where(
+            (TranslationProviderPreset preset) =>
+                preset.id == _selectedPresetId,
+          )
+          .map((TranslationProviderPreset preset) => preset.name)
+          .firstOrNull,
+    );
+    final String? name;
+    try {
+      name = await showDialog<String>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: const Text('保存翻译服务预设'),
+          content: TextField(
+            key: const Key('translationPresetName'),
+            controller: nameController,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '预设名称',
+              hintText: '例如：工作账号、备用服务',
+            ),
+            onSubmitted: (String value) => Navigator.of(context).pop(value),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(nameController.text),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      nameController.dispose();
+    }
+    if (name == null || !mounted) return;
+    try {
+      final List<TranslationProviderPreset> presets = await widget.repository
+          .saveTranslationProviderPreset(
+            name: name,
+            settings: _currentTranslationSettings(),
+            id: _selectedPresetId,
+          );
+      if (!mounted) return;
+      final String normalizedName = name.trim();
+      final TranslationProviderPreset? saved = presets
+          .where(
+            (TranslationProviderPreset preset) => preset.name == normalizedName,
+          )
+          .firstOrNull;
+      setState(() {
+        _translationPresets = presets;
+        _selectedPresetId = saved?.id;
+        _errorText = null;
+      });
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已保存翻译服务预设“$normalizedName”')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _errorText = '保存翻译服务预设失败：$error');
+    }
+  }
+
+  Future<void> _deleteTranslationPreset() async {
+    if (_loading ||
+        _saving ||
+        _testingConnection ||
+        _selectedPresetId == null) {
+      return;
+    }
+    final TranslationProviderPreset? selected = _translationPresets
+        .where(
+          (TranslationProviderPreset preset) => preset.id == _selectedPresetId,
+        )
+        .firstOrNull;
+    if (selected == null) return;
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('删除翻译服务预设？'),
+        content: Text('将删除预设“${selected.name}”，不会影响当前已填写的配置。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final List<TranslationProviderPreset> presets = await widget.repository
+          .deleteTranslationProviderPreset(selected.id);
+      if (!mounted) return;
+      setState(() {
+        _translationPresets = presets;
+        _selectedPresetId = null;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _errorText = '删除翻译服务预设失败：$error');
+    }
+  }
+
+  List<String> _translationLanguageOptions() {
+    final List<String> options = <String>[...kTranslationLanguages];
+    final String target = _targetLanguage.trim();
+    if (target.isNotEmpty && !options.contains(target)) options.add(target);
+    return options;
+  }
+
   Future<void> _deleteModel() async {
     if (_saving || widget.controller.busy || !widget.controller.modelReady) {
       return;
@@ -302,6 +466,52 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 Text('翻译', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
+                if (_translationPresets.isNotEmpty) ...<Widget>[
+                  DropdownButtonFormField<String>(
+                    key: const Key('translationProviderPreset'),
+                    initialValue: _selectedPresetId,
+                    decoration: const InputDecoration(
+                      labelText: '翻译服务预设',
+                      hintText: '选择已保存的 endpoint、模型和术语表组合',
+                    ),
+                    onChanged: disabled
+                        ? null
+                        : (String? value) {
+                            if (value != null) _applyTranslationPreset(value);
+                          },
+                    items: <DropdownMenuItem<String>>[
+                      for (final TranslationProviderPreset preset
+                          in _translationPresets)
+                        DropdownMenuItem<String>(
+                          value: preset.id,
+                          child: Text(preset.name),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: const Key('saveTranslationPreset'),
+                        onPressed: disabled ? null : _saveTranslationPreset,
+                        icon: const Icon(Icons.bookmark_add_outlined),
+                        label: const Text('保存为预设'),
+                      ),
+                    ),
+                    if (_selectedPresetId != null) ...<Widget>[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        key: const Key('deleteTranslationPreset'),
+                        tooltip: '删除当前预设',
+                        onPressed: disabled ? null : _deleteTranslationPreset,
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 8),
                 TextField(
                   key: const Key('translationApiEndpoint'),
                   controller: _apiEndpoint,
@@ -309,6 +519,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   autocorrect: false,
                   enableSuggestions: false,
                   keyboardType: TextInputType.url,
+                  onChanged: _onTranslationFieldChanged,
                   decoration: const InputDecoration(
                     labelText: '翻译 API 地址',
                     hintText: 'OpenAI-compatible /v1/chat/completions 地址',
@@ -324,11 +535,14 @@ class _SettingsPageState extends State<SettingsPage> {
                       ? null
                       : (String? value) {
                           if (value != null) {
-                            setState(() => _targetLanguage = value);
+                            setState(() {
+                              _targetLanguage = value;
+                              _selectedPresetId = null;
+                            });
                           }
                         },
                   items: <DropdownMenuItem<String>>[
-                    for (final String code in kTranslationLanguages)
+                    for (final String code in _translationLanguageOptions())
                       DropdownMenuItem<String>(
                         value: code,
                         child: Text(kTranslationLanguageLabels[code] ?? code),
@@ -342,6 +556,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   enabled: !disabled,
                   autocorrect: false,
                   enableSuggestions: false,
+                  onChanged: _onTranslationFieldChanged,
                   decoration: const InputDecoration(
                     labelText: '翻译模型',
                     hintText: '例如 gpt-4o-mini 或第三方模型名',
@@ -358,6 +573,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   keyboardType: TextInputType.multiline,
                   minLines: 3,
                   maxLines: 8,
+                  onChanged: _onTranslationFieldChanged,
                   decoration: const InputDecoration(
                     labelText: '翻译术语表（可选）',
                     hintText: '每行填写：原词=译词；空行或 # 开头的行会被忽略',

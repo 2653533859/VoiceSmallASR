@@ -144,6 +144,60 @@ void main() {
     expect(loaded.glossary, saved.glossary);
     expect(preferences.strings.values, isNot(contains('secret')));
   });
+
+  test('翻译服务预设可以新增、更新、删除并限制数量', () async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
+
+    final TranslationApiSettings first = const TranslationApiSettings(
+      endpoint: 'https://one.example/v1/chat/completions',
+      model: 'one-model',
+      targetLanguage: 'en',
+      glossary: 'ASR=automatic speech recognition',
+    );
+    final TranslationApiSettings second = const TranslationApiSettings(
+      endpoint: 'https://two.example/v1/chat/completions',
+      model: 'two-model',
+      targetLanguage: 'ja',
+    );
+
+    List<TranslationProviderPreset> presets = await repository
+        .saveTranslationProviderPreset(
+          id: 'first',
+          name: '第一个服务',
+          settings: first,
+        );
+    expect(presets.single.id, 'first');
+    presets = await repository.saveTranslationProviderPreset(
+      id: 'second',
+      name: '第二个服务',
+      settings: second,
+    );
+    expect(presets.map((TranslationProviderPreset value) => value.id), <String>[
+      'second',
+      'first',
+    ]);
+
+    presets = await repository.saveTranslationProviderPreset(
+      id: 'first',
+      name: '第一个服务',
+      settings: second,
+    );
+    expect(presets, hasLength(2));
+    expect(presets.last.settings.endpoint, second.endpoint);
+    expect(
+      preferences.strings['settings.translation.provider_presets'],
+      isNot(contains('api-key')),
+    );
+
+    presets = await repository.deleteTranslationProviderPreset('first');
+    expect(presets.map((TranslationProviderPreset value) => value.id), <String>[
+      'second',
+    ]);
+    expect(await repository.loadTranslationProviderPresets(), hasLength(1));
+  });
 }
 
 class _FakePreferenceStore implements PreferenceStore {

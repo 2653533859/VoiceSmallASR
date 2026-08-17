@@ -47,6 +47,70 @@ class TranslationApiSettings {
   final String glossary;
 }
 
+/// 可复用的第三方翻译服务预设；API Key 永远不属于预设内容。
+class TranslationProviderPreset {
+  const TranslationProviderPreset({
+    required this.id,
+    required this.name,
+    required this.settings,
+  });
+
+  factory TranslationProviderPreset.fromJson(Object? value) {
+    if (value is! Map) {
+      throw const FormatException('翻译服务预设格式无效');
+    }
+    final Object? id = value['id'];
+    final Object? name = value['name'];
+    final Object? rawSettings = value['settings'];
+    if (id is! String ||
+        id.trim().isEmpty ||
+        name is! String ||
+        name.trim().isEmpty ||
+        rawSettings is! Map) {
+      throw const FormatException('翻译服务预设缺少必要字段');
+    }
+    final Object? endpoint = rawSettings['endpoint'];
+    final Object? model = rawSettings['model'];
+    final Object? targetLanguage = rawSettings['targetLanguage'];
+    final Object? glossary = rawSettings['glossary'];
+    if (endpoint is! String ||
+        model is! String ||
+        targetLanguage is! String ||
+        glossary is! String ||
+        endpoint.trim().isEmpty ||
+        model.trim().isEmpty ||
+        targetLanguage.trim().isEmpty) {
+      throw const FormatException('翻译服务预设参数格式无效');
+    }
+    parseTranslationGlossary(glossary);
+    return TranslationProviderPreset(
+      id: id.trim(),
+      name: name.trim(),
+      settings: TranslationApiSettings(
+        endpoint: endpoint,
+        model: model,
+        targetLanguage: targetLanguage,
+        glossary: glossary,
+      ),
+    );
+  }
+
+  final String id;
+  final String name;
+  final TranslationApiSettings settings;
+
+  Map<String, Object> toJson() => <String, Object>{
+    'id': id,
+    'name': name,
+    'settings': <String, String>{
+      'endpoint': settings.endpoint,
+      'model': settings.model,
+      'targetLanguage': settings.targetLanguage,
+      'glossary': settings.glossary,
+    },
+  };
+}
+
 /// 使用 OpenAI-compatible Chat Completions 协议的翻译服务。
 ///
 /// 请求使用 `messages`，要求模型只返回与输入等长的 JSON 字符串数组，

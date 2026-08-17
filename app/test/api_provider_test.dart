@@ -105,6 +105,46 @@ void main() {
     expect(() => parseTranslationGlossary('invalid-line'), throwsArgumentError);
   });
 
+  test('翻译服务预设可以序列化并且不包含 API Key', () {
+    const TranslationProviderPreset preset = TranslationProviderPreset(
+      id: 'work',
+      name: '工作服务',
+      settings: TranslationApiSettings(
+        endpoint: 'https://provider.example/v1/chat/completions',
+        model: 'translate-model',
+        targetLanguage: 'ja',
+        glossary: 'ASR=自動音声認識',
+      ),
+    );
+
+    final TranslationProviderPreset restored =
+        TranslationProviderPreset.fromJson(preset.toJson());
+
+    expect(restored.id, preset.id);
+    expect(restored.name, preset.name);
+    expect(restored.settings.endpoint, preset.settings.endpoint);
+    expect(restored.settings.model, preset.settings.model);
+    expect(restored.settings.targetLanguage, preset.settings.targetLanguage);
+    expect(restored.settings.glossary, preset.settings.glossary);
+    expect(jsonEncode(preset.toJson()), isNot(contains('api-key')));
+  });
+
+  test('损坏的翻译服务预设不会接受空的服务参数', () {
+    expect(
+      () => TranslationProviderPreset.fromJson(<String, Object>{
+        'id': 'broken',
+        'name': '损坏预设',
+        'settings': <String, String>{
+          'endpoint': '',
+          'model': 'model',
+          'targetLanguage': 'zh-CN',
+          'glossary': '',
+        },
+      }),
+      throwsFormatException,
+    );
+  });
+
   test('HTTP 错误不泄露 API Key，响应数量不一致时拒绝映射', () async {
     final _FakeClient client = _FakeClient(
       _jsonResponse(<String, Object>{

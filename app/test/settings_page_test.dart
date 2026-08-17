@@ -5,6 +5,7 @@ import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
 import 'package:vsasr_app/src/settings/settings_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/translation/api_provider.dart';
 
 void main() {
   testWidgets('设置页保存普通配置和第三方翻译 API Key，并立即应用到控制器', (WidgetTester tester) async {
@@ -31,8 +32,8 @@ void main() {
     await tester.dragFrom(const Offset(400, 500), const Offset(0, -300));
     await tester.pump();
     final Finder glossaryField = find.byWidgetPredicate(
-      (Widget widget) => widget is TextField &&
-          widget.key == const Key('translationGlossary'),
+      (Widget widget) =>
+          widget is TextField && widget.key == const Key('translationGlossary'),
     );
     await tester.enterText(glossaryField, 'ASR=自动语音识别');
     await tester.dragFrom(const Offset(400, 500), const Offset(0, -300));
@@ -97,6 +98,58 @@ void main() {
       ),
       findsNothing,
     );
+  });
+
+  testWidgets('设置页可以选择已保存的翻译服务预设', (WidgetTester tester) async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final _FakeSecretStore secrets = _FakeSecretStore();
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+      secrets: TranslationSecrets(store: secrets),
+    );
+    await repository.saveTranslationProviderPreset(
+      id: 'work',
+      name: '工作服务',
+      settings: const TranslationApiSettings(
+        endpoint: 'https://work.example/v1/chat/completions',
+        model: 'work-model',
+        targetLanguage: 'fr',
+        glossary: 'ASR=自動音声認識',
+      ),
+    );
+    final TranscribeController controller = TranscribeController();
+    addTearDown(controller.shutdown);
+    await tester.binding.setSurfaceSize(const Size(800, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsPage(controller: controller, repository: repository),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('translationProviderPreset')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('translationProviderPreset')).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('工作服务').last);
+    await tester.pumpAndSettle();
+    expect(find.text('fr'), findsOneWidget);
+
+    final Finder endpointField = find.byWidgetPredicate(
+      (Widget widget) =>
+          widget is TextField &&
+          widget.key == const Key('translationApiEndpoint'),
+    );
+    final Finder modelField = find.byWidgetPredicate(
+      (Widget widget) =>
+          widget is TextField && widget.key == const Key('translationApiModel'),
+    );
+    expect(
+      tester.widget<TextField>(endpointField).controller?.text,
+      'https://work.example/v1/chat/completions',
+    );
+    expect(tester.widget<TextField>(modelField).controller?.text, 'work-model');
   });
 }
 
