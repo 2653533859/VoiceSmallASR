@@ -15,6 +15,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/project/batch_translation_cache.dart';
+import 'package:vsasr_app/src/ui/batch_queue_store.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/translation_secrets.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
@@ -66,6 +67,7 @@ void main() {
     ProjectAutosaveStore? autosaveStore,
     MediaFileExists? mediaFileExists,
     BatchTranslationCache? batchTranslationCache,
+    BatchQueueStore? batchQueueStore,
     AppSettingsRepository? settings,
     TranslationProviderFactory? translationProviderFactory,
   }) async {
@@ -83,6 +85,7 @@ void main() {
           autosaveStore: autosaveStore ?? _FakeAutosaveStore(),
           batchTranslationCache:
               batchTranslationCache ?? const _NoopBatchTranslationCache(),
+          batchQueueStore: batchQueueStore ?? _FakeBatchQueueStore(),
           mediaFileExists:
               mediaFileExists ?? (String path) async => File(path).existsSync(),
           settings: settings,
@@ -498,6 +501,89 @@ void main() {
     expect(find.text('恢复快照字幕'), findsOneWidget);
   });
 
+  testWidgets('异常退出后可以恢复批量任务队列', (WidgetTester tester) async {
+    final _FakeAutosaveStore autosave = _FakeAutosaveStore()
+      ..previousSessionUnclean = true;
+    final _FakeBatchQueueStore queue = _FakeBatchQueueStore(
+      const BatchQueueSnapshot(
+        items: <BatchItem>[
+          BatchItem(path: '/tmp/recover.wav'),
+          BatchItem(
+            path: '/tmp/failed.wav',
+            status: BatchItemStatus.failed,
+            errorText: '解码失败',
+          ),
+        ],
+      ),
+    );
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      autosaveStore: autosave,
+      batchQueueStore: queue,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('发现未完成的批量任务'), findsOneWidget);
+    await tester.tap(find.text('恢复任务'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('recover.wav'), findsOneWidget);
+    expect(find.text('failed.wav'), findsOneWidget);
+    expect(find.textContaining('已恢复 2 个批量任务'), findsOneWidget);
+  });
+
+  testWidgets('放弃批量任务恢复时会清理队列快照', (WidgetTester tester) async {
+    final _FakeAutosaveStore autosave = _FakeAutosaveStore()
+      ..previousSessionUnclean = true;
+    final _FakeBatchQueueStore queue = _FakeBatchQueueStore(
+      const BatchQueueSnapshot(
+        items: <BatchItem>[BatchItem(path: '/tmp/discard.wav')],
+      ),
+    );
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      autosaveStore: autosave,
+      batchQueueStore: queue,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('放弃任务'));
+    await tester.pumpAndSettle();
+
+    expect(queue.clears, 1);
+    expect(queue.snapshot, isNull);
+  });
+
+  testWidgets('批量队列变化会自动保存快照', (WidgetTester tester) async {
+    final _FakeBatchQueueStore queue = _FakeBatchQueueStore();
+    final TranscribeController controller = build();
+    addTearDown(controller.shutdown);
+    await show(
+      tester,
+      controller,
+      batchQueueStore: queue,
+      pickBatchFiles: () async => <String>['/tmp/persisted.wav'],
+    );
+
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('batchPickFiles')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pump();
+
+    expect(queue.saves, greaterThanOrEqualTo(1));
+    expect(queue.snapshot?.items.single.path, '/tmp/persisted.wav');
+  });
+
   testWidgets('没有本地路径时也可以从 SAF 字节打开项目', (WidgetTester tester) async {
     final String safMediaPath = '${workspace.path}/saf.wav';
     File(safMediaPath).writeAsStringSync('media');
@@ -782,6 +868,29 @@ class _NoopBatchTranslationCache extends BatchTranslationCache {
     required String targetLanguage,
     required String providerScope,
   }) => Future<void>.value();
+}
+
+class _FakeBatchQueueStore extends BatchQueueStore {
+  _FakeBatchQueueStore([this.snapshot]);
+
+  BatchQueueSnapshot? snapshot;
+  int saves = 0;
+  int clears = 0;
+
+  @override
+  Future<BatchQueueSnapshot?> load() async => snapshot;
+
+  @override
+  Future<void> save(BatchQueueSnapshot value) async {
+    snapshot = value;
+    saves++;
+  }
+
+  @override
+  Future<void> clear() async {
+    snapshot = null;
+    clears++;
+  }
 }
 
 class _MemoryBatchTranslationCache extends BatchTranslationCache {

@@ -40,6 +40,69 @@ class BatchItem {
   final String? errorText;
   final int attempts;
 
+  factory BatchItem.fromJson(Object? value) {
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('批量条目必须是 JSON 对象');
+    }
+    final Object? rawPath = value['path'];
+    if (rawPath is! String || rawPath.trim().isEmpty) {
+      throw const FormatException('批量条目 path 必须是非空字符串');
+    }
+    final Object? rawStatus = value['status'];
+    final BatchItemStatus status;
+    try {
+      status = BatchItemStatus.values.firstWhere(
+        (BatchItemStatus candidate) => candidate.name == rawStatus,
+      );
+    } on StateError {
+      throw FormatException('不支持的批量条目状态：$rawStatus');
+    }
+    final Object? rawProgress = value['progress'];
+    final double? progress;
+    if (rawProgress == null) {
+      progress = null;
+    } else if (rawProgress is num &&
+        rawProgress.isFinite &&
+        rawProgress >= 0 &&
+        rawProgress <= 1) {
+      progress = rawProgress.toDouble();
+    } else {
+      throw const FormatException('批量条目 progress 必须是 0 到 1 之间的数字');
+    }
+    final Object? rawAttempts = value['attempts'] ?? 0;
+    if (rawAttempts is! int || rawAttempts < 0) {
+      throw const FormatException('批量条目 attempts 必须是非负整数');
+    }
+    final Object? rawError = value['error_text'];
+    if (rawError != null && rawError is! String) {
+      throw const FormatException('批量条目 error_text 必须是字符串或 null');
+    }
+    final Object? rawResult = value['result'];
+    final TranscriptionResult? result = rawResult == null
+        ? null
+        : TranscriptionResult.fromJson(rawResult);
+    if (result != null) {
+      ensureValidSubtitleTimeline(result.segments, duration: result.duration);
+    }
+    return BatchItem(
+      path: rawPath.trim(),
+      status: status,
+      progress: progress,
+      result: result,
+      errorText: rawError as String?,
+      attempts: rawAttempts,
+    );
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'path': path,
+    'status': status.name,
+    'progress': progress,
+    'result': result?.toJson(),
+    'error_text': errorText,
+    'attempts': attempts,
+  };
+
   bool get finished =>
       status == BatchItemStatus.completed ||
       status == BatchItemStatus.translated ||
@@ -306,6 +369,35 @@ class BatchTranscriptionController extends ChangeNotifier {
       clearProgress: true,
       clearError: true,
     );
+    _notify();
+  }
+
+  /// 清空未运行的批量队列；用于用户放弃恢复或重新开始一批文件。
+  void clear() {
+    if (_running || _paused) {
+      throw StateError('批量处理进行中，暂时不能清空队列');
+    }
+    if (_items.isEmpty) return;
+    _items.clear();
+    _currentIndex = null;
+    _notify();
+  }
+
+  /// 恢复持久化快照；旧的 processing/translating 状态会降级为可继续状态。
+  void restore(Iterable<BatchItem> restoredItems) {
+    if (_running || _paused) {
+      throw StateError('批量处理进行中，暂时不能恢复队列');
+    }
+    final Set<String> paths = <String>{};
+    final List<BatchItem> normalized = <BatchItem>[];
+    for (final BatchItem item in restoredItems) {
+      final String path = item.path.trim();
+      if (path.isEmpty || !paths.add(path)) continue;
+      normalized.add(_normalizeRecoveredItem(item, path));
+    }
+    _items
+      ..clear()
+      ..addAll(normalized);
     _notify();
   }
 
@@ -589,6 +681,35 @@ class BatchTranscriptionController extends ChangeNotifier {
       }
     }
     return true;
+  }
+
+  BatchItem _normalizeRecoveredItem(BatchItem item, String path) {
+    final BatchItem normalized = BatchItem(
+      path: path,
+      status: item.status,
+      progress: item.progress,
+      result: item.result,
+      errorText: item.errorText,
+      attempts: item.attempts,
+    );
+    switch (normalized.status) {
+      case BatchItemStatus.processing:
+        return normalized.copyWith(
+          status: BatchItemStatus.queued,
+          clearProgress: true,
+          clearError: true,
+        );
+      case BatchItemStatus.translating:
+        return normalized.copyWith(
+          status: normalized.result == null
+              ? BatchItemStatus.queued
+              : BatchItemStatus.completed,
+          clearProgress: true,
+          clearError: true,
+        );
+      default:
+        return normalized;
+    }
   }
 
   @override

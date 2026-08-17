@@ -14,6 +14,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/project/batch_translation_cache.dart';
+import 'package:vsasr_app/src/ui/batch_queue_store.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/settings_page.dart';
@@ -71,6 +72,7 @@ class HomePage extends StatefulWidget {
     this.saveFile,
     this.autosaveStore,
     this.batchTranslationCache,
+    this.batchQueueStore,
     this.mediaFileExists,
     this.settings,
     this.translationProviderFactory,
@@ -99,6 +101,9 @@ class HomePage extends StatefulWidget {
   /// 翻译缓存。测试可注入临时目录；生产环境默认使用应用私有支持目录。
   final BatchTranslationCache? batchTranslationCache;
 
+  /// 批量队列恢复存储。测试可注入内存或临时目录实现。
+  final BatchQueueStore? batchQueueStore;
+
   final MediaFileExists? mediaFileExists;
 
   /// 设置存储。测试注入替身；生产环境由顶层应用复用同一个仓库。
@@ -122,6 +127,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _autosaveRequestedRevision = 0;
   int _autosavedRevision = 0;
   bool _autosaveFailureNotified = false;
+  Timer? _batchQueueTimer;
+  Future<void>? _batchQueueFuture;
+  int _batchQueueRequestedRevision = 0;
+  int _batchQueueSavedRevision = 0;
+  bool _batchQueueFailureNotified = false;
+  bool _batchQueueRecoveryPromptShown = false;
   bool _recoveryPromptShown = false;
   bool _detached = false;
   bool _sessionEnded = false;
@@ -135,12 +146,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   BatchTranslationCache get _batchTranslationCache =>
       widget.batchTranslationCache ?? const BatchTranslationCache();
 
+  BatchQueueStore get _batchQueueRepository =>
+      widget.batchQueueStore ?? const BatchQueueStore();
+
   @override
   void initState() {
     super.initState();
     _batch = BatchTranscriptionController(transcriber: widget.controller);
     WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_onControllerChanged);
+    _batch.addListener(_onBatchChanged);
     // build 之后再查模型，避免在 initState 里同步 notifyListeners。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshModel();
@@ -197,10 +212,61 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadRecovery() async {
+  void _onBatchChanged() {
+    if (_detached) return;
+    _batchQueueRequestedRevision++;
+    _batchQueueFailureNotified = false;
+    _batchQueueTimer?.cancel();
+    _batchQueueTimer = Timer(const Duration(milliseconds: 400), () {
+      _batchQueueTimer = null;
+      unawaited(_flushBatchQueue());
+    });
+  }
+
+  Future<void> _flushBatchQueue({bool force = false}) async {
+    if (!force && _detached) return;
+    final Future<void>? running = _batchQueueFuture;
+    if (running != null) {
+      try {
+        await running;
+      } on Object {
+        // 另一个写入失败时，本次也按辅助持久化失败处理。
+      }
+      if (!force || _batchQueueRequestedRevision <= _batchQueueSavedRevision) {
+        return;
+      }
+    }
+    final int revision = _batchQueueRequestedRevision;
+    if (revision <= _batchQueueSavedRevision) return;
+    final BatchQueueSnapshot snapshot = BatchQueueSnapshot(items: _batch.items);
+    final Future<void> operation = _batchQueueRepository.save(snapshot);
+    _batchQueueFuture = operation;
     try {
-      final bool unclean = await _autosaveRepository
-          .wasPreviousSessionUnclean();
+      await operation;
+      _batchQueueSavedRevision = revision;
+    } on Object catch (error) {
+      if (mounted && !_batchQueueFailureNotified) {
+        _batchQueueFailureNotified = true;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('批量任务自动保存失败：$error')));
+      }
+    } finally {
+      if (identical(_batchQueueFuture, operation)) _batchQueueFuture = null;
+      if (!_detached &&
+          _batchQueueRequestedRevision > _batchQueueSavedRevision) {
+        _batchQueueTimer?.cancel();
+        _batchQueueTimer = Timer(const Duration(milliseconds: 400), () {
+          _batchQueueTimer = null;
+          unawaited(_flushBatchQueue());
+        });
+      }
+    }
+  }
+
+  Future<void> _loadRecovery() async {
+    bool unclean = false;
+    try {
+      unclean = await _autosaveRepository.wasPreviousSessionUnclean();
       await _autosaveRepository.beginSession();
       if (_detached) {
         await _autosaveRepository.endSession();
@@ -209,14 +275,78 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _sessionEnded = false;
       if (!unclean) return;
       final VsasrProject? project = await _autosaveRepository.load();
-      if (!mounted || project == null || _detached) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_recoveryPromptShown && !_detached) {
-          unawaited(_showRecoveryPrompt(project));
-        }
-      });
+      if (mounted && project != null && !_detached) {
+        await _showRecoveryPrompt(project);
+      }
     } on Object {
       // 恢复快照是辅助数据，读取失败不能阻塞主界面启动。
+    }
+    if (unclean && mounted && !_detached) {
+      await _loadBatchQueueRecovery();
+    }
+  }
+
+  Future<void> _loadBatchQueueRecovery() async {
+    if (_batchQueueRecoveryPromptShown) return;
+    final BatchQueueSnapshot? snapshot;
+    try {
+      snapshot = await _batchQueueRepository.load();
+    } on Object {
+      return;
+    }
+    if (!mounted ||
+        _detached ||
+        snapshot == null ||
+        !snapshot.hasRecoverableWork) {
+      return;
+    }
+    _batchQueueRecoveryPromptShown = true;
+    final int pendingCount = snapshot.items
+        .where(
+          (BatchItem item) =>
+              item.status != BatchItemStatus.completed &&
+              item.status != BatchItemStatus.translated &&
+              item.status != BatchItemStatus.cancelled,
+        )
+        .length;
+    final bool? recover = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('发现未完成的批量任务'),
+        content: Text('检测到上次退出前仍有 $pendingCount 个批量条目未完成，是否恢复任务？'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('放弃任务'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('恢复任务'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (recover == true) {
+      try {
+        _batch.restore(snapshot.items);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已恢复 ${snapshot.items.length} 个批量任务')),
+        );
+      } on Object catch (error) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('恢复批量任务失败：$error')));
+      }
+      return;
+    }
+    if (recover == false) {
+      _batch.clear();
+      try {
+        await _batchQueueRepository.clear();
+      } on Object {
+        // 用户已明确放弃；清理失败不阻塞主界面继续使用。
+      }
     }
   }
 
@@ -293,10 +423,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _endSessionOnExit() async {
     if (_sessionEnded) return;
     _sessionEnded = true;
+    _batchQueueTimer?.cancel();
     try {
       await _autosaveFuture;
     } on Object {
       // 当前写入失败也不应阻止结束会话。
+    }
+    try {
+      await _flushBatchQueue(force: true);
+    } on Object {
+      // 队列快照是辅助数据，写入失败不应阻止结束会话。
     }
     try {
       await _autosaveRepository.endSession();
@@ -1076,6 +1212,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void dispose() {
     _detached = true;
     _autosaveTimer?.cancel();
+    _batchQueueTimer?.cancel();
+    _batch.removeListener(_onBatchChanged);
     _batch.dispose();
     widget.controller.removeListener(_onControllerChanged);
     WidgetsBinding.instance.removeObserver(this);

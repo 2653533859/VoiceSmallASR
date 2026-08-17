@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
+import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
@@ -58,6 +59,46 @@ void main() {
     ]);
     expect(batch.completedCount, 2);
     expect(batch.running, isFalse);
+  });
+
+  test('恢复队列会去重，并把处理中和翻译中条目降级为可继续状态', () async {
+    final TranscribeController transcriber = buildController(
+      _RecordingDecoder(),
+    );
+    final BatchTranscriptionController batch = BatchTranscriptionController(
+      transcriber: transcriber,
+    );
+    addTearDown(() async {
+      batch.dispose();
+      await transcriber.shutdown();
+    });
+
+    batch.restore(<BatchItem>[
+      const BatchItem(
+        path: '  /tmp/processing.wav  ',
+        status: BatchItemStatus.processing,
+        progress: 0.4,
+      ),
+      const BatchItem(
+        path: '/tmp/translating.wav',
+        status: BatchItemStatus.translating,
+        result: TranscriptionResult(
+          duration: 1,
+          segments: <Segment>[Segment(text: '原文', start: 0, end: 1)],
+        ),
+      ),
+      const BatchItem(path: '/tmp/processing.wav'),
+    ]);
+
+    expect(batch.items, hasLength(2));
+    expect(batch.items[0].path, '/tmp/processing.wav');
+    expect(batch.items[0].status, BatchItemStatus.queued);
+    expect(batch.items[0].progress, isNull);
+    expect(batch.items[1].status, BatchItemStatus.completed);
+    expect(batch.hasQueuedItems, isTrue);
+
+    batch.clear();
+    expect(batch.items, isEmpty);
   });
 
   test('暂停在当前文件完成后生效，继续后处理剩余文件', () async {
