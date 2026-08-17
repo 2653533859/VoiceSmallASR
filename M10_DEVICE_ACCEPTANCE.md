@@ -73,6 +73,10 @@ flutter test integration_test/device_acceptance_test.dart -d <android-device-id>
 冷启动验收通过。该脚本只证明 release 包在当前 API 35 模拟器可安装和启动，不替代 Android 真机性能、内存、
 麦克风和厂商 Codec 验收。
 
+发布工作流 [`release.yml`](.github/workflows/release.yml) 已在 Android 产物校验后接入同一脚本：使用 API 35
+`google_apis` x86_64 模拟器，先启用 KVM，再安装并冷启动待发布 APK，job 总时限为 30 分钟。该云端 smoke
+只作为发布包的自动安装/启动基线；首次云端运行结果需随下一次 Tag 发布或手动发布工作流记录，不能替代真机验收。
+
 可复用命令（从仓库根目录执行）：
 
 ```bash

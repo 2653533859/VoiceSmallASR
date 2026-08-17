@@ -85,6 +85,7 @@
 - 2026-08-18 已在 API 35 ARM64 模拟器运行统一入口：模型完整性通过，2 线程 `yue.wav` 文件 RTF `0.026612`，模型准备约 83.6 秒、模型目录约 241 MB，模型准备后 RSS 当前约 403 MiB、峰值约 447 MiB；随后用 H.264+AAC MP4 通过音轨解码、播放器打开和播放推进（528 ms / 146 ms / 3.021 s），麦克风参数未提供而明确跳过。该基线不替代真机数据，入口同时修复了首次慢速下载的 12 分钟超时边界并将下载日志按约 1 MiB 节流，详见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
 - 2026-08-18 已补充 API 35 ARM64 模拟器麦克风基线：先完成系统权限后再计时，5 秒请求实际采集 4.928 秒，会话耗时 5,031 ms，麦克风 RTF `1.020901`，未持续积压；模拟器没有人工讲话，产出段数为 0，因此只证明采样和实时管线基线，不替代 Android 真机语音质量/性能。验收入口同时修正了权限对话框等待时间被计入 RTF 的问题，详见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
 - 2026-08-18 已补充 Android release APK 安装启动基线：API 35 ARM64 模拟器实际安装约 178.6 MB 的 `1.0.2 (999)` APK，v2 签名、模型排除和清除旧数据后的冷启动通过，进程稳定运行 8 秒；脚本为 `scripts/android_apk_install_smoke.sh`，该结果仍不替代 Android 真机性能/内存/RTF 和厂商 Codec 验收。
+- 2026-08-18 已将 Android release APK 安装/冷启动 smoke 接入 `.github/workflows/release.yml`：发布资产校验后使用 API 35 `google_apis` x86_64 模拟器执行同一脚本，并将 Android job 限制为 30 分钟；该云端基线首次结果待下一次 Tag 发布或手动发布工作流记录，仍不替代 Android 真机验收。
 - 2026-08-18 在当前 macOS 主机复测模型三源：对识别模型前 2 MiB 的分段请求均返回 HTTP `206`，GitHub / `ghfast.top` / `gh-proxy.com` 速度约为 360,833 / 437,475 / 317,526 B/s；这只证明当前主机可达，不替代国内 Windows 网络验收，三源 fallback 仍保留，详见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
 - 本机没有可用 Android 真机或无线设备；API 35 ARM64 模拟器可用于功能验收，但 Android 真机性能、内存和 RTF 暂不能验收。
 - 当前没有可操作的 Windows 用户桌面，干净用户目录安装、首次启动和真实桌面差异仍待实机验证。

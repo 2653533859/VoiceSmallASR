@@ -69,6 +69,7 @@ jobs:
   android:
     name: Android APK and AAB
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -118,6 +119,23 @@ jobs:
             fi
           done
           test -s "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.aab"
+
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and cold-start release APK on API 35 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: bash scripts/android_apk_install_smoke.sh app/dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk
 
       - name: Upload Android release assets
         uses: actions/upload-artifact@v4
