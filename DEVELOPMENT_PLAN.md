@@ -383,6 +383,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] Windows CI 桌面与硬字幕验收：run `32048430484` 通过 Flutter analyze、`ffmpeg-full`/`ass` 检查、Release 构建、桌面 smoke、真实硬字幕 MP4 编码 smoke、产物校验和 artifact 上传；完整模型 E2E 由 run `31919855391` 通过
 - [x] 真机/用户桌面验收入口：`app/integration_test/device_acceptance_test.dart` 自动下载并校验模型，记录可选设备标识、实际语言/线程配置、模型目录占用、各阶段进程 RSS 当前值/峰值、文件 RTF、视频播放和可选真实麦克风实时 RTF；执行步骤和结果判定见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)，提交 `cce0412` 的 Windows 回归 run `32052413073` 已通过，真实设备数据仍待采集
 - [x] API 35 ARM64 模拟器基线：M10 统一入口已通过模型下载、完整性校验和 `yue.wav` 文件识别，2 线程文件 RTF `0.026612`，模型目录约 241 MB，模型准备后 RSS 当前约 403 MiB、峰值约 447 MiB；随后用 H.264+AAC MP4 通过音轨解码、播放器打开和播放推进（528 ms / 146 ms / 3.021 s），麦克风因未提供参数明确跳过，详细数据见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)，该结果不替代真机验收
+- [x] API 35 ARM64 模拟器麦克风补充基线（非真机）：5 秒录音实际采集 4.928 秒，权限完成后计时的会话耗时 5,031 ms，麦克风 RTF `1.020901`，低于 `1.25` 且未持续积压；模拟器无人工讲话输入，产出段数为 0，不能替代 Android 真机语音质量和实时性能验收，详细数据见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)
 - [ ] Android 真机性能、内存和 RTF：验收入口已能记录 `dart:io ProcessInfo` 的 RSS，但本机 `flutter devices` 仅发现 macOS 与 Chrome，没有连接真机或无线设备
 - [ ] Windows 用户桌面干净目录安装、首次启动和真实设备差异：当前只有 Windows runner 结果，尚未有可操作的用户桌面
 

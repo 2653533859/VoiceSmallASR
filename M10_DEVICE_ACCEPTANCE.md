@@ -93,6 +93,32 @@ flutter test integration_test/device_acceptance_test.dart -d emulator-5554 \
 
 视频项仍是 API 35 模拟器的软件渲染结果，不替代 Android 真机的播放性能或厂商解码器验收。
 
+### API 35 ARM64 模拟器麦克风补充基线（非真机）
+
+2026-08-18 在同一 `emulator-5554` 上传入 `VSASR_DEVICE_TEST_MIC_SECONDS=5`，先完成系统麦克风授权，
+再从录音流建立后开始计时。这样不会把首次权限对话框的等待时间误计入实时 RTF。模拟器没有人工讲话输入，
+因此这次只验证录音采样、实时识别管线收尾和积压判定，不用于判断语音识别质量：
+
+| 指标 | 结果 |
+| --- | --- |
+| 配置 | `auto`，2 线程；请求 5.0 s |
+| 实际采样 | 78,848 samples，4.928 s |
+| 录音流建立后的会话耗时 | 5,031 ms |
+| 麦克风 RTF | `1.020901` |
+| 最大允许 RTF / 持续积压 | `1.25` / `false` |
+| 产出段数 | 0（模拟器未提供人工讲话） |
+
+可复用命令（首次运行若出现系统权限框，先允许麦克风）：
+
+```bash
+cd app
+flutter test integration_test/device_acceptance_test.dart -d emulator-5554 \
+  --dart-define=VSASR_DEVICE_LABEL=Android-API35-emulator-microphone \
+  --dart-define=VSASR_DEVICE_TEST_MIC_SECONDS=5
+```
+
+该结果仍是 API 35 模拟器基线；Android 真机的麦克风输入、实时 RTF、内存和厂商音频栈差异仍待验收。
+
 ## Windows 用户桌面
 
 自动化性能测试需要 Flutter/Visual Studio 开发环境，运行的是同一份桌面代码；它不能替代

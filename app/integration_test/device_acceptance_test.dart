@@ -265,9 +265,11 @@ void main() {
         );
     StreamSubscription<Float32List>? audioSubscription;
     int sampleCount = 0;
-    final Stopwatch watch = Stopwatch()..start();
+    final Stopwatch watch = Stopwatch();
     try {
       final Stream<Float32List> audio = await microphone.start();
+      // 权限请求可能弹出系统对话框；不把用户授权等待时间计入实时 RTF。
+      watch.start();
       audioSubscription = audio.listen(
         (Float32List chunk) {
           sampleCount += chunk.length;
