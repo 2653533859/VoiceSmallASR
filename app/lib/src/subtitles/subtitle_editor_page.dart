@@ -220,6 +220,82 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
     );
   }
 
+  Future<void> _checkReadingSpeed() async {
+    String input = kDefaultMaxCharactersPerSecond.toStringAsFixed(1);
+    final double? threshold = await showDialog<double>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('检查阅读速度'),
+        content: TextFormField(
+          key: const Key('subtitleMaxCharactersPerSecond'),
+          initialValue: input,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onChanged: (String value) => input = value,
+          decoration: const InputDecoration(labelText: '最大阅读速度（字符/秒）'),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('subtitleReadingSpeedConfirm'),
+            onPressed: () {
+              final double? value = double.tryParse(input.trim());
+              if (value == null) return;
+              Navigator.pop(context, value);
+            },
+            child: const Text('开始检查'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || threshold == null) return;
+
+    try {
+      final List<SubtitleReadingSpeedIssue> issues =
+          _editor.checkReadingSpeed(maxCharactersPerSecond: threshold);
+      setState(() => _errorText = null);
+      await showDialog<void>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: Text(
+            issues.isEmpty ? '阅读速度检查完成' : '发现 ${issues.length} 条字幕阅读过快',
+          ),
+          content: issues.isEmpty
+              ? const Text('没有超过设定阈值的字幕。')
+              : SizedBox(
+                  width: double.maxFinite,
+                  height: 300,
+                  child: ListView.builder(
+                    itemCount: issues.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final SubtitleReadingSpeedIssue issue = issues[index];
+                      return ListTile(
+                        dense: true,
+                        title: Text(
+                          '第 ${issue.index + 1} 条：${issue.charactersPerSecond.toStringAsFixed(1)} 字/秒',
+                        ),
+                        subtitle: Text(
+                          '${issue.characters} 字 / ${issue.duration.toStringAsFixed(2)} 秒',
+                        ),
+                      );
+                    },
+                  ),
+                ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      );
+    } on SubtitleEditException catch (error) {
+      if (mounted) setState(() => _errorText = error.message);
+    }
+  }
+
   void _seek(double seconds) {
     final VideoPlaybackController? player = widget.player;
     if (player == null) return;
@@ -243,6 +319,7 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
                 onRedo: _editor.redo,
                 onOffset: () => unawaited(_shiftTime()),
                 onReplace: () => unawaited(_replaceText()),
+                onReadingSpeed: () => unawaited(_checkReadingSpeed()),
                 onSave: _save,
               ),
               Expanded(
@@ -284,6 +361,7 @@ class _EditorToolbar extends StatelessWidget {
     required this.onRedo,
     required this.onOffset,
     required this.onReplace,
+    required this.onReadingSpeed,
     required this.onSave,
   });
 
@@ -293,6 +371,7 @@ class _EditorToolbar extends StatelessWidget {
   final VoidCallback onRedo;
   final VoidCallback onOffset;
   final VoidCallback onReplace;
+  final VoidCallback onReadingSpeed;
   final VoidCallback onSave;
 
   @override
@@ -303,29 +382,44 @@ class _EditorToolbar extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
         child: Row(
           children: <Widget>[
-            IconButton(
-              key: const Key('subtitleUndo'),
-              tooltip: '撤销',
-              onPressed: editor.canUndo ? onUndo : null,
-              icon: const Icon(Icons.undo),
-            ),
-            IconButton(
-              key: const Key('subtitleRedo'),
-              tooltip: '重做',
-              onPressed: editor.canRedo ? onRedo : null,
-              icon: const Icon(Icons.redo),
-            ),
-            IconButton(
-              key: const Key('subtitleOffset'),
-              tooltip: '批量偏移时间',
-              onPressed: onOffset,
-              icon: const Icon(Icons.schedule),
-            ),
-            IconButton(
-              key: const Key('subtitleReplace'),
-              tooltip: '搜索替换',
-              onPressed: onReplace,
-              icon: const Icon(Icons.find_replace),
+            Flexible(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: <Widget>[
+                    IconButton(
+                      key: const Key('subtitleUndo'),
+                      tooltip: '撤销',
+                      onPressed: editor.canUndo ? onUndo : null,
+                      icon: const Icon(Icons.undo),
+                    ),
+                    IconButton(
+                      key: const Key('subtitleRedo'),
+                      tooltip: '重做',
+                      onPressed: editor.canRedo ? onRedo : null,
+                      icon: const Icon(Icons.redo),
+                    ),
+                    IconButton(
+                      key: const Key('subtitleOffset'),
+                      tooltip: '批量偏移时间',
+                      onPressed: onOffset,
+                      icon: const Icon(Icons.schedule),
+                    ),
+                    IconButton(
+                      key: const Key('subtitleReplace'),
+                      tooltip: '搜索替换',
+                      onPressed: onReplace,
+                      icon: const Icon(Icons.find_replace),
+                    ),
+                    IconButton(
+                      key: const Key('subtitleReadingSpeed'),
+                      tooltip: '检查阅读速度',
+                      onPressed: onReadingSpeed,
+                      icon: const Icon(Icons.speed),
+                    ),
+                  ],
+                ),
+              ),
             ),
             Expanded(
               child: errorText == null

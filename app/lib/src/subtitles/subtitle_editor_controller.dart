@@ -15,6 +15,28 @@ class SubtitleEditException implements Exception {
   String toString() => message;
 }
 
+/// 字幕阅读速度超过阈值时的报告项。
+class SubtitleReadingSpeedIssue {
+  const SubtitleReadingSpeedIssue({
+    required this.index,
+    required this.characters,
+    required this.duration,
+    required this.charactersPerSecond,
+  });
+
+  /// 在当前字幕结果中的 0-based 序号。
+  final int index;
+
+  /// 原文和译文中较长一行的 Unicode 字符数。
+  final int characters;
+
+  final double duration;
+  final double charactersPerSecond;
+}
+
+/// 默认最大阅读速度，单位为 Unicode 字符/秒。
+const double kDefaultMaxCharactersPerSecond = 17.0;
+
 /// 管理一份可校对的字幕结果。
 ///
 /// 每次成功编辑保存一个不可变快照，因此撤销/重做不会共享可变列表，也不会
@@ -188,6 +210,38 @@ class SubtitleEditorController extends ChangeNotifier {
     if (replacements == 0) return 0;
     _commit(segments);
     return replacements;
+  }
+
+  /// 查找阅读速度超过 [maxCharactersPerSecond] 的字幕，不修改编辑结果。
+  List<SubtitleReadingSpeedIssue> checkReadingSpeed({
+    double maxCharactersPerSecond = kDefaultMaxCharactersPerSecond,
+  }) {
+    if (!maxCharactersPerSecond.isFinite || maxCharactersPerSecond <= 0) {
+      throw const SubtitleEditException('阅读速度阈值必须是正数');
+    }
+    final List<SubtitleReadingSpeedIssue> issues = <SubtitleReadingSpeedIssue>[];
+    for (int index = 0; index < _result.segments.length; index++) {
+      final Segment segment = _result.segments[index];
+      final double duration = segment.duration;
+      if (duration <= 0) continue;
+      final int textCharacters = segment.text.trim().runes.length;
+      final int translationCharacters = segment.translation?.trim().runes.length ?? 0;
+      final int characters =
+          textCharacters > translationCharacters ? textCharacters : translationCharacters;
+      if (characters == 0) continue;
+      final double charactersPerSecond = characters / duration;
+      if (charactersPerSecond > maxCharactersPerSecond) {
+        issues.add(
+          SubtitleReadingSpeedIssue(
+            index: index,
+            characters: characters,
+            duration: duration,
+            charactersPerSecond: charactersPerSecond,
+          ),
+        );
+      }
+    }
+    return List<SubtitleReadingSpeedIssue>.unmodifiable(issues);
   }
 
   void undo() {

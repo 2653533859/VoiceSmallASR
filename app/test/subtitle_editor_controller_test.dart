@@ -127,6 +127,29 @@ void main() {
     );
   });
 
+  test('阅读速度检查返回超阈值字幕且不修改编辑结果', () {
+    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+
+    final List<SubtitleReadingSpeedIssue> issues =
+        editor.checkReadingSpeed(maxCharactersPerSecond: 4.0);
+
+    expect(issues, hasLength(2));
+    expect(issues.first.index, 0);
+    expect(issues.first.characters, 5);
+    expect(issues.first.charactersPerSecond, closeTo(5.0, 1e-9));
+    expect(editor.result.segments.first.text, 'hello');
+    expect(editor.canUndo, isFalse);
+  });
+
+  test('阅读速度检查拒绝非正阈值', () {
+    final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
+
+    expect(
+      () => editor.checkReadingSpeed(maxCharactersPerSecond: 0),
+      throwsA(isA<SubtitleEditException>()),
+    );
+  });
+
   test('重复应用相同内容不会新增撤销记录', () {
     final SubtitleEditorController editor = SubtitleEditorController(initial: sample());
 

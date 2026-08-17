@@ -130,6 +130,39 @@ void main() {
     expect(find.text('第一段'), findsOneWidget);
     expect(find.text('第二段'), findsOneWidget);
   });
+
+  testWidgets('编辑器支持检查阅读速度', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubtitleEditorPage(initialResult: result, onSave: (_) {}),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('subtitleReadingSpeed')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('subtitleMaxCharactersPerSecond')),
+      '2',
+    );
+    await tester.tap(find.byKey(const Key('subtitleReadingSpeedConfirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('发现 2 条字幕阅读过快'), findsOneWidget);
+    expect(find.text('第 1 条：3.0 字/秒'), findsOneWidget);
+  });
+
+  testWidgets('窄窗口下编辑工具栏不会横向溢出', (WidgetTester tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubtitleEditorPage(initialResult: result, onSave: (_) {}),
+      ),
+    );
+
+    expect(find.byKey(const Key('subtitleReadingSpeed')), findsOneWidget);
+    expect(find.byKey(const Key('subtitleSave')), findsOneWidget);
+  });
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {
