@@ -8,6 +8,13 @@
 /// flutter test integration_test/hard_subtitle_acceptance_test.dart -d macos
 /// ```
 ///
+/// 也可以一次验收多个输入，使用 `|` 分隔路径：
+///
+/// ```bash
+/// VSASR_HARD_SUBTITLE_TEST_VIDEOS=/path/a.mp4\|/path/b.webm \
+/// flutter test integration_test/hard_subtitle_acceptance_test.dart -d macos
+/// ```
+///
 /// Android 使用系统 MediaCodec；输入文件必须是应用可读的本地路径：
 ///
 /// ```bash
@@ -29,22 +36,17 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   test('真实编码生成带字幕的 mp4', () async {
-    const String definedInput = String.fromEnvironment(
-      'VSASR_HARD_SUBTITLE_TEST_VIDEO',
-    );
-    final String? input =
-        (definedInput.trim().isNotEmpty
-                ? definedInput
-                : Platform.environment['VSASR_HARD_SUBTITLE_TEST_VIDEO'])
-            ?.trim();
-    if (input == null || input.isEmpty) {
-      markTestSkipped('未提供 VSASR_HARD_SUBTITLE_TEST_VIDEO');
+    final List<String> inputs = _testInputs();
+    if (inputs.isEmpty) {
+      markTestSkipped(
+        '未提供 VSASR_HARD_SUBTITLE_TEST_VIDEO 或 '
+        'VSASR_HARD_SUBTITLE_TEST_VIDEOS',
+      );
       return;
     }
     final Directory outputDirectory = await Directory.systemTemp.createTemp(
       'vsasr-hard-subtitle-acceptance-',
     );
-    final String output = '${outputDirectory.path}/output.mp4';
     addTearDown(() async {
       if (outputDirectory.existsSync()) {
         await outputDirectory.delete(recursive: true);
@@ -54,16 +56,50 @@ void main() {
     final HardSubtitleEncoder encoder = Platform.isAndroid
         ? AndroidHardSubtitleEncoder()
         : FfmpegHardSubtitleEncoder();
-    await encoder.encode(
-      inputPath: input,
-      outputPath: output,
-      result: const TranscriptionResult(
-        duration: 2,
-        segments: <Segment>[Segment(text: '硬字幕验收', start: 0, end: 2, index: 0)],
-      ),
-      style: const SubtitleStyle(),
-    );
-    expect(File(output).existsSync(), isTrue);
-    expect(await File(output).length(), greaterThan(1024));
+    for (int index = 0; index < inputs.length; index++) {
+      final String output = '${outputDirectory.path}/output-$index.mp4';
+      await encoder.encode(
+        inputPath: inputs[index],
+        outputPath: output,
+        result: const TranscriptionResult(
+          duration: 2,
+          segments: <Segment>[
+            Segment(text: '硬字幕验收', start: 0, end: 2, index: 0),
+          ],
+        ),
+        style: const SubtitleStyle(),
+      );
+      expect(File(output).existsSync(), isTrue, reason: inputs[index]);
+      expect(
+        await File(output).length(),
+        greaterThan(1024),
+        reason: inputs[index],
+      );
+    }
   });
+}
+
+List<String> _testInputs() {
+  const String definedVideos = String.fromEnvironment(
+    'VSASR_HARD_SUBTITLE_TEST_VIDEOS',
+  );
+  const String definedVideo = String.fromEnvironment(
+    'VSASR_HARD_SUBTITLE_TEST_VIDEO',
+  );
+  final String? environmentVideos =
+      Platform.environment['VSASR_HARD_SUBTITLE_TEST_VIDEOS'];
+  final String? environmentVideo =
+      Platform.environment['VSASR_HARD_SUBTITLE_TEST_VIDEO'];
+  final String configured = definedVideos.trim().isNotEmpty
+      ? definedVideos
+      : definedVideo.trim().isNotEmpty
+      ? definedVideo
+      : (environmentVideos?.trim().isNotEmpty == true
+            ? environmentVideos!
+            : environmentVideo ?? '');
+  return configured
+      .split('|')
+      .map((String path) => path.trim())
+      .where((String path) => path.isNotEmpty)
+      .toList(growable: false);
 }

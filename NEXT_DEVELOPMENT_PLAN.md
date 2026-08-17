@@ -150,6 +150,8 @@
 
 当前进度：M13 自动说话人分离和桌面/Android 硬字幕编码代码已完成代码审查、相关测试和验收脚本；`flutter analyze`、Flutter 相关测试、Android Kotlin 编译和 Android API 35 ARM64 模拟器硬字幕真实编码均已通过，模拟器已分别验收 AAC 直通与 MP3 转 AAC；Windows CI run `32056120388` 已用带 `libass` 的 `ffmpeg-full` 通过硬字幕编码 smoke；本机 macOS `ffmpeg-full 9.0.1` 已通过纯 VM 真实编码、重新解码以及无开发证书 ad-hoc Debug Runner 集成验收，相关脚本见 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart`。Android 真机、其他系统编解码器、Windows 用户桌面和普通 macOS FFmpeg 仍待具备环境后验收。下一步是完成真实设备验收，并根据设备结果补充兼容性。
 
+补充验收：API 35 ARM64 模拟器已用多输入入口通过 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC 四种输入，记录见 [`M13_CODEC_ACCEPTANCE.md`](M13_CODEC_ACCEPTANCE.md)；该结果不替代 Android 真机和厂商 Codec 验收。
+
 ## 推荐执行顺序
 
 ```text
