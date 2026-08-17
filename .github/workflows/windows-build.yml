@@ -44,7 +44,7 @@ jobs:
 
       - name: Install FFmpeg for desktop e2e
         shell: pwsh
-        run: choco install ffmpeg --no-progress --yes
+        run: choco install ffmpeg-full --no-progress --yes
 
       - name: Verify FFmpeg ASS subtitle filter
         shell: pwsh
