@@ -117,6 +117,23 @@ flutter test integration_test/device_acceptance_test.dart -d emulator-5554 \
 这份数据只说明 API 35 模拟器上的功能和基线性能，不移除 M10 的 Android 真机性能、内存、
 实时 RTF 待验收项，也不能推断中低端真机或厂商 Codec 表现。
 
+2026-08-18 在当前工作树重新运行上述入口时，先用 JDK 17 完成 Android Debug 构建，模型从零准备并通过完整性校验；
+本次未传入视频和麦克风参数，因此这两项仍明确跳过。最新结果如下，覆盖旧表中的模拟器基线：
+
+| 指标 | 最新结果 |
+| --- | --- |
+| 配置 | `auto`，2 线程 |
+| 模型准备 | 84,782 ms；模型目录 241,150,289 bytes |
+| 完整性 | `model.verified=true`；测试后 241,150,999 bytes |
+| 模型准备后 RSS | 当前 442,556,416 bytes；峰值 758,063,104 bytes（文件 worker 加载后达到峰值） |
+| 文件 | `yue.wav`，82,368 samples，5.148 s |
+| 解码 / 识别耗时 | 10 ms / 136 ms |
+| 文件 RTF | `0.026418` |
+| 识别结果 | `呢几个字都表达唔到，我想讲嘅意思。` |
+
+本次 2 项实际测试通过，视频和麦克风各 1 项按缺少参数跳过；RSS 峰值和文件 RTF 仍只代表
+API 35 ARM64 模拟器，不能替代 Android 真机或中低端设备验收。
+
 ### API 35 ARM64 模拟器视频补充基线（非真机）
 
 随后使用 `/data/local/tmp/m10-device-acceptance.mp4`（H.264 + AAC，320×180，约 3 秒）
