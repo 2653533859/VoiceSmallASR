@@ -369,6 +369,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 模型完整性校验失败时清理旧压缩包，允许下一次从下载源重新获取
 - [x] `v1.0.2` 云端全流程 Release 验收：run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、Android APK/AAB、API 35 模拟器安装启动、macOS 未签名 DMG/ZIP、Windows 未签名安装包、产物校验和 GitHub Release 更新全部通过；发布页为 [v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2)，资产对应提交 `5d64f49`
 - [x] GitHub Actions 运行时升级并验证：`release.yml` 与 `windows-build.yml` 已切换到 Node 24 兼容的 `checkout@v7`、`setup-python@v7`、`setup-java@v5`、`setup-uv@v10`、`cache@v6`、`upload-artifact@v7` 和 `download-artifact@v8`；push CI [`32083961892`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32083961892) 已通过升级后的构建、硬字幕 smoke、安装包首次启动和 artifact 上传，且不再出现 Node 20 弃用警告
+- [x] 文档基线审计：`CLAUDE.md` 已更新为 Flutter 234 项测试并补齐 M13 自动说话人分离/桌面与 Android 硬字幕编码状态，`README.md` 已更新到最新 Release 与 CI run；代码和验收范围未改变
 
 ### M9 · 无签名环境的翻译体验（已完成）
 

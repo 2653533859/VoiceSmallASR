@@ -38,6 +38,7 @@
 当前状态：代码、本地验证和云端 `v1.0.2` Release 已完成；GitHub Actions run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、三端构建、Android API 35 模拟器安装启动、产物校验和 Release 更新全部通过，Release 资产对应提交 `5d64f49`。
 
 - 2026-08-18 已将 `release.yml` 与 `windows-build.yml` 的 GitHub Actions 运行时升级到 Node 24 兼容版本：`checkout@v7`、`setup-python@v7`、`setup-java@v5`、`setup-uv@v10`、`cache@v6`、`upload-artifact@v7` 和 `download-artifact@v8`；push CI [`32083961892`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32083961892) 已通过，构建、硬字幕 smoke、安装包首次启动和 artifact 上传均保持成功，且不再出现 Node 20 弃用警告。
+- 2026-08-18 完成文档基线审计：`CLAUDE.md` 的 Flutter 测试数更新为 234 项并补齐 M13 能力，`README.md` 更新到 `v1.0.2` 发布 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 和最新 Windows CI；仅修正文档事实，不改变代码行为。
 
 验收标准：质量门禁失败时不创建 Release；三端包内版本均为 `v1.0.2`；全量 Flutter 测试可在固定时间内结束。
 
