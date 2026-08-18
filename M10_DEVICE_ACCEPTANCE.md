@@ -75,7 +75,9 @@ flutter test integration_test/device_acceptance_test.dart -d <android-device-id>
 
 发布工作流 [`release.yml`](.github/workflows/release.yml) 已在 Android 产物校验后接入同一脚本：使用 API 35
 `google_apis` x86_64 模拟器，先启用 KVM，再安装并冷启动待发布 APK，job 总时限为 30 分钟。该云端 smoke
-只作为发布包的自动安装/启动基线；首次云端运行结果需随下一次 Tag 发布或手动发布工作流记录，不能替代真机验收。
+只作为发布包的自动安装/启动基线；2026-08-18 的手动 `v1.0.2` 发布 run
+[`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 全部通过，Android job
+实际完成安装、冷启动和 8 秒进程存活检查，并将 Release 资产更新到提交 `5d64f49`。该结果不能替代真机验收。
 
 可复用命令（从仓库根目录执行）：
 
