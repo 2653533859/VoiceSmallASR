@@ -155,7 +155,7 @@ void main() {
           final Segment segment = translatedSegments.first;
           final Duration position = Duration(
             microseconds:
-                (((segment.start + segment.end) *
+                ((((segment.start + segment.end) / 2) *
                         Duration.microsecondsPerSecond)
                     .round()),
           );
