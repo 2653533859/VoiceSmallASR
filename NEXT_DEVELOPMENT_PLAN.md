@@ -54,7 +54,7 @@
 - 翻译前显示第三方数据发送提示，明确字幕文本会离开本机并发送到用户配置的服务商；文件、视频和实时字幕入口分别在首次使用前拦截确认。
 - 实时翻译失败后可对单条字幕重试；重试只更新译文，不修改原文和时间轴，且实时翻译关闭时不会隐式发起请求。
 - 设置页明确显示 API Key 使用系统安全存储还是当前会话存储。
-- 已补充可选的真实第三方 OpenAI-compatible API 英/日视频验收入口：`app/integration_test/api_translation_acceptance_test.dart` 从仓库外 JSON 配置读取 endpoint、模型、API Key 和目标语言，输出双语 SRT 并验证视频叠加字幕；真实网络调用仍按个人使用范围不作为交付门禁。
+- 已补充可选的真实第三方 OpenAI-compatible API 英/日视频验收入口：`app/integration_test/api_translation_acceptance_test.dart` 从仓库外 JSON 配置读取 endpoint、模型、API Key 和目标语言，输出双语 SRT 并验证视频叠加字幕；真实网络调用仍按个人使用范围不作为交付门禁。提交 `2381bee` 的 Windows CI run [`32086635129`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32086635129) 已通过。
 
 待完成：
 
