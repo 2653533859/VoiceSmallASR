@@ -54,6 +54,7 @@
 - 翻译前显示第三方数据发送提示，明确字幕文本会离开本机并发送到用户配置的服务商；文件、视频和实时字幕入口分别在首次使用前拦截确认。
 - 实时翻译失败后可对单条字幕重试；重试只更新译文，不修改原文和时间轴，且实时翻译关闭时不会隐式发起请求。
 - 设置页明确显示 API Key 使用系统安全存储还是当前会话存储。
+- 已补充可选的真实第三方 OpenAI-compatible API 英/日视频验收入口：`app/integration_test/api_translation_acceptance_test.dart` 从仓库外 JSON 配置读取 endpoint、模型、API Key 和目标语言，输出双语 SRT 并验证视频叠加字幕；真实网络调用仍按个人使用范围不作为交付门禁。
 
 待完成：
 
@@ -85,7 +86,7 @@
 - 2026-08-18 手动触发最新 `main` 的 Windows 完整模型 E2E run `32075654714`：7 项测试全部通过，覆盖模型目录、WAV/m4a 解码、粤语 WAV/m4a 识别、真实 MP4 播放/跳转/抽音轨识别和三句实时识别；粤语 WAV RTF `0.055`，实时定稿 4 句、局部结果 4 条。同一 run 的桌面 smoke、硬字幕 smoke、Release 构建、运行时依赖、模型排除和 artifact 上传也通过；该结果仍不替代 Windows 用户桌面手工安装。
 - 2026-08-18 推送 `ba07d04` 后的 Windows workflow run `32078081707` 增加并通过安装包 CI smoke：未签名安装包实际静默安装到空目录，验证四个运行时 DLL、模型排除，并在隔离 `APPDATA`/`LOCALAPPDATA` 下启动已安装程序保持运行 8 秒；该结果仍不替代用户桌面手工验收。
 - M10 的统一报告入口和 Windows/Android 执行手册已提交；报告会保留设备系统、可选设备标识、实际语言/线程配置、模型准备耗时、模型目录占用、各阶段进程 RSS 当前值/峰值、文件 RTF、视频打开耗时和麦克风积压判定，但当前没有真实设备数据。
-- 2026-08-18 已在 API 35 ARM64 模拟器运行统一入口：模型完整性通过，2 线程 `yue.wav` 文件 RTF `0.026612`，模型准备约 83.6 秒、模型目录约 241 MB，模型准备后 RSS 当前约 403 MiB、峰值约 447 MiB；随后用 H.264+AAC MP4 通过音轨解码、播放器打开和播放推进（528 ms / 146 ms / 3.021 s），麦克风参数未提供而明确跳过。该基线不替代真机数据，入口同时修复了首次慢速下载的 12 分钟超时边界并将下载日志按约 1 MiB 节流，详见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
+- 2026-08-18 已按当前工作树在 API 35 ARM64 模拟器复测统一入口：模型完整性通过，2 线程 `yue.wav` 文件 RTF `0.026807`，模型准备约 83.6 秒、模型目录约 241 MB，模型准备后 RSS 当前约 394 MiB、峰值约 429 MiB；此前同一入口已用 H.264+AAC MP4 通过音轨解码、播放器打开和播放推进（528 ms / 146 ms / 3.021 s），本次视频和麦克风参数未提供而明确跳过。该基线不替代真机数据，入口同时修复了首次慢速下载的 12 分钟超时边界并将下载日志按约 1 MiB 节流，详见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
 - 2026-08-18 已补充 API 35 ARM64 模拟器麦克风基线：先完成系统权限后再计时，5 秒请求实际采集 4.928 秒，会话耗时 5,031 ms，麦克风 RTF `1.020901`，未持续积压；模拟器没有人工讲话，产出段数为 0，因此只证明采样和实时管线基线，不替代 Android 真机语音质量/性能。验收入口同时修正了权限对话框等待时间被计入 RTF 的问题，详见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
 - 2026-08-18 已补充 Android release APK 安装启动基线：API 35 ARM64 模拟器实际安装约 178.6 MB 的 `1.0.2 (999)` APK，v2 签名、模型排除和清除旧数据后的冷启动通过，进程稳定运行 8 秒；脚本为 `scripts/android_apk_install_smoke.sh`，该结果仍不替代 Android 真机性能/内存/RTF 和厂商 Codec 验收。
 - 2026-08-18 已将 Android release APK 安装/冷启动 smoke 接入 `.github/workflows/release.yml`：发布资产校验后使用 API 35 `google_apis` x86_64 模拟器执行同一脚本，并将 Android job 限制为 30 分钟；手动 `v1.0.2` 发布 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 已通过并将 Release 资产更新到提交 `5d64f49`，仍不替代 Android 真机验收。

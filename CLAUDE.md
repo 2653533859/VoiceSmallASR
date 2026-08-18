@@ -66,9 +66,9 @@ pwsh -File scripts/build_windows_unsigned.ps1 -Flutter flutter
 flutter test integration_test/e2e_test.dart -d macos
 # Windows 完整模型 e2e（GitHub Actions 手动触发，首次下载模型较慢）
 gh workflow run windows-build.yml --ref main -f run_full_e2e=true
-# 可选：旧 DeepL 兼容验收（个人使用可跳过；密钥文件必须在仓库外）
-flutter test integration_test/deepl_acceptance_test.dart -d macos \
-  --dart-define-from-file=/path/to/voicesmallasr-deepl.env
+# 可选：真实第三方 OpenAI-compatible API 英/日视频验收（个人使用可跳过；密钥文件必须在仓库外）
+flutter test integration_test/api_translation_acceptance_test.dart -d macos \
+  --dart-define-from-file=/path/to/voicesmallasr-api.env.json
 ```
 
 **不要设 `PUB_HOSTED_URL`。** pub.dev 本身可直连；一旦指向镜像，`flutter pub get` 会把

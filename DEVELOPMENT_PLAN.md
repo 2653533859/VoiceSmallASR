@@ -333,6 +333,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 应用内翻译工作流：从安全存储读取第三方翻译 API Key，在文件转写页发起翻译、显示进度并回写结果；失败不写入半成品
 - [x] 实时字幕翻译：实时页支持开关；每条定稿字幕异步调用第三方 API，译文显示在原文下方，并按顺序写回
 - [x] 视频播放字幕翻译：视频页可复用同一第三方 API 翻译已转写结果，视频叠加字幕和字幕列表同步显示译文
+- [x] 可选真实第三方 API 验收入口：`app/integration_test/api_translation_acceptance_test.dart` 使用仓库外的 `--dart-define-from-file` 配置 endpoint、模型、API Key 和目标语言，覆盖英/日视频转写、批量翻译、双语 SRT 和视频字幕叠加；不进入默认测试集
 - [ ] 验收：英/日视频生成双语字幕，真实 API 网络验收需使用用户自己的第三方服务商密钥，按个人使用范围暂不作为交付门禁
 
 ### M5 · 字幕校对编辑　✅ 首期已完成（2026-08-16）
@@ -386,7 +387,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] Windows 最新完整模型 E2E：run `32075654714` 在 `windows-2022` 上通过 7 项真实模型/原生解码/播放器/实时识别测试；粤语 WAV RTF `0.055`，实时识别定稿 4 句、局部结果 4 条；同一 run 的桌面 smoke、硬字幕 smoke、Release 构建、运行时依赖、模型排除和 artifact 上传均通过。该结果仍不替代 Windows 用户桌面手工安装验收
 - [x] Windows 安装包 CI smoke：run `32078081707` 将未签名安装包静默安装到空目录，验证应用可执行文件、四个运行时 DLL、模型排除，并以隔离 `APPDATA`/`LOCALAPPDATA` 启动已安装程序保持运行 8 秒；该结果仍不替代 Windows 用户桌面手工验收
 - [x] 真机/用户桌面验收入口：`app/integration_test/device_acceptance_test.dart` 自动下载并校验模型，记录可选设备标识、实际语言/线程配置、模型目录占用、各阶段进程 RSS 当前值/峰值、文件 RTF、视频播放和可选真实麦克风实时 RTF；执行步骤和结果判定见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)，提交 `cce0412` 的 Windows 回归 run `32052413073` 已通过，真实设备数据仍待采集
-- [x] API 35 ARM64 模拟器基线：M10 统一入口已通过模型下载、完整性校验和 `yue.wav` 文件识别，2 线程文件 RTF `0.026612`，模型目录约 241 MB，模型准备后 RSS 当前约 403 MiB、峰值约 447 MiB；随后用 H.264+AAC MP4 通过音轨解码、播放器打开和播放推进（528 ms / 146 ms / 3.021 s），麦克风因未提供参数明确跳过，详细数据见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)，该结果不替代真机验收
+- [x] API 35 ARM64 模拟器基线：M10 统一入口按当前工作树复测通过模型下载、完整性校验和 `yue.wav` 文件识别，2 线程文件 RTF `0.026807`，模型目录约 241 MB，模型准备后 RSS 当前约 394 MiB、峰值约 429 MiB；此前同一入口已用 H.264+AAC MP4 通过音轨解码、播放器打开和播放推进（528 ms / 146 ms / 3.021 s），本次未提供视频和麦克风参数而明确跳过，详细数据见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)，该结果不替代真机验收
 - [x] API 35 ARM64 模拟器麦克风补充基线（非真机）：5 秒录音实际采集 4.928 秒，权限完成后计时的会话耗时 5,031 ms，麦克风 RTF `1.020901`，低于 `1.25` 且未持续积压；模拟器无人工讲话输入，产出段数为 0，不能替代 Android 真机语音质量和实时性能验收，详细数据见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)
 - [x] Android release APK 安装启动补充基线（非真机）：API 35 ARM64 模拟器实际安装 `versionName=1.0.2`、`versionCode=999` 的约 178.6 MB APK，v2 签名和模型排除检查通过，清除旧数据后冷启动并保持进程运行 8 秒；脚本见 `scripts/android_apk_install_smoke.sh`，该结果不替代 Android 真机验收
 - [x] Android release APK 发布 CI 安装启动 smoke 已接入并通过：`release.yml` 在 Android 产物校验后用 API 35 `google_apis` x86_64 模拟器执行同一安装/冷启动脚本，job 总时限 30 分钟；手动 `v1.0.2` 发布 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 全部通过并更新 Release 资产到提交 `5d64f49`，不替代 Android 真机验收
@@ -706,11 +707,13 @@ gh workflow run windows-build.yml --ref main -f run_full_e2e=true
 # Android 真机 / Windows 用户桌面量化验收入口与判定条件
 # 见 M10_DEVICE_ACCEPTANCE.md；该测试必须在目标设备上显式运行，不能用 CI 结果代替
 
-# 可选：M4 真实第三方 API 英/日视频验收（个人使用可跳过，密钥文件放在仓库外）
+# 可选：M4 真实第三方 OpenAI-compatible API 英/日视频验收（个人使用可跳过，密钥文件放在仓库外）
 WAVS="$SUP/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs"
 bash scripts/prepare_translation_acceptance_media.sh "$WAVS" "$WAVS"
-# 当前集成测试文件仍是旧 DeepL 专用入口；OpenAI-compatible provider 的真实验收
-# 需按实际第三方服务商的 endpoint、模型和响应协议另行配置，密钥文件不得入库。
+# 通过仓库外的 JSON 配置传入 VSASR_TRANSLATION_API_KEY、endpoint、model 等变量
+flutter test app/integration_test/api_translation_acceptance_test.dart -d macos \
+  --dart-define-from-file=/path/to/voicesmallasr-api.env.json
+# 真实 API 验收不会进入默认测试集，密钥文件不得入库。
 
 # 生成不含模型、未签名的 macOS Release .app 与 .dmg（需要 Xcode；个人使用不要求发布签名）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
