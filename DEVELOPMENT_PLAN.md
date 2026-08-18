@@ -367,7 +367,8 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 三端最终产物排除模型文件：Android APK/AAB、macOS App/ZIP/DMG、Windows Release 目录
 - [x] Release job 生成 `SHA256SUMS.txt` 和 `BUILD_INFO.txt`，上传到 GitHub Release
 - [x] 模型完整性校验失败时清理旧压缩包，允许下一次从下载源重新获取
-- [x] 推送 `v1.0.2` Tag，完成一次云端全流程 Release 验收：run `32046411140` 的质量门禁、Android APK/AAB、macOS 未签名 DMG/ZIP、Windows 未签名安装包、产物校验和 GitHub Release 上传全部通过；发布页为 [v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2)
+- [x] `v1.0.2` 云端全流程 Release 验收：run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、Android APK/AAB、API 35 模拟器安装启动、macOS 未签名 DMG/ZIP、Windows 未签名安装包、产物校验和 GitHub Release 更新全部通过；发布页为 [v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2)，资产对应提交 `5d64f49`
+- [x] GitHub Actions 运行时升级：`release.yml` 与 `windows-build.yml` 已切换到 Node 24 兼容的 `checkout@v7`、`setup-python@v7`、`setup-java@v5`、`setup-uv@v10`、`cache@v6`、`upload-artifact@v7` 和 `download-artifact@v8`；本次 push CI 负责确认升级后的构建和产物门禁
 
 ### M9 · 无签名环境的翻译体验（已完成）
 

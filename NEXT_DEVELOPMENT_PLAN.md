@@ -35,7 +35,9 @@
 - 发布说明已区分“识别离线能力”和“用户主动启用的在线翻译能力”。
 - 模型完整性失败时会清理旧解压目录、VAD 文件和压缩包，下一次允许重新下载。
 
-当前状态：代码、本地验证和云端 `v1.0.2` Release 已完成；GitHub Actions run `32046411140` 的质量门禁、三端构建、产物校验和 Release 上传全部通过。
+当前状态：代码、本地验证和云端 `v1.0.2` Release 已完成；GitHub Actions run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、三端构建、Android API 35 模拟器安装启动、产物校验和 Release 更新全部通过，Release 资产对应提交 `5d64f49`。
+
+- 2026-08-18 已将 `release.yml` 与 `windows-build.yml` 的 GitHub Actions 运行时升级到 Node 24 兼容版本：`checkout@v7`、`setup-python@v7`、`setup-java@v5`、`setup-uv@v10`、`cache@v6`、`upload-artifact@v7` 和 `download-artifact@v8`；当前提交的 push CI 将确认构建行为保持不变。
 
 验收标准：质量门禁失败时不创建 Release；三端包内版本均为 `v1.0.2`；全量 Flutter 测试可在固定时间内结束。
 

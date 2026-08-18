@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -64,7 +64,7 @@ jobs:
 
       - name: Restore Windows e2e model cache
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_full_e2e == true }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/voicesmallasr-models
           key: windows-e2e-model-${{ runner.os }}-2024-07-17-v1
@@ -153,7 +153,7 @@ jobs:
         run: ./scripts/windows_install_smoke.ps1 -Installer "${{ github.workspace }}\dist\windows\VoiceSmallASR-unsigned-setup.exe" -InstallDir "${{ runner.temp }}\voicesmallasr-windows-installed"
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: VoiceSmallASR-windows-release
           if-no-files-found: error
