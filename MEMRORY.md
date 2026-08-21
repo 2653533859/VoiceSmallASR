@@ -1,6 +1,6 @@
 # VoiceSmallASR 开发记忆
 
-> 更新时间：2026-08-18
+> 更新时间：2026-08-21
 
 ## 当前阶段
 
@@ -21,7 +21,8 @@
 - M13 文件转写性能诊断已完成：转写控制器分别记录模型准备、解码、识别和总耗时，生成含 RTF、采样点、模型占用、平台和 ASR/VAD 配置的报告；首页支持查看并导出 JSON。模型占用统计未完成时显示“未统计”，不误报为 0。
 - M13 批量与实时性能汇总及持续性能历史已完成：批量队列聚合文件数、成功/失败/取消、音频时长、模型准备/解码/识别耗时和 RTF；实时会话记录采样点、音频时长、会话耗时和 RTF；文件、批量和实时报告均支持查看/导出 JSON，并以版本化 JSON 写入应用私有目录，最多保留 100 条，支持清空和跳过损坏条目。
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
-- M7 macOS 个人使用打包已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；App Store/公证所需的开发者签名不在本项目范围内。
+- M7 macOS 个人使用打包已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；脚本会对嵌入 Framework 做 ad-hoc 签名，但不需要开发者证书，App Store/公证所需的正式签名不在本项目范围内。
+- 2026-08-21 macOS 安装验收已完成：发现仅使用 `CODE_SIGNING_ALLOWED=NO` 会导致新版 macOS 拒绝加载未签名的嵌入 Framework，已在构建脚本中加入 ad-hoc 签名和深度校验；`VoiceSmallASR 1.0.2 (build 4)` 已安装到 `/Applications/VoiceSmallASR.app`，通用 arm64/x86_64，签名校验和启动均通过。
 - M7 Android 个人使用构建已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，未提供签名变量时使用 debug signing，APK 可用于个人安装和测试。
 - Android 可选外部签名配置已接入 `app/android/app/build.gradle.kts`：显式提供四个 `VSASR_ANDROID_*` 环境变量时使用外部 keystore，变量不完整或文件不存在会直接失败；JDK 17 与构建链路已验证，本机已用隔离的临时 keystore 构建 APK，`apksigner` v2 校验通过；个人使用不要求开发者 keystore。
 - Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；2026-08-16 重跑 7/7，粤语识别 RTF `0.027`；模拟器使用软件渲染，真机性能仍未验证。
@@ -33,15 +34,15 @@
 - Windows 安装包 CI smoke 已补齐：run `32078081707` 将未签名安装包静默安装到空目录，验证 `vsasr_app.exe`、四个运行时 DLL 和模型排除，并用隔离 `APPDATA`/`LOCALAPPDATA` 启动已安装程序保持运行 8 秒；CI 产物安装/首次启动已自动化，但仍不等于用户自己的 Windows 桌面手工验收。
 - Windows 硬字幕 CI 验收已完成：run `32048430484` 在 `windows-2022` 上安装 `ffmpeg-full`，确认 `ass/libass` 滤镜可用，并通过真实 `tone.mp4` 的桌面 smoke、硬字幕编码 smoke、Release 构建、运行时 DLL 和模型排除检查；此前 run `32047737222`/`32048080173` 暴露并修复了 essentials FFmpeg 不含 libass 和检查表达式不稳的问题。
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
-- 项目定位为个人使用：Android debug-signed APK、macOS 无签名 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
-- 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，随后由 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 构建并更新 `v1.0.2`，包含 Android APK/AAB、Windows 未签名安装包、macOS 未签名 DMG/APP 压缩包、`SHA256SUMS.txt` 和 `BUILD_INFO.txt`；本次资产对应提交 `5d64f49`，发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2。
+- 项目定位为个人使用：Android debug-signed APK、macOS 无开发者证书且内嵌代码使用 ad-hoc 签名的 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
+- 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，随后由 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 构建并更新 `v1.0.2`，包含 Android APK/AAB、Windows 未签名安装包、macOS 无开发者证书 DMG/APP 压缩包、`SHA256SUMS.txt` 和 `BUILD_INFO.txt`；本次资产对应提交 `5d64f49`，发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2。
 - 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收以及 Android/Windows 统一 device acceptance 入口和执行手册，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成；自动说话人分离的 macOS 真实模型验收记录见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)；下一步完成 Android 真机性能、Windows 用户桌面和其他平台兼容性验收。
 
 ## 已验证结果
 
 - Python：`pytest` 107 项通过，`ruff check .` 通过。
 - Flutter：`flutter analyze` 通过，234 项单测通过；Python 端 107 项测试通过。
-- macOS：无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；安全存储不可用时 API Key 退回当前会话，不影响个人使用的无签名包交付。
+- macOS：无开发者证书模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin），构建脚本会对嵌入 Framework 做 ad-hoc 签名；安全存储不可用时 API Key 退回当前会话，不影响个人使用包交付。
 - M13 自动说话人分离真实模型验收：macOS 26.5.2 arm64 Debug Runner 使用 ad-hoc 签名通过官方 `0-four-speakers-zh.wav`、pyannote segmentation 和 3D-Speaker embedding 的端到端验收；模型文件只存在于临时目录，SHA-256 与输出时间段契约均通过，详细命令和范围见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)。
 - M7 打包：已生成 `dist/macos/VoiceSmallASR.app`（通用二进制，约 161 MB）和 `VoiceSmallASR-unsigned.dmg`（约 64 MB），并用 `hdiutil imageinfo` 验证为 UDZO 镜像。
 - Android M7 构建：`app/build/app/outputs/flutter-apk/app-release.apk`（169 MiB，177,219,459 bytes）和 `app/build/app/outputs/bundle/release/app-release.aab`（124 MiB，129,974,495 bytes）构建成功；APK 含 arm64-v8a、armeabi-v7a、x86_64，`apksigner verify --verbose` 通过 v2 签名校验，APK/AAB 均未打入 `.onnx`、tar 或 `tokens.txt` 模型文件。
@@ -50,7 +51,7 @@
 - Windows 完整模型 e2e：run `31919855391` 的 7 项测试通过，验证模型目录、WAV/m4a 解码、粤语 wav/m4a 识别、真实 mp4 播放/跳转/抽音轨识别和实时识别；粤语 wav RTF `0.064`。
 - Windows 硬字幕 CI：run `32048430484` 的 `ass/libass` 能力检查、无模型桌面 smoke、真实硬字幕 MP4 编码 smoke、产物校验和 artifact 上传全部通过。
 - Android API 35 模拟器 e2e：2026-08-16 重跑 7 项全部通过，真实模型识别结果与 Python 基线一致，RTF `0.027`；该结果仅作为模拟器基线，不代表真机性能。
-- 播放器：`media_kit 1.2.6` + `media_kit_video 2.0.1` + `media_kit_libs_video 1.0.7` 已接入；macOS 无签名编译通过，插件当前由 CocoaPods 集成。
+- 播放器：`media_kit 1.2.6` + `media_kit_video 2.0.1` + `media_kit_libs_video 1.0.7` 已接入；macOS 无开发者证书编译通过，插件当前由 CocoaPods 集成。
 - M3 测试覆盖：播放器状态/生命周期、字幕时间边界、视频页加载/叠加/点击跳转；7 项集成测试包含真实 `en.mp4` 播放、跳转、抽音轨和识别。
 - M4 测试覆盖：翻译抽象/批量流程、双语导出、旧 DeepL provider 兼容、第三方 API provider、文件页/视频页/实时字幕翻译测试。
 - 双语字幕导出测试：4 项，覆盖 SRT/VTT/TXT/JSON、译文顺序、关闭双语和长段时间边界。
@@ -69,7 +70,7 @@
 - `media_kit` 集成测试先挂载真实 `Video` 完成首帧初始化，再调用播放器 `open()`；英文素材按首个有效字幕段验证，避免假设整段只有一个 cue。
 - Windows 完整 e2e 模型准备改为多源下载、每源有限重试、最低 256 KiB/s 低速超时、最小文件大小校验、Actions cache 和 7-Zip 分层解压；`VSASR_MODEL_DIR` 仅在显式设置时覆盖默认应用私有模型目录。
 - Windows 完整模型 e2e 使用 expanded reporter，避免默认 GitHub reporter 在 Windows 测试收尾时仅显示退出码而隐藏实际测试进度。
-- v1.0.2 稳定化修复：实时字幕测试改为有限帧推进，实时控制器无翻译任务时不等待空队列；无签名 macOS 安全存储不可用时 API Key 仅保留当前会话；Python/Flutter 模型缓存增加解压后 SHA-256 校验；Release workflow 增加 Python/Flutter 质量门禁并从 Tag 注入三端版本。
+- v1.0.2 稳定化修复：实时字幕测试改为有限帧推进，实时控制器无翻译任务时不等待空队列；无开发者证书 macOS 安全存储不可用时 API Key 仅保留当前会话；Python/Flutter 模型缓存增加解压后 SHA-256 校验；Release workflow 增加 Python/Flutter 质量门禁并从 Tag 注入三端版本。
 - M8 发布质量基线已落地：`scripts/verify_model_exclusion.sh` 及各平台 workflow 检查最终产物不含模型，macOS 额外挂载 DMG 检查；Release job 生成 `SHA256SUMS.txt`/`BUILD_INFO.txt`。模型完整性失败会清理旧压缩包，避免重复复用坏缓存。
 - CI 运行时维护：2026-08-18 将 `release.yml` 与 `windows-build.yml` 的 GitHub Actions 升级到 Node 24 兼容版本（`checkout@v7`、`setup-python@v7`、`setup-java@v5`、`setup-uv@v10`、`cache@v6`、`upload-artifact@v7`、`download-artifact@v8`），用于消除 runner 的 Node 20 弃用警告；push CI [`32083961892`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32083961892) 已通过，且不再出现 Node 20 弃用警告。
 - 文档基线审计：修正 `CLAUDE.md` 过时的 Flutter 测试数（227 → 234）并补齐 M13 自动说话人分离、桌面/Android 硬字幕编码状态；`README.md` 已更新到 `v1.0.2` 发布 run `32082049856` 和最新 Windows CI，未修改代码行为。

@@ -58,7 +58,7 @@ VSASR_ANDROID_KEY_PASSWORD='...' \
 flutter build appbundle --release
 flutter build macos --debug     # 常规签名构建需开发证书；个人使用可用无签名脚本
 flutter run -d macos           # 常规运行可能需开发证书；个人使用可用无签名构建脚本
-FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh  # 生成无签名 .app/.dmg
+FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh  # 生成无开发者证书、内嵌代码 ad-hoc 签名的 .app/.dmg
 # Windows Release + Inno Setup 安装包：由 GitHub Actions windows-2022 runner 执行
 pwsh -File scripts/build_windows_unsigned.ps1 -Flutter flutter
 
@@ -75,11 +75,11 @@ flutter test integration_test/api_translation_acceptance_test.dart -d macos \
 `app/pubspec.lock` 里每个包的 `url` 重写成镜像地址并重新解析依赖（实测 92 个包全被改动）。
 如果不小心设了并跑过 pub get，`git checkout app/pubspec.lock` 后不带该变量重跑一次。
 
-**本机可验证的范围（2026-08-16 起）：`flutter analyze`、`flutter test`、Android release APK/AAB 构建，以及 macOS 的个人使用无签名编译与打包。**
-Xcode 26.6 + CocoaPods 1.17.0 已装，无签名模式的 `xcodebuild` 已成功编译，
+**本机可验证的范围（2026-08-16 起）：`flutter analyze`、`flutter test`、Android release APK/AAB 构建，以及 macOS 的个人使用无开发者证书编译、打包与启动。**
+Xcode 26.6 + CocoaPods 1.17.0 已装，无开发者证书模式的 `xcodebuild` 已成功编译，
 所以 `app/macos/Runner/MainFlutterWindow.swift` 里的 Swift 原生解码、media_kit 播放插件和
 `flutter_secure_storage_darwin` **已经编译过**；普通 `flutter build macos --debug` 仍需要开发证书，
-但个人使用的无签名 `.app`/`.dmg` 不依赖该证书。
+但个人使用的无开发者证书 `.app`/`.dmg` 不依赖该证书，构建脚本会对嵌入 Framework 做 ad-hoc 签名。
 Android 的 Kotlin 已随 release APK/AAB 编译验证，并在 API 35 ARM64 模拟器端到端跑通；本机没有 Android 真机，不能据此声称中低端设备性能已验证；Windows 的 C++ 已在 GitHub Actions `windows-2022` runner 的 MSVC 环境编译通过，并通过桌面 smoke 与完整模型 e2e，但用户桌面运行仍未验证。`DEVELOPMENT_PLAN.md` 记录的另一台开发机是 Windows（`E:\dev\flutter`）。
 
 ## 架构
@@ -173,7 +173,7 @@ worker 的工厂参数 `TranscriberFactory` 必须是顶层/静态函数（闭�
 目前三端都已实现：macOS `macos/Runner/MainFlutterWindow.swift`（AVAssetReader，混声道与重采样交给
 AVFoundation）、Android `android/.../MainActivity.kt`（MediaExtractor + MediaCodec，混声道与重采样自己做）、
 Windows `windows/runner/audio_decoder.cpp`（IMFSourceReader，先要 16 kHz 单声道 float32，被拒则自己算）。
-macOS 那份**已编译验证**（无签名 `xcodebuild` 通过），Android Kotlin 已随 release APK/AAB 编译并在 API 35 ARM64 模拟器端到端验证；
+macOS 那份**已编译验证**（无开发者证书 `xcodebuild` 通过），Android Kotlin 已随 release APK/AAB 编译并在 API 35 ARM64 模拟器端到端验证；
 Windows C++ 已在 MSVC CI 编译并通过 AAC/MP4 桌面 smoke 与完整模型 e2e；Android 真机性能与 Windows 用户桌面运行仍未验证。
 重采样在 `wav.dart`、Kotlin、C++ 里各有一份线性插值实现，三者必须逐行等价 —— 改一处要同步另两处。
 原生侧未注册通道时 Dart 侧会抛出带指引的 `AudioDecodeException`，不会静默返回空音频。

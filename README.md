@@ -256,12 +256,12 @@ macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输
 （`呢几个字都表达唔到，我想讲嘅意思。`），RTF 约 0.06；实时识别把三段素材拼成「三句话」喂进去，
 每句都定稿且时间戳连续不重叠。
 后续计划包括 Android 真机性能和 Windows 用户桌面运行验证；个人使用不要求执行真实第三方 API 网络验收。
-当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`，并已在本机成功构建 Android release APK/AAB；个人使用时未提供签名变量即可使用 Android debug signing 构建 APK，正式发布/商店签名不在本项目范围内。Android signing 配置仍支持 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD` 和 `VSASR_ANDROID_KEY_PASSWORD` 四个环境变量，并已用临时 keystore 验证可选的外部签名链路。
-macOS 无签名包可以完成个人使用所需的编译与打包；如果 `flutter_secure_storage` 因 Keychain Sharing 不可用，应用会把 API Key 仅保存在当前会话内，退出后需要重新输入，不写入普通配置或明文文件。
+当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`；脚本会对嵌入 Framework 做 ad-hoc 签名，不需要开发者证书，并已在本机成功构建 Android release APK/AAB；个人使用时未提供签名变量即可使用 Android debug signing 构建 APK，正式发布/商店签名不在本项目范围内。Android signing 配置仍支持 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD` 和 `VSASR_ANDROID_KEY_PASSWORD` 四个环境变量，并已用临时 keystore 验证可选的外部签名链路。
+macOS 无开发者证书包可以完成个人使用所需的编译、打包和本机启动；如果 `flutter_secure_storage` 因 Keychain Sharing 不可用，应用会把 API Key 仅保存在当前会话内，退出后需要重新输入，不写入普通配置或明文文件。
 Android 硬字幕编解码器矩阵已在 API 35 ARM64 模拟器通过 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC、AV1+AAC 和 VP8+Vorbis 输入；可复用的多输入命令与范围限制见 [`M13_CODEC_ACCEPTANCE.md`](M13_CODEC_ACCEPTANCE.md)，真机和厂商 Codec 仍需实测。
 第三方 API provider 和应用内翻译流程已接入，但个人使用可不配置 API Key；设置页支持翻译术语表（每行 `原词=译词`）和服务商预设，预设保存 endpoint、模型、目标语言和术语表组合但不保存 API Key；术语表会应用到文件、实时、视频和批量翻译，变化会隔离批量缓存；实时字幕页可打开“实时翻译”，首次使用前会提示字幕将发送到第三方服务，同一场录音会复用 provider，停止时不会逐条等待已排队请求，失败字幕可单条重试；视频播放页可点击“翻译字幕”，译文会显示在视频叠加层和字幕列表中，并可调整字幕样式、导出视频配套字幕文件；桌面视频页通过本机 FFmpeg 生成硬字幕 MP4，需使用包含 `libass`/`ass` 滤镜的 FFmpeg，并可用 `VSASR_FFMPEG_PATH` 指定路径；Android 视频页通过系统 MediaCodec/OpenGL 生成硬字幕 MP4，AAC 音轨直通，系统可解码的非 AAC 音轨先转 AAC，并支持 Android SAF 输出，iOS 暂不支持。真实网络验收仅在以后需要验证在线翻译时使用，密钥不会写入仓库。
 Windows Release 与 Inno Setup 安装包已由 `.github/workflows/windows-build.yml` 在 Windows runner 上构建通过，CI 同时检查运行时 DLL 和模型文件排除，并通过无模型桌面 smoke 验证 AAC 解码与 MP4 播放；功能提交 `2381bee` 的 push CI run [`32086635129`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32086635129) 验证了 Flutter 分析、`ffmpeg-full`/`ass` 硬字幕 smoke、安装包首次启动和 artifact 上传；修复提交 `bd64894` 的最新 push CI run [`32088850142`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32088850142) 同样通过上述门禁；run `32048430484` 提供了此前的完整硬字幕编码依据，手动 `run_full_e2e=true` 的完整模型 e2e 已在 run `31919855391` 通过 7 项测试，用户桌面验证仍待完成。Android 真机和 Windows 用户桌面的统一量化入口见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
-`.github/workflows/release.yml` 已完成三端 GitHub Release：`v1.0.2` 已在云端生成 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`；发布 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、API 35 模拟器安装启动、三端构建、产物校验和 Release 更新全部通过，资产对应提交 `5d64f49`，可从 [GitHub Release v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2) 下载。
+`.github/workflows/release.yml` 已完成三端 GitHub Release：`v1.0.2` 已在云端生成 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/APP 压缩包，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`；发布 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、API 35 模拟器安装启动、三端构建、产物校验和 Release 更新全部通过，资产对应提交 `5d64f49`，可从 [GitHub Release v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2) 下载。
 
 音频解码上两端有意不同：Python 端调系统 ffmpeg，Flutter 端 wav 走纯 Dart 直读、压缩格式与视频交给平台原生解码（macOS 用 AVFoundation，Android 用 MediaCodec，Windows 用 Media Foundation）——`ffmpeg_kit_flutter` 已弃养且从不支持 Windows。macOS 那份已编译并端到端跑通；Android 的 Kotlin 已在 API 35 ARM64 模拟器端到端验证但尚未真机运行，Windows 的 C++ 已在 MSVC CI 编译并通过桌面 smoke 与完整模型 e2e，但用户桌面运行仍未验证。
 
@@ -275,7 +275,7 @@ flutter analyze
 flutter test                # 不需要模型、不需要设备
 flutter build apk --release       # 需要 Android SDK/JDK
 flutter build appbundle --release # 需要 Android SDK/JDK
-flutter run -d macos        # 常规 Flutter 运行可能需要开发证书；个人使用可用无签名构建脚本
+flutter run -d macos        # 常规 Flutter 运行可能需要开发证书；个人使用可用无开发者证书构建脚本
 flutter run -d windows      # 需开启 Windows 开发者模式 + Visual Studio C++ 工具链
 ```
 

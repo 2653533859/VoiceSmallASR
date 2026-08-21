@@ -1,15 +1,16 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-18　　基线版本：v1.0.2　　下一目标：v1.0.3
+> 更新日期：2026-08-21　　基线版本：v1.0.2　　下一目标：v1.0.3
 
-本计划建立在三端个人使用版本已经可以打包发布的基础上。后续优先保证安装包可验证、无签名环境可用，再增加项目管理和批量处理能力。
+本计划建立在三端个人使用版本已经可以打包发布的基础上。后续优先保证安装包可验证、无开发者证书环境可用，再增加项目管理和批量处理能力。
 
 ## 当前基线
 
 - Python 端：离线多语种识别、CLI、实时 VAD、时间戳和字幕导出已完成；`pytest` 107 项通过。
 - Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；项目文件数据层、首页保存/打开、最近项目、Android SAF 字节读取、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 字幕导入和 M12 多文件队列/批量翻译/安全导出/文本缓存/队列恢复已接入；M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总报告、持续性能历史和自动说话人分离；`flutter analyze` 与 `flutter test` 234 项通过。
 - 平台验收：macOS ASR 与自动说话人分离真实模型、Android API 35 模拟器识别/播放与硬字幕编码、Windows CI 完整模型 E2E/桌面 smoke/硬字幕编码已通过；Android 真机和 Windows 用户桌面仍待验收。
-- 发布能力：`v1.0.2` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/ZIP，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`。
+- 发布能力：`v1.0.2` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/ZIP，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`。
+- macOS 本机安装：2026-08-21 已安装并启动 `VoiceSmallASR 1.0.2 (build 4)`；构建脚本对嵌入 Framework 使用 ad-hoc 签名，不需要开发者证书，`codesign --verify --deep --strict` 通过。
 - 明确范围：个人使用，不做商店发布、公证和正式签名证书；真实第三方翻译 API 网络验收不作为自动化门禁。
 
 ## 已完成的稳定化修复
@@ -21,6 +22,7 @@
 3. 无签名 macOS 无法使用系统安全存储时，API Key 退回当前会话内存，不写入普通配置或明文文件。
 4. Python 与 Flutter 在模型最终加载前校验固定文件的 SHA-256，截断、损坏或错误代理响应不会直接进入推理。
 5. Release workflow 增加 Python/Flutter 质量门禁，并把 Release Tag 注入 Android、macOS、Windows 的应用版本。
+6. 修复 macOS 无开发者证书 Release 包的启动问题：`CODE_SIGNING_ALLOWED=NO` 生成的嵌入 Framework 未签名时会触发 dyld 拒绝加载，`scripts/build_macos_unsigned.sh` 现会在打包后执行 ad-hoc 签名和深度校验。
 
 ## M8 · 发布质量基线（v1.0.2，代码已落地）
 

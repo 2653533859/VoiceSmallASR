@@ -36,7 +36,7 @@ flutter build appbundle --release
 flutter test integration_test/api_translation_acceptance_test.dart -d macos \
   --dart-define-from-file=/path/to/voicesmallasr-api.env.json
 
-# macOS 无签名 Release .app/.dmg（从仓库根目录执行；发布签名仍需证书）
+# macOS 无开发者证书 Release .app/.dmg（从仓库根目录执行；内嵌代码使用 ad-hoc 签名）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
 
 # 端到端验收（真模型 + 真引擎 + 真原生解码，需 macOS；素材放法见上一级 DEVELOPMENT_PLAN §7）
@@ -47,7 +47,7 @@ flutter test integration_test/e2e_test.dart -d macos
 改写成镜像地址并重新解析依赖，那样的 lock 不应提交。
 
 构建/运行各平台的前置条件：macOS 需 Xcode + CocoaPods（media_kit 的 macOS 插件当前不支持 Swift Package Manager；
-本机已装；无签名模式的 Xcode 构建通过，Keychain Sharing 不可用时 API Key 会退回当前会话存储）；
+本机已装；无开发者证书模式的 Xcode 构建通过，构建脚本会对嵌入 Framework 做 ad-hoc 签名，Keychain Sharing 不可用时 API Key 会退回当前会话存储）；
 Windows 需开发者模式 + Visual Studio C++ 工具链；
 Android 需真机或模拟器。
 

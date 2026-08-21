@@ -255,7 +255,7 @@ Run 32048430484                ffmpeg-full/ass 检查、硬字幕 smoke、Releas
 | --- | --- | --- |
 | 装 Flutter SDK | 3.47.0 已装在 `~/development/flutter`（brew 走 googleapis 太慢，改用腾讯云镜像，见 §6） | ✅ 完成 |
 | 验证引擎层 | `flutter pub get` → `flutter analyze` **No issues found** → `flutter test` **166 项通过** | ✅ 完成 |
-| Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无签名模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；个人使用的无签名包已满足目标，普通 `flutter build macos --debug` 的开发证书仅在需要正式签名运行/发布时才需要。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ✅ 个人使用构建完成 |
+| Xcode + CocoaPods | Xcode 26.6 已装（用户）；CocoaPods 1.17.0 由 `brew install cocoapods` 装。无开发者证书模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin）；脚本会对嵌入 Framework 做 ad-hoc 签名，个人使用包已满足目标，普通 `flutter build macos --debug` 的开发证书仅在需要正式签名运行/发布时才需要。另有 pub 会抹掉 `SherpaOnnxC.framework` 符号链接的问题，见 §6 | ✅ 个人使用构建完成 |
 
 macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 macOS 安装包只能在 Mac 上产出（见 §6），
 所以这条路径顺带解决了 M7 里原本无解的一项。
@@ -358,9 +358,10 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] Android 可选外部签名配置（`app/android/app/build.gradle.kts` 支持显式 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD`、`VSASR_ANDROID_KEY_PASSWORD`；缺少任一变量会在配置时失败，不会静默生成 debug 签名发布包；已用临时 keystore 构建并通过 `apksigner` v2 校验）
 - [x] Android 个人使用产物验收 —— JDK 17 与构建链路已验证；未提供外部签名变量时生成的 debug-signed APK 可个人安装和测试，正式发布证书不在范围
 - [x] Windows exe + 安装包（GitHub Actions run `31912544699` 已通过；自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，Release 目录约 111 MiB，`VoiceSmallASR-unsigned-setup.exe` 约 31 MiB，未签名）
-- [x] **macOS 无签名 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；个人使用不要求开发者证书，App Store/公证发布另行配置
+- [x] **macOS 无开发者证书 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建，给嵌入 Framework 做 ad-hoc 签名并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；个人使用不要求开发者证书，App Store/公证发布另行配置
+- [x] **macOS 本机安装启动验收（2026-08-21）** —— `VoiceSmallASR 1.0.2 (build 4)` 已安装到 `/Applications/VoiceSmallASR.app`，`codesign --verify --deep --strict` 和实际启动均通过；初始未签名嵌入 Framework 导致的 dyld 启动失败已修复
 - [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB，Windows CI 也自动拒绝 `.onnx`、`.tar`、`.bz2` 和 `tokens.txt`
-- [x] 三端 GitHub Release —— `.github/workflows/release.yml` 已在云端完成 `v1.0.1` 发布，包含 Android APK/AAB、Windows 未签名安装包和 macOS 未签名 DMG/APP 压缩包：[GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.1)
+- [x] 三端 GitHub Release —— `.github/workflows/release.yml` 已在云端完成 `v1.0.1` 发布，包含 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/APP 压缩包：[GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.1)
 
 ### M8 · 发布质量基线（v1.0.2，代码已落地）
 
@@ -369,7 +370,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 三端最终产物排除模型文件：Android APK/AAB、macOS App/ZIP/DMG、Windows Release 目录
 - [x] Release job 生成 `SHA256SUMS.txt` 和 `BUILD_INFO.txt`，上传到 GitHub Release
 - [x] 模型完整性校验失败时清理旧压缩包，允许下一次从下载源重新获取
-- [x] `v1.0.2` 云端全流程 Release 验收：run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、Android APK/AAB、API 35 模拟器安装启动、macOS 未签名 DMG/ZIP、Windows 未签名安装包、产物校验和 GitHub Release 更新全部通过；发布页为 [v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2)，资产对应提交 `5d64f49`
+- [x] `v1.0.2` 云端全流程 Release 验收：run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 的质量门禁、Android APK/AAB、API 35 模拟器安装启动、macOS 无开发者证书 DMG/ZIP、Windows 未签名安装包、产物校验和 GitHub Release 更新全部通过；发布页为 [v1.0.2](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2)，资产对应提交 `5d64f49`
 - [x] GitHub Actions 运行时升级并验证：`release.yml` 与 `windows-build.yml` 已切换到 Node 24 兼容的 `checkout@v7`、`setup-python@v7`、`setup-java@v5`、`setup-uv@v10`、`cache@v6`、`upload-artifact@v7` 和 `download-artifact@v8`；push CI [`32083961892`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32083961892) 已通过升级后的构建、硬字幕 smoke、安装包首次启动和 artifact 上传，且不再出现 Node 20 弃用警告
 - [x] 文档基线审计：`CLAUDE.md` 已更新为 Flutter 234 项测试并补齐 M13 自动说话人分离/桌面与 Android 硬字幕编码状态，`README.md` 已更新到最新 Release 与 CI run；代码和验收范围未改变
 
@@ -718,7 +719,7 @@ flutter test app/integration_test/api_translation_acceptance_test.dart -d macos 
   --dart-define-from-file=/path/to/voicesmallasr-api.env.json
 # 真实 API 验收不会进入默认测试集，密钥文件不得入库。
 
-# 生成不含模型、未签名的 macOS Release .app 与 .dmg（需要 Xcode；个人使用不要求发布签名）
+# 生成不含模型、无开发者证书且内嵌代码 ad-hoc 签名的 macOS Release .app 与 .dmg（需要 Xcode）
 FLUTTER_BIN=/path/to/flutter/bin/flutter ./scripts/build_macos_unsigned.sh
 ```
 

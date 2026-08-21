@@ -55,6 +55,12 @@ if [[ ! -d "$APP_SOURCE" ]]; then
   exit 1
 fi
 
+# CODE_SIGNING_ALLOWED=NO 会让嵌入的第三方 Framework 也保持未签名；新版本 macOS
+# 会拒绝从未签名 Framework 加载动态库。这里使用 ad-hoc 签名，不需要开发者证书，
+# 只为保证个人使用的无证书 App 能在本机启动。
+codesign --force --deep --sign - --timestamp=none "$APP_SOURCE"
+codesign --verify --deep --strict "$APP_SOURCE"
+
 rm -rf "$APP_DEST"
 ditto "$APP_SOURCE" "$APP_DEST"
 
