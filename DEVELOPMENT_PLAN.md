@@ -360,6 +360,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] Windows exe + 安装包（GitHub Actions run `31912544699` 已通过；自动检查 `vsasr_app.exe`、安装包和四个运行时 DLL，Release 目录约 111 MiB，`VoiceSmallASR-unsigned-setup.exe` 约 31 MiB，未签名）
 - [x] **macOS 无开发者证书 `.app`/`.dmg` 可复现构建** —— `scripts/build_macos_unsigned.sh` 使用 Xcode Release 构建，给嵌入 Framework 做 ad-hoc 签名并生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`；个人使用不要求开发者证书，App Store/公证发布另行配置
 - [x] **macOS 本机安装启动验收（2026-08-21）** —— `VoiceSmallASR 1.0.2 (build 4)` 已安装到 `/Applications/VoiceSmallASR.app`，`codesign --verify --deep --strict` 和实际启动均通过；初始未签名嵌入 Framework 导致的 dyld 启动失败已修复
+- [x] **macOS 文件选择器验收（2026-08-22）** —— 升级 `file_picker_darwin` 到 `1.0.1` 修复 v12 通道协议不匹配；个人 ad-hoc 包启动时跳过插件的沙盒 entitlements 预检查，原生文件选择窗口可正常弹出并返回文件路径，`VoiceSmallASR 1.0.2 (build 6)` 已安装验证
 - [x] 模型不打进安装包（约 240 MB 模型仍由首次运行下载）；已检查 macOS `.app`、Android APK/AAB，Windows CI 也自动拒绝 `.onnx`、`.tar`、`.bz2` 和 `tokens.txt`
 - [x] 三端 GitHub Release —— `.github/workflows/release.yml` 已在云端完成 `v1.0.1` 发布，包含 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/APP 压缩包：[GitHub Release](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.1)
 

@@ -1,6 +1,6 @@
 # VoiceSmallASR 开发记忆
 
-> 更新时间：2026-08-21
+> 更新时间：2026-08-22
 
 ## 当前阶段
 
@@ -23,6 +23,7 @@
 - M5 首期字幕校对编辑已完成：支持文本/时间编辑、合并/拆分、撤销/重做、播放器定位和保存回写；导出前会拒绝重叠、倒序或超出音频时长的时间轴。
 - M7 macOS 个人使用打包已完成：`scripts/build_macos_unsigned.sh` 可生成通用 arm64/x86_64 `.app` 与 UDZO `.dmg`，构建产物不含模型；脚本会对嵌入 Framework 做 ad-hoc 签名，但不需要开发者证书，App Store/公证所需的正式签名不在本项目范围内。
 - 2026-08-21 macOS 安装验收已完成：发现仅使用 `CODE_SIGNING_ALLOWED=NO` 会导致新版 macOS 拒绝加载未签名的嵌入 Framework，已在构建脚本中加入 ad-hoc 签名和深度校验；`VoiceSmallASR 1.0.2 (build 4)` 已安装到 `/Applications/VoiceSmallASR.app`，通用 arm64/x86_64，签名校验和启动均通过。
+- 2026-08-22 macOS 文件选择修复已完成：`file_picker 12.0.0` 锁定的 `file_picker_darwin 1.0.0` 与 Dart 通道协议不匹配，升级到 `1.0.1`；无沙盒 ad-hoc 个人包启动时调用 `skipEntitlementsChecks`，原生 `NSOpenPanel` 已实际弹出，选择文件后进入识别流程。当前安装包为 `VoiceSmallASR 1.0.2 (build 6)`。
 - M7 Android 个人使用构建已完成：本机 Android SDK 36 / Build-Tools 36.1.0 / NDK 28.2.13676358 + JDK 17 成功生成 release APK 和 AAB；APK/AAB 不含模型，未提供签名变量时使用 debug signing，APK 可用于个人安装和测试。
 - Android 可选外部签名配置已接入 `app/android/app/build.gradle.kts`：显式提供四个 `VSASR_ANDROID_*` 环境变量时使用外部 keystore，变量不完整或文件不存在会直接失败；JDK 17 与构建链路已验证，本机已用隔离的临时 keystore 构建 APK，`apksigner` v2 校验通过；个人使用不要求开发者 keystore。
 - Android 模拟器功能验收已完成：API 35 ARM64 `vsasr-api35` 通过 7 项真实端到端测试，覆盖 Kotlin 原生 m4a 解码、模型识别、media_kit 视频播放/跳转/抽音轨和实时识别；2026-08-16 重跑 7/7，粤语识别 RTF `0.027`；模拟器使用软件渲染，真机性能仍未验证。

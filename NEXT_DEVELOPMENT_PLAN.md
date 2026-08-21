@@ -1,6 +1,6 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-21　　基线版本：v1.0.2　　下一目标：v1.0.3
+> 更新日期：2026-08-22　　基线版本：v1.0.2　　下一目标：v1.0.3
 
 本计划建立在三端个人使用版本已经可以打包发布的基础上。后续优先保证安装包可验证、无开发者证书环境可用，再增加项目管理和批量处理能力。
 
@@ -23,6 +23,7 @@
 4. Python 与 Flutter 在模型最终加载前校验固定文件的 SHA-256，截断、损坏或错误代理响应不会直接进入推理。
 5. Release workflow 增加 Python/Flutter 质量门禁，并把 Release Tag 注入 Android、macOS、Windows 的应用版本。
 6. 修复 macOS 无开发者证书 Release 包的启动问题：`CODE_SIGNING_ALLOWED=NO` 生成的嵌入 Framework 未签名时会触发 dyld 拒绝加载，`scripts/build_macos_unsigned.sh` 现会在打包后执行 ad-hoc 签名和深度校验。
+7. 修复 macOS 个人包无法打开文件选择器：升级 `file_picker_darwin` 到 `1.0.1`，并在无沙盒 ad-hoc 包启动时调用 `skipEntitlementsChecks`；原生 `NSOpenPanel` 和文件返回路径已在 `build 6` 实机验收。
 
 ## M8 · 发布质量基线（v1.0.2，代码已落地）
 
