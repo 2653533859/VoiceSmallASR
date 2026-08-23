@@ -62,14 +62,34 @@ framework_backup_index=0
 shopt -s nullglob
 for framework in "$APP_SOURCE/Contents/Frameworks/"*.framework; do
   current="$framework/Versions/Current"
-  if [[ -d "$framework/Versions/A" && ! -L "$current" ]]; then
+  version_a="$framework/Versions/A"
+  if [[ -d "$framework/Versions" && ! -L "$current" ]]; then
     framework_backup_index=$((framework_backup_index + 1))
-    mkdir -p "$BUILD_ROOT/framework-current-backups"
-    if [[ -e "$current" ]]; then
-      mv "$current" \
-        "$BUILD_ROOT/framework-current-backups/${framework_backup_index}-Current"
+    backup_dir="$BUILD_ROOT/framework-current-backups/$framework_backup_index"
+    mkdir -p "$backup_dir"
+    if [[ ! -d "$version_a" && -d "$current" ]]; then
+      mv "$current" "$version_a"
+    elif [[ -e "$current" ]]; then
+      mv "$current" "$backup_dir/Current"
+    fi
+    if [[ ! -d "$version_a" ]]; then
+      echo "无法规范化 Framework 版本目录：$framework" >&2
+      ls -la "$framework" "$framework/Versions" >&2
+      exit 1
     fi
     ln -s A "$current"
+
+    framework_name="$(basename "$framework" .framework)"
+    for entry in "$framework_name" Resources; do
+      root_entry="$framework/$entry"
+      if [[ -e "$version_a/$entry" && ! -L "$root_entry" ]]; then
+        if [[ -e "$root_entry" ]]; then
+          mv "$root_entry" "$backup_dir/$entry"
+        fi
+        ln -s "Versions/Current/$entry" "$root_entry"
+      fi
+    done
+    echo "已规范化 Framework 链接：$(basename "$framework")"
   fi
 done
 shopt -u nullglob
