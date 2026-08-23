@@ -55,6 +55,25 @@ if [[ ! -d "$APP_SOURCE" ]]; then
   exit 1
 fi
 
+# GitHub 的 macOS runner 偶尔会把版本化 Framework 的 `Versions/Current`
+# 展开成实体目录；codesign 会把这种结构判定为歧义 Bundle。签名前恢复标准
+# `Current -> A` 链接，原目录移到临时构建根中并随 BUILD_ROOT 一起清理。
+framework_backup_index=0
+shopt -s nullglob
+for framework in "$APP_SOURCE/Contents/Frameworks/"*.framework; do
+  current="$framework/Versions/Current"
+  if [[ -d "$framework/Versions/A" && ! -L "$current" ]]; then
+    framework_backup_index=$((framework_backup_index + 1))
+    mkdir -p "$BUILD_ROOT/framework-current-backups"
+    if [[ -e "$current" ]]; then
+      mv "$current" \
+        "$BUILD_ROOT/framework-current-backups/${framework_backup_index}-Current"
+    fi
+    ln -s A "$current"
+  fi
+done
+shopt -u nullglob
+
 # CODE_SIGNING_ALLOWED=NO 会让嵌入的第三方 Framework 也保持未签名；新版本 macOS
 # 会拒绝从未签名 Framework 加载动态库。这里使用 ad-hoc 签名，不需要开发者证书，
 # 只为保证个人使用的无证书 App 能在本机启动。
