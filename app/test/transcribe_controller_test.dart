@@ -22,7 +22,9 @@ import 'support/fake_asr.dart';
 void main() {
   late Directory workspace;
 
-  setUp(() => workspace = Directory.systemTemp.createTempSync('vsasr_ctrl_test'));
+  setUp(
+    () => workspace = Directory.systemTemp.createTempSync('vsasr_ctrl_test'),
+  );
   tearDown(() {
     if (workspace.existsSync()) workspace.deleteSync(recursive: true);
   });
@@ -46,15 +48,16 @@ void main() {
     final List<String> seen = <String>[];
     final TranscribeController c = TranscribeController(
       models: models(),
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        onModelProgress('下载 model.tar.bz2（源 1/3）', 50, 100);
-        onModelProgress('解压识别模型…', 0, 0);
-        return FakeTranscriber();
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            onModelProgress('下载 model.tar.bz2（源 1/3）', 50, 100);
+            onModelProgress('解压识别模型…', 0, 0);
+            return FakeTranscriber();
+          },
     );
     c.addListener(() => seen.add('${c.statusText}|${c.progress}'));
 
@@ -71,14 +74,15 @@ void main() {
     int attempts = 0;
     final TranscribeController c = TranscribeController(
       models: models(),
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        if (attempts++ == 0) throw StateError('模型不完整且已禁止下载');
-        return FakeTranscriber();
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            if (attempts++ == 0) throw StateError('模型不完整且已禁止下载');
+            return FakeTranscriber();
+          },
     );
 
     await c.prepare();
@@ -112,7 +116,10 @@ void main() {
     await c.transcribeFile('/tmp/a.wav');
 
     expect(decoder.decoded, <String>['/tmp/a.wav']);
-    expect(stages, containsAllInOrder(<JobStage>[JobStage.decoding, JobStage.transcribing]));
+    expect(
+      stages,
+      containsAllInOrder(<JobStage>[JobStage.decoding, JobStage.transcribing]),
+    );
     expect(c.stage, JobStage.idle);
     expect(c.filePath, '/tmp/a.wav');
     expect(c.result?.length, 1);
@@ -156,14 +163,15 @@ void main() {
     final TranscribeController c = TranscribeController(
       decoder: FakeDecoder(),
       models: models(),
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        launched.add(config.language);
-        return FakeTranscriber(language: config.language);
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            launched.add(config.language);
+            return FakeTranscriber(language: config.language);
+          },
     );
 
     await c.transcribeFile('/tmp/a.wav');
@@ -185,16 +193,19 @@ void main() {
     final TranscribeController c = TranscribeController(
       decoder: FakeDecoder(),
       models: models(),
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        launched.add(config);
-        final FakeTranscriber worker = FakeTranscriber(language: config.language);
-        workers.add(worker);
-        return worker;
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            launched.add(config);
+            final FakeTranscriber worker = FakeTranscriber(
+              language: config.language,
+            );
+            workers.add(worker);
+            return worker;
+          },
     );
 
     await c.transcribeFile('/tmp/a.wav');
@@ -206,7 +217,10 @@ void main() {
 
     await c.transcribeFile('/tmp/a.wav');
     expect(launched.map((AsrConfig config) => config.numThreads), <int>[2, 8]);
-    expect(launched.map((AsrConfig config) => config.partialInterval), <double>[0.6, 1.2]);
+    expect(launched.map((AsrConfig config) => config.partialInterval), <double>[
+      0.6,
+      1.2,
+    ]);
     await c.shutdown();
   });
 
@@ -215,14 +229,15 @@ void main() {
     final TranscribeController c = TranscribeController(
       models: models(),
       offlineMode: true,
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        allowDownloads.add(allowDownload);
-        return FakeTranscriber();
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            allowDownloads.add(allowDownload);
+            return FakeTranscriber();
+          },
     );
 
     await c.prepare();
@@ -273,7 +288,9 @@ void main() {
     );
 
     await c.prepare(allowDownload: false);
-    final Future<void> applying = c.applyConfig(c.config.copyWith(numThreads: 8));
+    final Future<void> applying = c.applyConfig(
+      c.config.copyWith(numThreads: 8),
+    );
     await Future<void>.delayed(Duration.zero);
     final Future<void> deleting = c.deleteModel();
     await Future<void>.delayed(Duration.zero);
@@ -292,14 +309,15 @@ void main() {
     final TranscribeController c = TranscribeController(
       decoder: FakeDecoder(),
       models: models(),
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        events.add('起 ${config.language}');
-        return _SlowClosingTranscriber(closing, events);
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            events.add('起 ${config.language}');
+            return _SlowClosingTranscriber(closing, events);
+          },
     );
 
     await c.prepare();
@@ -375,12 +393,64 @@ void main() {
 
     await c.transcribeFile('/tmp/a.wav');
     final TranscriptionResult? before = c.result;
-    await c.translateCurrentResult(_FakeTranslationProvider(failure: StateError('服务不可用')));
+    await c.translateCurrentResult(
+      _FakeTranslationProvider(failure: StateError('服务不可用')),
+    );
 
     expect(c.result, same(before));
     expect(c.stage, JobStage.idle);
     expect(c.statusText, '翻译失败');
     expect(c.errorText, contains('服务不可用'));
+    await c.shutdown();
+  });
+
+  test('视频流式转写逐段回报字幕且不覆盖当前项目', () async {
+    final _StreamingFakeDecoder decoder = _StreamingFakeDecoder();
+    final FakeTranscriber worker = FakeTranscriber(
+      language: 'en',
+      liveSegments: const <Segment>[
+        Segment(
+          text: 'first subtitle',
+          start: 0,
+          end: 1,
+          language: 'en',
+          index: 0,
+        ),
+      ],
+    );
+    final TranscribeController c = TranscribeController(
+      decoder: decoder,
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => worker,
+    );
+    c.applyImportedResult(
+      const TranscriptionResult(
+        segments: <Segment>[
+          Segment(text: 'existing', start: 0, end: 1, index: 0),
+        ],
+        duration: 1,
+      ),
+      mediaPath: '/tmp/existing.mp4',
+    );
+    final List<TranscriptionResult> updates = <TranscriptionResult>[];
+
+    final TranscriptionResult result = await c.transcribeVideoStream(
+      '/tmp/next.mp4',
+      onUpdate: updates.add,
+    );
+
+    expect(result.segments.single.text, 'first subtitle');
+    expect(updates, isNotEmpty);
+    expect(c.filePath, '/tmp/existing.mp4');
+    expect(c.result?.segments.single.text, 'existing');
+    expect(c.stage, JobStage.idle);
+    expect(decoder.decodeFileCalls, 0);
+    expect(decoder.decodeChunkCalls, 1);
+    expect(worker.live?.chunks, hasLength(2));
     await c.shutdown();
   });
 
@@ -392,14 +462,15 @@ void main() {
     final FakeTranscriber arrived = FakeTranscriber();
     final TranscribeController c = TranscribeController(
       models: models(),
-      launch: ({
-        required AsrConfig config,
-        required bool allowDownload,
-        required ModelProgress onModelProgress,
-      }) async {
-        await gate.future;
-        return arrived;
-      },
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            await gate.future;
+            return arrived;
+          },
     );
 
     final Future<void> preparing = c.prepare();
@@ -409,6 +480,27 @@ void main() {
 
     expect(arrived.disposed, isTrue);
   });
+}
+
+class _StreamingFakeDecoder implements AudioDecoder, ChunkedAudioDecoder {
+  int decodeFileCalls = 0;
+  int decodeChunkCalls = 0;
+
+  @override
+  Future<Float32List> decodeFile(String path) async {
+    decodeFileCalls++;
+    return Float32List(2 * kSampleRate);
+  }
+
+  @override
+  Stream<DecodedAudioChunk> decodeFileChunks(
+    String path, {
+    Duration chunkDuration = const Duration(seconds: 10),
+  }) async* {
+    decodeChunkCalls++;
+    yield DecodedAudioChunk(Float32List(kSampleRate), isLast: false);
+    yield DecodedAudioChunk(Float32List(kSampleRate), isLast: true);
+  }
 }
 
 class _FakeTranslationProvider implements TranslationProvider {

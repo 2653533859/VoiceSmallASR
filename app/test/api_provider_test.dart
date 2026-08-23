@@ -49,6 +49,47 @@ void main() {
     });
   });
 
+  test('从 OpenAI-compatible models 接口获取并去重模型名称', () async {
+    final _FakeClient client = _FakeClient(
+      _jsonResponse(<String, Object>{
+        'data': <Object>[
+          <String, Object>{'id': 'model-b'},
+          <String, Object>{'name': ' model-a '},
+          <String, Object>{'model': 'model-b'},
+          <String, Object>{'id': ''},
+          42,
+        ],
+      }),
+    );
+
+    final List<String> models = await fetchTranslationModels(
+      apiKey: ' test-key ',
+      endpoint: 'https://provider.example/api/v1/chat/completions',
+      client: client,
+    );
+
+    expect(models, <String>['model-b', 'model-a']);
+    expect(client.uri, Uri.parse('https://provider.example/api/v1/models'));
+    expect(client.headers['Authorization'], 'Bearer test-key');
+  });
+
+  test('兼容直接返回 models 字符串数组的第三方服务', () async {
+    final _FakeClient client = _FakeClient(
+      _jsonResponse(<String, Object>{
+        'models': <String>['translate-a', 'translate-b'],
+      }),
+    );
+
+    expect(
+      await fetchTranslationModels(
+        apiKey: 'key',
+        endpoint: 'https://provider.example/v1/chat/completions',
+        client: client,
+      ),
+      <String>['translate-a', 'translate-b'],
+    );
+  });
+
   test('兼容 translations 响应和单条普通文本响应', () async {
     final _FakeClient client = _FakeClient(
       _jsonResponse(<String, Object>{

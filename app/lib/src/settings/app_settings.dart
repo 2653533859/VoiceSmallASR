@@ -26,7 +26,24 @@ const String _translationGlossaryKey = 'settings.translation.glossary';
 const String _translationProviderPresetsKey =
     'settings.translation.provider_presets';
 const String _subtitleStyleKey = 'settings.video.subtitle_style';
+const String _videoSubtitlesEnabledKey = 'settings.video.subtitles_enabled';
+const String _videoTranslationEnabledKey = 'settings.video.translation_enabled';
+const String _videoSubtitleCacheEnabledKey =
+    'settings.video.subtitle_cache_enabled';
 const String _recentProjectsKey = 'settings.projects.recent';
+
+/// 视频播放页的字幕行为设置。
+class VideoSubtitleSettings {
+  const VideoSubtitleSettings({
+    this.subtitlesEnabled = true,
+    this.translationEnabled = false,
+    this.cacheEnabled = true,
+  });
+
+  final bool subtitlesEnabled;
+  final bool translationEnabled;
+  final bool cacheEnabled;
+}
 
 /// 最近项目最多保留的路径数，最新打开的项目排在最前面。
 const int kMaxRecentProjects = 8;
@@ -219,6 +236,35 @@ class AppSettingsRepository {
     await _preferences.writeString(
       _subtitleStyleKey,
       jsonEncode(style.toJson()),
+    );
+  }
+
+  Future<VideoSubtitleSettings> loadVideoSubtitleSettings({
+    VideoSubtitleSettings fallback = const VideoSubtitleSettings(),
+  }) async => VideoSubtitleSettings(
+    subtitlesEnabled:
+        await _preferences.readBool(_videoSubtitlesEnabledKey) ??
+        fallback.subtitlesEnabled,
+    translationEnabled:
+        await _preferences.readBool(_videoTranslationEnabledKey) ??
+        fallback.translationEnabled,
+    cacheEnabled:
+        await _preferences.readBool(_videoSubtitleCacheEnabledKey) ??
+        fallback.cacheEnabled,
+  );
+
+  Future<void> saveVideoSubtitleSettings(VideoSubtitleSettings settings) async {
+    await _preferences.writeBool(
+      _videoSubtitlesEnabledKey,
+      settings.subtitlesEnabled,
+    );
+    await _preferences.writeBool(
+      _videoTranslationEnabledKey,
+      settings.translationEnabled,
+    );
+    await _preferences.writeBool(
+      _videoSubtitleCacheEnabledKey,
+      settings.cacheEnabled,
     );
   }
 

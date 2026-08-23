@@ -46,7 +46,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"   # 本机 Flutter 3.47.0 装�
 
 cd app && flutter pub get
 flutter analyze                # 验收标准：No issues found
-flutter test                   # 234 项，不需要模型也不需要设备
+flutter test                   # 240 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
 flutter build apk --release   # Android release APK；需要 Android SDK/JDK
 flutter build appbundle --release # Android release AAB；无签名变量时使用 debug signing 做构建验证

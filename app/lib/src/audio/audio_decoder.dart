@@ -28,18 +28,34 @@ const List<String> kWavExtensions = <String>['wav', 'wave'];
 
 /// 播放器与文件转写共用的视频容器白名单。
 const List<String> kVideoExtensions = <String>[
-  'mp4', 'mov', 'mkv', 'avi', 'webm', 'ts', 'flv',
+  'mp4',
+  'mov',
+  'mkv',
+  'avi',
+  'webm',
+  'ts',
+  'flv',
 ];
 
 /// 需要平台原生解码的格式（音频 + 视频容器，视频只取音轨）。
 const List<String> kNativeAudioExtensions = <String>[
-  'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'wma', 'aiff', 'caf',
+  'mp3',
+  'm4a',
+  'aac',
+  'flac',
+  'ogg',
+  'opus',
+  'wma',
+  'aiff',
+  'caf',
   ...kVideoExtensions,
 ];
 
 /// 文件选择器可用的扩展名白名单。
-List<String> get kSupportedAudioExtensions =>
-    <String>[...kWavExtensions, ...kNativeAudioExtensions];
+List<String> get kSupportedAudioExtensions => <String>[
+  ...kWavExtensions,
+  ...kNativeAudioExtensions,
+];
 
 /// 解码失败。[message] 已是可直接展示给用户的中文说明。
 class AudioDecodeException implements Exception {
@@ -49,8 +65,9 @@ class AudioDecodeException implements Exception {
   final String? path;
 
   @override
-  String toString() =>
-      path == null ? 'AudioDecodeException: $message' : 'AudioDecodeException: $message（$path）';
+  String toString() => path == null
+      ? 'AudioDecodeException: $message'
+      : 'AudioDecodeException: $message（$path）';
 }
 
 /// 音频解码器。
@@ -59,8 +76,23 @@ abstract interface class AudioDecoder {
   Future<Float32List> decodeFile(String path);
 }
 
+/// 可按时间片解码的音频解码器，供长视频边解码边识别。
+abstract interface class ChunkedAudioDecoder {
+  Stream<DecodedAudioChunk> decodeFileChunks(
+    String path, {
+    Duration chunkDuration = const Duration(seconds: 10),
+  });
+}
+
+class DecodedAudioChunk {
+  const DecodedAudioChunk(this.samples, {required this.isLast});
+
+  final Float32List samples;
+  final bool isLast;
+}
+
 /// 默认解码器：wav 走纯 Dart，其余交给平台原生实现。
-class PlatformAudioDecoder implements AudioDecoder {
+class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
   const PlatformAudioDecoder({this.channel = kAudioDecoderChannel});
 
   final MethodChannel channel;
@@ -71,7 +103,10 @@ class PlatformAudioDecoder implements AudioDecoder {
     if (!file.existsSync()) {
       throw AudioDecodeException('音频文件不存在', path: path);
     }
-    final String extension = p.extension(path).replaceFirst('.', '').toLowerCase();
+    final String extension = p
+        .extension(path)
+        .replaceFirst('.', '')
+        .toLowerCase();
 
     if (kWavExtensions.contains(extension)) {
       final Uint8List bytes = await file.readAsBytes();
@@ -83,6 +118,79 @@ class PlatformAudioDecoder implements AudioDecoder {
       }
     }
     return _decodeNative(path, extension);
+  }
+
+  @override
+  Stream<DecodedAudioChunk> decodeFileChunks(
+    String path, {
+    Duration chunkDuration = const Duration(seconds: 10),
+  }) async* {
+    if (chunkDuration <= Duration.zero) {
+      throw ArgumentError.value(chunkDuration, 'chunkDuration', '必须大于 0');
+    }
+    final File file = File(path);
+    if (!file.existsSync()) {
+      throw AudioDecodeException('音频文件不存在', path: path);
+    }
+    final String extension = p
+        .extension(path)
+        .replaceFirst('.', '')
+        .toLowerCase();
+    if (kWavExtensions.contains(extension)) {
+      final Float32List samples = await decodeFile(path);
+      if (samples.isEmpty) return;
+      final int chunkSamples =
+          (chunkDuration.inMicroseconds *
+                  16000 ~/
+                  Duration.microsecondsPerSecond)
+              .clamp(1, samples.length)
+              .toInt();
+      for (int offset = 0; offset < samples.length; offset += chunkSamples) {
+        final int end = (offset + chunkSamples)
+            .clamp(0, samples.length)
+            .toInt();
+        yield DecodedAudioChunk(
+          Float32List.sublistView(samples, offset, end),
+          isLast: end == samples.length,
+        );
+      }
+      return;
+    }
+
+    int startMilliseconds = 0;
+    while (true) {
+      final Object? response;
+      try {
+        response = await channel.invokeMethod<Object?>(
+          'decodePcm16kChunk',
+          <String, Object?>{
+            'path': path,
+            'startMs': startMilliseconds,
+            'durationMs': chunkDuration.inMilliseconds,
+          },
+        );
+      } on MissingPluginException {
+        throw AudioDecodeException('当前平台尚未实现 .$extension 的分块解码', path: path);
+      } on PlatformException catch (error) {
+        throw AudioDecodeException(
+          '解码失败：${error.message ?? error.code}',
+          path: path,
+        );
+      }
+      if (response is! Map<Object?, Object?>) {
+        throw AudioDecodeException('原生分块解码返回格式无效', path: path);
+      }
+      final Float32List samples = _asFloat32(response['pcm'], path);
+      final bool isLast = response['eof'] == true;
+      if (samples.isNotEmpty) {
+        yield DecodedAudioChunk(samples, isLast: isLast);
+      }
+      if (isLast) return;
+      if (samples.isEmpty) {
+        throw AudioDecodeException('原生分块解码未返回采样数据', path: path);
+      }
+      startMilliseconds += chunkDuration.inMilliseconds;
+    }
   }
 
   Future<Float32List> _decodeNative(String path, String extension) async {
@@ -100,7 +208,10 @@ class PlatformAudioDecoder implements AudioDecoder {
         path: path,
       );
     } on PlatformException catch (error) {
-      throw AudioDecodeException('解码失败：${error.message ?? error.code}', path: path);
+      throw AudioDecodeException(
+        '解码失败：${error.message ?? error.code}',
+        path: path,
+      );
     }
   }
 
@@ -121,6 +232,9 @@ class PlatformAudioDecoder implements AudioDecoder {
       return out;
     }
     if (result is List<double>) return Float32List.fromList(result);
-    throw AudioDecodeException('原生解码没有返回采样数据（${result.runtimeType}）', path: path);
+    throw AudioDecodeException(
+      '原生解码没有返回采样数据（${result.runtimeType}）',
+      path: path,
+    );
   }
 }

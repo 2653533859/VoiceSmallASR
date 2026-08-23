@@ -15,6 +15,7 @@ import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 import 'package:vsasr_app/src/video/hard_subtitle_encoder.dart';
+import 'package:vsasr_app/src/video/video_subtitle_cache.dart';
 
 import 'support/fake_asr.dart';
 
@@ -24,6 +25,9 @@ void main() {
       'vsasr_video_test',
     );
     final String videoPath = '${workspace.path}/movie.mp4';
+    final String nextVideoPath = '${workspace.path}/next.mp4';
+    File(videoPath).writeAsStringSync('video');
+    File(nextVideoPath).writeAsStringSync('next video');
     writeFakeModel(workspace.path);
     final TranscribeController transcription = TranscribeController(
       decoder: FakeDecoder(samples: 2 * kSampleRate),
@@ -49,6 +53,8 @@ void main() {
       await transcription.shutdown();
       workspace.deleteSync(recursive: true);
     });
+    await tester.binding.setSurfaceSize(const Size(1200, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await transcription.transcribeFile(videoPath);
     await tester.pumpWidget(
@@ -58,6 +64,7 @@ void main() {
             controller: video,
             transcription: transcription,
             pickFile: () async => videoPath,
+            pickFiles: () async => <String>[nextVideoPath],
             pickSubtitleFile: () async => SubtitleFileData(
               name: 'external.srt',
               bytes: Uint8List.fromList(
@@ -75,6 +82,7 @@ void main() {
             },
             hardSubtitleEncoder: hardSubtitleEncoder,
             translationProviderResolver: () async => translation,
+            subtitleCache: VideoSubtitleCache(rootDirectory: workspace),
           ),
         ),
       ),
@@ -97,6 +105,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
     expect(translation.calls, 1);
+
+    await tester.tap(find.byKey(const Key('videoTranslationToggle')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('译文：字幕第一条'), findsNothing);
+    await tester.tap(find.byKey(const Key('videoSubtitlesToggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('字幕第一条'), findsNothing);
+    await tester.tap(find.byKey(const Key('videoSubtitlesToggle')));
+    await tester.tap(find.byKey(const Key('videoTranslationToggle')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
 
     await tester.tap(find.byKey(const Key('videoImportSubtitle')));
     await tester.pumpAndSettle();
@@ -122,6 +141,87 @@ void main() {
     await tester.pumpAndSettle();
     expect(hardSubtitleFileName, 'movie_hard_subtitles.mp4');
     expect(hardSubtitleEncoder.calls, 1);
+
+    await tester.tap(find.byKey(const Key('videoAddPlaylist')));
+    await tester.pumpAndSettle();
+    expect(find.text('next.mp4'), findsOneWidget);
+    expect(find.byKey(const Key('videoPlaylist')), findsOneWidget);
+
+    backend.emitDuration(const Duration(seconds: 2));
+    backend.emitPosition(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(backend.openedPath, nextVideoPath);
+    expect(backend.playOrPauseCalls, 1);
+  });
+
+  testWidgets('翻译不可用时播放列表状态保留警告', (WidgetTester tester) async {
+    final Directory workspace = Directory.systemTemp.createTempSync(
+      'vsasr_video_warning_test',
+    );
+    final String videoPath = '${workspace.path}/movie.mp4';
+    File(videoPath).writeAsStringSync('video');
+    writeFakeModel(workspace.path);
+    final TranscribeController transcription = TranscribeController(
+      decoder: FakeDecoder(samples: kSampleRate),
+      models: ModelManager(root: workspace.path),
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async => FakeTranscriber(
+            language: 'en',
+            liveSegments: const <Segment>[
+              Segment(
+                text: 'hello',
+                start: 0,
+                end: 1,
+                language: 'en',
+                index: 0,
+              ),
+            ],
+          ),
+    );
+    final VideoPlaybackController video = VideoPlaybackController(
+      backend: _FakeVideoBackend(),
+    );
+    addTearDown(() async {
+      video.dispose();
+      await transcription.shutdown();
+      workspace.deleteSync(recursive: true);
+    });
+    await tester.binding.setSurfaceSize(const Size(1200, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VideoPage(
+            controller: video,
+            transcription: transcription,
+            pickFile: () async => videoPath,
+            translationProviderResolver: () async => null,
+            subtitleCache: VideoSubtitleCache(rootDirectory: workspace),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开视频'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoTranslationToggle')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('继续翻译'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('未配置翻译 API Key'), findsOneWidget);
   });
 }
 
@@ -168,6 +268,8 @@ class _FakeVideoBackend implements VideoPlayerBackend {
   );
 
   Duration? lastSeek;
+  String? openedPath;
+  int playOrPauseCalls = 0;
 
   @override
   Widget buildVideo() => const SizedBox();
@@ -182,10 +284,10 @@ class _FakeVideoBackend implements VideoPlayerBackend {
   Stream<bool> get playing => _playing.stream;
 
   @override
-  Future<void> open(String path) async {}
+  Future<void> open(String path) async => openedPath = path;
 
   @override
-  Future<void> playOrPause() async {}
+  Future<void> playOrPause() async => playOrPauseCalls++;
 
   @override
   Future<void> seek(Duration position) async => lastSeek = position;

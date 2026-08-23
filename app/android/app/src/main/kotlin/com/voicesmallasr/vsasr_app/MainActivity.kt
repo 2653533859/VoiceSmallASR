@@ -55,7 +55,7 @@ object AudioDecoderChannel {
 
     fun register(messenger: BinaryMessenger) {
         MethodChannel(messenger, NAME).setMethodCallHandler { call, result ->
-            if (call.method != "decodeToPcm16k") {
+            if (call.method != "decodeToPcm16k" && call.method != "decodePcm16kChunk") {
                 result.notImplemented()
                 return@setMethodCallHandler
             }
@@ -66,9 +66,25 @@ object AudioDecoderChannel {
             }
             worker.execute {
                 try {
-                    val pcm = decode(path)
+                    val startMs = call.argument<Number>("startMs")?.toLong()
+                    val durationMs = call.argument<Number>("durationMs")?.toLong()
+                    val chunked = call.method == "decodePcm16kChunk"
+                    if (chunked && (startMs == null || startMs < 0 || durationMs == null || durationMs <= 0)) {
+                        throw DecodeException("分块解码时间范围无效")
+                    }
+                    val decoded = decode(
+                        path,
+                        startUs = if (chunked) startMs!! * 1000 else null,
+                        durationUs = if (chunked) durationMs!! * 1000 else null,
+                    )
                     // MethodChannel 的回包必须在主线程发。
-                    mainHandler.post { result.success(pcm) }
+                    mainHandler.post {
+                        if (chunked) {
+                            result.success(mapOf("pcm" to decoded.pcm, "eof" to decoded.eof))
+                        } else {
+                            result.success(decoded.pcm)
+                        }
+                    }
                 } catch (error: Throwable) {
                     // 必须连 Error 一起兜住：长录音在手机上很容易 OutOfMemoryError
                     // （采样数组扩容 + 再来一份 size*4 的字节缓冲）。漏掉它，
@@ -84,7 +100,13 @@ object AudioDecoderChannel {
 
     /// 返回 float32 小端字节流；Dart 侧按 `Uint8List` 收下再转成 `Float32List`
     /// （与 macOS 端同一种回传形式）。
-    private fun decode(path: String): ByteArray {
+    private data class DecodeResult(val pcm: ByteArray, val eof: Boolean)
+
+    private fun decode(
+        path: String,
+        startUs: Long? = null,
+        durationUs: Long? = null,
+    ): DecodeResult {
         if (!File(path).isFile) throw DecodeException("音频文件不存在")
 
         val extractor = MediaExtractor()
@@ -94,6 +116,15 @@ object AudioDecoderChannel {
             extractor.selectTrack(track)
 
             val inputFormat = extractor.getTrackFormat(track)
+            val trackDurationUs = runCatching {
+                inputFormat.getLong(MediaFormat.KEY_DURATION)
+            }.getOrNull()
+            if (startUs != null && trackDurationUs != null && startUs >= trackDurationUs) {
+                return DecodeResult(ByteArray(0), true)
+            }
+            if (startUs != null) {
+                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            }
             val mime = inputFormat.getString(MediaFormat.KEY_MIME)
                 ?: throw DecodeException("音轨缺少 MIME 类型")
             val codec = try {
@@ -104,7 +135,14 @@ object AudioDecoderChannel {
             try {
                 codec.configure(inputFormat, null, null, 0)
                 codec.start()
-                return drain(extractor, codec, inputFormat)
+                return drain(
+                    extractor,
+                    codec,
+                    inputFormat,
+                    startUs = startUs,
+                    endUs = if (startUs != null && durationUs != null) startUs + durationUs else null,
+                    trackDurationUs = trackDurationUs,
+                )
             } finally {
                 // 出错路径上 stop() 自己也可能抛，不能盖掉真正的异常。
                 runCatching { codec.stop() }
@@ -129,7 +167,10 @@ object AudioDecoderChannel {
         extractor: MediaExtractor,
         codec: MediaCodec,
         inputFormat: MediaFormat,
-    ): ByteArray {
+        startUs: Long?,
+        endUs: Long?,
+        trackDurationUs: Long?,
+    ): DecodeResult {
         var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         var channels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         // 不主动请求 ENCODING_PCM_FLOAT：部分解码器会因此 configure 失败，
@@ -139,6 +180,7 @@ object AudioDecoderChannel {
         val info = MediaCodec.BufferInfo()
         var inputDone = false
         var outputDone = false
+        var reachedSourceEnd = false
         // 坏文件可能让解码器一直只回 INFO_TRY_AGAIN_LATER，得有个兜底出口。
         var idleRounds = 0
 
@@ -148,12 +190,18 @@ object AudioDecoderChannel {
                 if (index >= 0) {
                     val buffer = codec.getInputBuffer(index)
                         ?: throw DecodeException("取不到解码器输入缓冲")
-                    val read = extractor.readSampleData(buffer, 0)
+                    val sampleTime = extractor.sampleTime
+                    val read = if (endUs != null && sampleTime >= endUs) {
+                        -1
+                    } else {
+                        extractor.readSampleData(buffer, 0)
+                    }
                     if (read < 0) {
                         codec.queueInputBuffer(
                             index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
                         )
                         inputDone = true
+                        reachedSourceEnd = sampleTime < 0
                     } else {
                         codec.queueInputBuffer(index, 0, read, extractor.sampleTime, 0)
                         extractor.advance()
@@ -164,7 +212,7 @@ object AudioDecoderChannel {
             val index = codec.dequeueOutputBuffer(info, TIMEOUT_US)
             if (index >= 0) {
                 idleRounds = 0
-                if (info.size > 0) {
+                if (info.size > 0 && (startUs == null || info.presentationTimeUs >= startUs)) {
                     val buffer = codec.getOutputBuffer(index)
                         ?: throw DecodeException("取不到解码器输出缓冲")
                     // 先 clear 再定位：不假设 MediaCodec 交还时 position/limit 是什么。
@@ -191,8 +239,13 @@ object AudioDecoderChannel {
         }
 
         val samples = mono.toArray()
-        if (samples.isEmpty()) throw DecodeException("音轨为空")
-        return toLittleEndianBytes(resampleLinear(samples, sampleRate, TARGET_SAMPLE_RATE))
+        if (samples.isEmpty() && startUs == null) throw DecodeException("音轨为空")
+        val eof = reachedSourceEnd ||
+            (endUs != null && trackDurationUs != null && endUs >= trackDurationUs)
+        return DecodeResult(
+            toLittleEndianBytes(resampleLinear(samples, sampleRate, TARGET_SAMPLE_RATE)),
+            eof,
+        )
     }
 
     /// `KEY_PCM_ENCODING` 是可选键，缺省即 16 位。

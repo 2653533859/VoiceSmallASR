@@ -1,6 +1,6 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-18　　当前版本：1.0.2
+> 更新日期：2026-08-23　　当前版本：1.0.3
 
 后续版本的稳定化、发布治理和产品功能计划见 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)。
 
@@ -328,6 +328,7 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 
 - [x] `TranslationProvider` 抽象：`Future<List<String>> translate(List<String> texts, {String? from, required String to})`；`translateResult()` 已将等长译文安全写入 `Segment.translation`
 - [x] 在线 provider 实现：`ApiTranslationProvider` 支持可配置的 OpenAI-compatible Chat Completions endpoint、模型和 Bearer API Key
+- [x] 自定义模型选择：设置页可从 endpoint 对应的 `/models` 接口获取模型名称并选择，也支持手动填写自定义模型名
 - [x] 批量翻译 + 失败重试 + 进度回报；支持 `batchSize`、`maxRetries`、`retryDelay`，所有批次成功后写入 `Segment.translation`
 - [x] 双语字幕导出：SRT/VTT/TXT 输出原文+译文双行，JSON 保留 `Segment.translation`；已有导出链路并通过 4 项回归测试
 - [x] 应用内翻译工作流：从安全存储读取第三方翻译 API Key，在文件转写页发起翻译、显示进度并回写结果；失败不写入半成品
@@ -436,6 +437,12 @@ macOS 路径不需要开发者模式，也不需要 Visual Studio —— 而且 
 - [x] 自动说话人分离：独立下载/校验 pyannote segmentation 与 3D-Speaker embedding 模型，后台 isolate 运行并按时间重叠映射 `SPEAKER_00` 等标签；首页支持自动估计或指定人数，新增单测和显式真实模型验收脚本；本机 macOS 已用官方四人中文 WAV 和真实模型通过 Debug 集成验收，记录见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)，Android 真机和 Windows 用户桌面仍待验收
 - [x] 硬字幕视频编码：桌面调用本机 FFmpeg/ASS，Android 调用系统 MediaCodec + OpenGL + MediaMuxer，复用字幕样式生成带原文、译文和说话人标签的 MP4；Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出，新增 MethodChannel 单测、页面回归测试和跨平台真实验收脚本；AAC 直通与 MP3 转 AAC 已在 API 35 ARM64 模拟器真实通过，Windows CI run `32048430484` 已通过 `ffmpeg-full`/`ass` smoke，macOS `ffmpeg-full 9.0.1` 已通过 `app/tool/hard_subtitle_ffmpeg_acceptance_test.dart` 纯 VM 真实编码与重新解码，无开发证书的 Debug Runner 也已用 ad-hoc 签名完成集成启动与编码验收；普通 Homebrew FFmpeg 8.1.1 缺少 `libass` 时已通过负向验收，应用会明确提示使用完整 FFmpeg，记录见 [`M13_FFMPEG_COMPATIBILITY.md`](M13_FFMPEG_COMPATIBILITY.md)；API 35 模拟器已补充通过 AV1+AAC 与 VP8+Vorbis，Android 真机和厂商 Codec 差异仍待验收
 - [x] 硬字幕编解码器矩阵补充验收：API 35 ARM64 模拟器使用同一集成测试入口通过 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC、AV1+AAC 和 VP8+Vorbis 六种输入；详细设备、命令和范围限制见 [`M13_CODEC_ACCEPTANCE.md`](M13_CODEC_ACCEPTANCE.md)
+
+### M14 · 视频实时字幕与播放列表
+
+- [x] 视频播放时复用现有 VAD 流式 worker 逐段生成字幕；中文跳过翻译，非中文可按开关逐段调用自定义 API 翻译
+- [x] 视频页支持播放列表、上一个/下一个和结束自动切换，并在当前视频完成后顺序预转写后续视频
+- [x] 自动缓存开关、字幕显示开关和字幕翻译开关可持久化；默认缓存目录为应用支持目录下的 `video_subtitles`，同时写入 JSON 和 SRT
 
 ## 5. 决策记录与待决策事项
 

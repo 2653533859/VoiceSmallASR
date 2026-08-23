@@ -14,7 +14,8 @@
 - M4 的应用内翻译工作流已完成：文件转写页和视频播放页从安全存储读取第三方翻译 API Key，显示批量进度，成功后回写译文，失败时保留原结果；实时字幕页支持逐条翻译，单次录音会话复用 provider，停止时取消未开始的排队请求，译文会显示在列表、视频叠加字幕并进入后续导出链路。
 - M6 首期设置页与模型管理已完成：语言、线程数、ITN、临时结果间隔、VAD 断句参数、第三方翻译 endpoint/模型/API Key 可保存；普通设置/离线模式用 `shared_preferences`，API Key 用 `flutter_secure_storage`，启动时恢复配置；设置页支持模型下载、删除与占用空间显示。
 - M13 翻译术语表已完成：设置页支持每行 `原词=译词` 的可选术语表，保存和 provider 构造时校验非法格式/重复原词；文件、实时、视频和批量翻译都会注入术语提示，批量缓存 scope 包含术语表内容。
-- M13 服务商预设已完成：设置页可保存、选择和删除 endpoint、模型、目标语言和术语表组合；预设以普通设置 JSON 持久化，不包含 API Key；加载时跳过损坏或重复条目，并支持自定义目标语言。
+- M13 服务商预设和模型选择已完成：设置页可保存、选择和删除 endpoint、模型、目标语言和术语表组合；对 OpenAI-compatible endpoint 可请求同服务的 `/models` 列表并选择模型，也保留手动填写模型名；预设以普通设置 JSON 持久化，不包含 API Key；加载时跳过损坏或重复条目，并支持自定义目标语言。
+- M14 视频实时字幕与播放列表已实现：视频页复用现有 VAD 流式 worker，播放时逐段显示转写结果；中文自动跳过翻译，非中文在用户开启并确认第三方发送后逐段翻译；播放列表会顺序预转写后续视频，缓存同时保存结构化 JSON 和 SRT 到应用支持目录 `video_subtitles`，字幕显示、字幕翻译和自动缓存均可在视频页与设置页控制。
 - M10 API 35 ARM64 模拟器性能基线已补充：统一验收入口通过模型下载、完整性校验和 `yue.wav` 文件识别，2 线程文件 RTF `0.026612`，模型目录约 241 MB，模型准备后 RSS 当前约 403 MiB、峰值约 447 MiB；随后用 H.264+AAC MP4 通过音轨解码、播放器打开和播放推进（528 ms / 146 ms / 3.021 s），麦克风参数未提供而明确跳过。另一次麦克风补充验收在权限完成后计时，5 秒请求实际采集 4.928 秒，会话耗时 5,031 ms，RTF `1.020901`，未持续积压，但模拟器没有人工讲话而未产生字幕段。首次慢速下载曾触发 test_api 默认 12 分钟超时，入口现改为 30 分钟库级超时并按约 1 MiB 节流下载日志；该结果不替代 Android 真机或厂商差异验收，记录见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
 - M10 模型下载三源当前主机复测：2026-08-18 在本机 macOS 对识别模型前 2 MiB 发起分段请求，GitHub、`ghfast.top`、`gh-proxy.com` 均返回 HTTP `206` 和完整字节，速度约为 360,833 / 437,475 / 317,526 B/s；这不等于国内 Windows 网络验收，仍保留三源 fallback，记录见 [`M10_DEVICE_ACCEPTANCE.md`](M10_DEVICE_ACCEPTANCE.md)。
 - M13 字幕样式、视频配套字幕导出与桌面/Android 硬字幕编码已完成：视频页可调整字号、文字色、背景色和上/中/下位置并持久化；可按视频文件名导出 SRT/VTT/JSON/TXT 配套字幕文件；桌面调用本机 FFmpeg/ASS，Android 调用 MediaCodec + OpenGL + MediaMuxer 生成带原文、译文和说话人标签的 MP4，Android 支持 AAC 音轨直通、系统可解码的非 AAC 音轨转 AAC 和 API 26+ SAF 输出。新增 MethodChannel 单测、视频页回归测试和跨平台真实验收脚本；API 35 ARM64 模拟器已真实通过 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC、AV1+AAC 和 VP8+Vorbis，Windows CI run `32056120388` 已用 `ffmpeg-full` 通过 `ass/libass` 硬字幕 smoke；macOS `ffmpeg-full 9.0.1` 已通过纯 VM 与无开发证书 ad-hoc Debug Runner 集成验收；普通 Homebrew FFmpeg 8.1.1 缺少 `libass` 时已通过预期失败验收，记录见 [`M13_FFMPEG_COMPATIBILITY.md`](M13_FFMPEG_COMPATIBILITY.md)；真实 Android 设备、厂商 Codec 差异和 Windows 用户桌面仍待验收。
@@ -42,7 +43,7 @@
 ## 已验证结果
 
 - Python：`pytest` 107 项通过，`ruff check .` 通过。
-- Flutter：`flutter analyze` 通过，234 项单测通过；Python 端 107 项测试通过。
+- Flutter：`flutter analyze` 通过，240 项单测通过；Python 端 107 项测试通过。
 - macOS：无开发者证书模式的 `xcodebuild` 已成功编译并打包（含 secure storage plugin），构建脚本会对嵌入 Framework 做 ad-hoc 签名；安全存储不可用时 API Key 退回当前会话，不影响个人使用包交付。
 - M13 自动说话人分离真实模型验收：macOS 26.5.2 arm64 Debug Runner 使用 ad-hoc 签名通过官方 `0-four-speakers-zh.wav`、pyannote segmentation 和 3D-Speaker embedding 的端到端验收；模型文件只存在于临时目录，SHA-256 与输出时间段契约均通过，详细命令和范围见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)。
 - M7 打包：已生成 `dist/macos/VoiceSmallASR.app`（通用二进制，约 161 MB）和 `VoiceSmallASR-unsigned.dmg`（约 64 MB），并用 `hdiutil imageinfo` 验证为 UDZO 镜像。

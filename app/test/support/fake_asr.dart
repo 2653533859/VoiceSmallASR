@@ -16,10 +16,16 @@ import 'package:vsasr_app/src/audio/microphone.dart';
 
 /// 进程内的假转写器：把采样数换算成一段固定结果，并按秒回报进度。
 class FakeTranscriber implements Transcriber {
-  FakeTranscriber({this.language = 'auto', this.text = '呢几个字都表达唔到', this.liveFailure});
+  FakeTranscriber({
+    this.language = 'auto',
+    this.text = '呢几个字都表达唔到',
+    this.liveFailure,
+    this.liveSegments = const <Segment>[],
+  });
 
   final String language;
   final String text;
+  final List<Segment> liveSegments;
 
   /// 非空时 [startLive] 抛出它，用来测「麦克风开不起来」。
   final Object? liveFailure;
@@ -61,7 +67,16 @@ class FakeTranscriber implements Transcriber {
   Future<LiveSession> startLive() async {
     final Object? failure = liveFailure;
     if (failure != null) throw failure;
-    return live = FakeLiveSession();
+    bool emitted = false;
+    return live = FakeLiveSession(
+      onAccept: (FakeLiveSession session, Float32List _) {
+        if (emitted) return;
+        emitted = true;
+        for (final Segment segment in liveSegments) {
+          session.emit(segment);
+        }
+      },
+    );
   }
 
   @override
@@ -72,6 +87,9 @@ class FakeTranscriber implements Transcriber {
 
 /// 假实时会话：测试自己往里塞段，用来驱动界面。
 class FakeLiveSession implements LiveSession {
+  FakeLiveSession({this.onAccept});
+
+  final void Function(FakeLiveSession session, Float32List chunk)? onAccept;
   final StreamController<Segment> _out = StreamController<Segment>.broadcast();
 
   /// 收到过的音频块。
@@ -85,7 +103,10 @@ class FakeLiveSession implements LiveSession {
   Stream<Segment> get segments => _out.stream;
 
   @override
-  void accept(Float32List chunk) => chunks.add(chunk);
+  void accept(Float32List chunk) {
+    chunks.add(chunk);
+    onAccept?.call(this, chunk);
+  }
 
   /// 从「引擎侧」推一段结果出来。
   void emit(Segment segment) => _out.add(segment);
@@ -149,7 +170,8 @@ class FakeMicrophone implements AudioSource {
 
 /// 假解码器：要么回一段固定采样，要么抛出解码失败。
 class FakeDecoder implements AudioDecoder {
-  FakeDecoder({int samples = kSampleRate, this.failure}) : _samples = Float32List(samples);
+  FakeDecoder({int samples = kSampleRate, this.failure})
+    : _samples = Float32List(samples);
 
   final Float32List _samples;
 
@@ -170,7 +192,8 @@ class FakeDecoder implements AudioDecoder {
 
 /// 在 [root] 下造出能让 `ModelManager.isReady()` 为真的占位文件。
 void writeFakeModel(String root) {
-  final Directory asrDir = Directory(p.join(root, kAsrModelName))..createSync(recursive: true);
+  final Directory asrDir = Directory(p.join(root, kAsrModelName))
+    ..createSync(recursive: true);
   File(p.join(asrDir.path, 'model.int8.onnx')).writeAsStringSync('fake');
   File(p.join(asrDir.path, 'tokens.txt')).writeAsStringSync('fake');
   File(p.join(root, kVadModelName)).writeAsStringSync('fake');

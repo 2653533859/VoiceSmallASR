@@ -103,6 +103,45 @@ void main() {
     expect(await repository.loadSubtitleStyle(), const SubtitleStyle());
   });
 
+  test('视频字幕显示、翻译和自动缓存开关可以持久化', () async {
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+    );
+
+    expect(
+      await repository.loadVideoSubtitleSettings(),
+      isA<VideoSubtitleSettings>()
+          .having(
+            (VideoSubtitleSettings value) => value.subtitlesEnabled,
+            'subtitlesEnabled',
+            isTrue,
+          )
+          .having(
+            (VideoSubtitleSettings value) => value.translationEnabled,
+            'translationEnabled',
+            isFalse,
+          )
+          .having(
+            (VideoSubtitleSettings value) => value.cacheEnabled,
+            'cacheEnabled',
+            isTrue,
+          ),
+    );
+
+    await repository.saveVideoSubtitleSettings(
+      const VideoSubtitleSettings(
+        subtitlesEnabled: false,
+        translationEnabled: true,
+        cacheEnabled: false,
+      ),
+    );
+    final VideoSubtitleSettings restored = await repository
+        .loadVideoSubtitleSettings();
+    expect(restored.subtitlesEnabled, isFalse);
+    expect(restored.translationEnabled, isTrue);
+    expect(restored.cacheEnabled, isFalse);
+  });
+
   test('最近项目会去重、置顶并限制数量，损坏数据回退为空列表', () async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
     final AppSettingsRepository repository = AppSettingsRepository(

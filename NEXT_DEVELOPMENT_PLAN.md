@@ -7,7 +7,7 @@
 ## 当前基线
 
 - Python 端：离线多语种识别、CLI、实时 VAD、时间戳和字幕导出已完成；`pytest` 107 项通过。
-- Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；项目文件数据层、首页保存/打开、最近项目、Android SAF 字节读取、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 字幕导入和 M12 多文件队列/批量翻译/安全导出/文本缓存/队列恢复已接入；M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总报告、持续性能历史和自动说话人分离；`flutter analyze` 与 `flutter test` 234 项通过。
+- Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；项目文件数据层、首页保存/打开、最近项目、Android SAF 字节读取、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 字幕导入和 M12 多文件队列/批量翻译/安全导出/文本缓存/队列恢复已接入；M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总报告、持续性能历史和自动说话人分离，M14 已加入视频流式字幕、播放列表和后续字幕预缓存；`flutter analyze` 与 `flutter test` 240 项通过。
 - 平台验收：macOS ASR 与自动说话人分离真实模型、Android API 35 模拟器识别/播放与硬字幕编码、Windows CI 完整模型 E2E/桌面 smoke/硬字幕编码已通过；Android 真机和 Windows 用户桌面仍待验收。
 - 发布能力：`v1.0.2` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/ZIP，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`。
 - macOS 本机安装：2026-08-21 已安装并启动 `VoiceSmallASR 1.0.2 (build 4)`；构建脚本对嵌入 Framework 使用 ad-hoc 签名，不需要开发者证书，`codesign --verify --deep --strict` 通过。
@@ -155,6 +155,7 @@
 - [x] 自动说话人分离：独立管理 pyannote segmentation 与 3D-Speaker embedding 模型，后台 isolate 调用 sherpa-onnx diarization API，按时间重叠把 `SPEAKER_00` 等标签写入字幕；首页支持自动估计人数或指定人数，标签可继续在校对页改名；新增单测和显式真实模型验收脚本，macOS 官方四人中文 WAV 真实模型验收通过，记录见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)。
 - [x] 翻译术语表：设置页按每行 `原词=译词` 保存，所有第三方 API 翻译入口注入术语提示，批量缓存随术语表变化失效。
 - [x] 服务商预设：设置页可保存、选择和删除常用 endpoint、模型、目标语言和术语表组合；预设不保存 API Key，损坏条目会被跳过。
+- [x] 自定义模型选择：设置页根据 OpenAI-compatible Chat Completions endpoint 请求同服务的 `/models` 列表，支持标准 `data` 与第三方 `models` 响应，并可手动填写不在列表中的模型名。
 - [x] 字幕批量时间偏移：同步移动字幕段和 token 时间戳，沿用时间轴边界校验，并支持撤销。
 - [x] 字幕搜索替换：支持全局替换、大小写选项、空替换和撤销；文本变化会清除过期译文与 token 时间戳。
 - [x] 阅读速度检查：按可配置的字符/秒阈值检查原文和译文中较长的一行，只报告超阈值字幕，不修改编辑结果。
@@ -168,6 +169,14 @@
 当前进度：M13 自动说话人分离和桌面/Android 硬字幕编码代码已完成代码审查、相关测试和验收脚本；本机 macOS 已用官方四人中文 WAV 和真实分离模型通过 Debug 集成验收，模型完整性、16 kHz 解码和输出时间段契约均通过，记录见 [`M13_DIARIZATION_ACCEPTANCE.md`](M13_DIARIZATION_ACCEPTANCE.md)。`flutter analyze`、Flutter 相关测试、Android Kotlin 编译和 Android API 35 ARM64 模拟器硬字幕真实编码均已通过，模拟器已分别验收 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC、AV1+AAC 和 VP8+Vorbis；Windows CI run `32060800502` 已用带 `libass` 的 `ffmpeg-full` 通过硬字幕编码 smoke；本机 macOS `ffmpeg-full 9.0.1` 已通过纯 VM 真实编码、重新解码以及无开发证书 ad-hoc Debug Runner 集成验收，普通 Homebrew FFmpeg 8.1.1 缺少 `libass` 时也已通过预期失败验收，记录见 [`M13_FFMPEG_COMPATIBILITY.md`](M13_FFMPEG_COMPATIBILITY.md)。Android 真机、厂商 Codec 差异和 Windows 用户桌面仍待具备环境后验收。下一步是完成真实设备验收，并根据设备结果补充兼容性。
 
 补充验收：API 35 ARM64 模拟器已用多输入入口通过 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC、AV1+AAC、VP8+Vorbis 六种输入，记录见 [`M13_CODEC_ACCEPTANCE.md`](M13_CODEC_ACCEPTANCE.md)；该结果不替代 Android 真机和厂商 Codec 验收。
+
+## M14 · 视频实时字幕与播放列表
+
+- [x] 视频音轨复用现有 VAD 流式 worker，识别段完成后立即更新播放器字幕，不额外加载第二份模型。
+- [x] 中文语言代码自动跳过翻译；非中文在开启字幕翻译并确认第三方数据发送后逐段翻译。
+- [x] 视频页支持多文件播放列表、上一个/下一个和播放结束自动切换。
+- [x] 开启自动缓存后顺序预转写列表后续视频，缓存按媒体路径、大小和修改时间校验，并在应用支持目录 `video_subtitles` 同时保存 JSON 与 SRT。
+- [x] 视频页和设置页均可控制字幕显示、字幕翻译和自动缓存默认值。
 
 ## 推荐执行顺序
 
@@ -183,6 +192,8 @@ M11 项目保存与字幕导入
 M12 批量处理与批量翻译
   ↓
 M13 可选增强
+  ↓
+M14 视频实时字幕与播放列表
 ```
 
 每个阶段按“实现 → 代码审查 → 相关测试 → 文档同步 → 提交推送 → 必要时发布”完成，不把真实 API Key、签名证书或模型文件提交到仓库。

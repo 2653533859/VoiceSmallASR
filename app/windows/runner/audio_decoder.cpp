@@ -17,6 +17,7 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <propvarutil.h>
 #include <wrl/client.h>
 
 #include <flutter/method_channel.h>
@@ -58,6 +59,10 @@ struct DecodeJob {
   std::string path;
   std::vector<uint8_t> pcm;
   std::string error;
+  int64_t start_ms = -1;
+  int64_t duration_ms = -1;
+  bool chunked = false;
+  bool eof = false;
 };
 
 // 解码器实际输出的格式。is_float 为假表示 16 位整型 PCM。
@@ -191,7 +196,10 @@ std::vector<uint8_t> ToBytes(const std::vector<float>& samples) {
 }
 
 // 解码主流程。失败时把可直接展示的中文说明写进 *error 并返回空。
-std::vector<uint8_t> Decode(const std::string& path, std::string* error) {
+std::vector<uint8_t> Decode(const std::string& path, std::string* error,
+                            int64_t start_ms = -1,
+                            int64_t duration_ms = -1,
+                            bool* eof = nullptr) {
   const std::wstring wide_path = WidenUtf8(path);
   if (::GetFileAttributesW(wide_path.c_str()) == INVALID_FILE_ATTRIBUTES) {
     *error = "音频文件不存在";
@@ -226,12 +234,31 @@ std::vector<uint8_t> Decode(const std::string& path, std::string* error) {
     return {};
   }
 
+  const bool chunked = start_ms >= 0 && duration_ms > 0;
+  const LONGLONG start_time = chunked ? start_ms * 10000 : 0;
+  const LONGLONG end_time =
+      chunked ? (start_ms + duration_ms) * 10000 : 0;
+  if (chunked) {
+    PROPVARIANT position;
+    ::PropVariantInit(&position);
+    position.vt = VT_I8;
+    position.hVal.QuadPart = start_time;
+    const HRESULT seek_result = reader->SetCurrentPosition(GUID_NULL, position);
+    ::PropVariantClear(&position);
+    if (FAILED(seek_result)) {
+      *error = "无法跳转到指定音轨位置";
+      return {};
+    }
+  }
+
   std::vector<float> mono;
+  bool reached_source_end = false;
   for (;;) {
     DWORD flags = 0;
+    LONGLONG timestamp = 0;
     ComPtr<IMFSample> sample;
-    if (FAILED(reader->ReadSample(kFirstAudioStream, 0, nullptr, &flags, nullptr,
-                                  sample.GetAddressOf()))) {
+    if (FAILED(reader->ReadSample(kFirstAudioStream, 0, nullptr, &flags,
+                                  &timestamp, sample.GetAddressOf()))) {
       *error = "读取解码结果失败";
       return {};
     }
@@ -243,8 +270,13 @@ std::vector<uint8_t> Decode(const std::string& path, std::string* error) {
         return {};
       }
     }
-    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) break;
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+      reached_source_end = true;
+      break;
+    }
     if (!sample) continue;  // 有间隙但没结束，继续读
+    if (chunked && timestamp >= end_time) break;
+    if (chunked && timestamp < start_time) continue;
 
     ComPtr<IMFMediaBuffer> buffer;
     if (FAILED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf()))) {
@@ -261,10 +293,11 @@ std::vector<uint8_t> Decode(const std::string& path, std::string* error) {
     buffer->Unlock();
   }
 
-  if (mono.empty()) {
+  if (mono.empty() && !chunked) {
     *error = "音轨为空";
     return {};
   }
+  if (eof != nullptr) *eof = reached_source_end;
   return ToBytes(ResampleLinear(mono, info.sample_rate, kTargetSampleRate));
 }
 
@@ -273,7 +306,8 @@ void ExecuteJob(DecodeJob* job) {
   const HRESULT com = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (SUCCEEDED(MFStartup(MF_VERSION))) {
     try {
-      job->pcm = Decode(job->path, &job->error);
+      job->pcm = Decode(job->path, &job->error, job->start_ms,
+                        job->duration_ms, &job->eof);
     } catch (const std::bad_alloc&) {
       job->error = "解码音频时内存不足";
     } catch (const std::exception&) {
@@ -293,7 +327,16 @@ void ExecuteJob(DecodeJob* job) {
 // 只能在平台线程上调用。
 void Reply(std::unique_ptr<DecodeJob> job) {
   if (job->error.empty()) {
-    job->result->Success(flutter::EncodableValue(std::move(job->pcm)));
+    if (job->chunked) {
+      flutter::EncodableMap response;
+      response[flutter::EncodableValue("pcm")] =
+          flutter::EncodableValue(std::move(job->pcm));
+      response[flutter::EncodableValue("eof")] =
+          flutter::EncodableValue(job->eof);
+      job->result->Success(flutter::EncodableValue(std::move(response)));
+    } else {
+      job->result->Success(flutter::EncodableValue(std::move(job->pcm)));
+    }
   } else {
     job->result->Error("DECODE_FAILED", job->error,
                        flutter::EncodableValue(job->path));
@@ -355,6 +398,18 @@ std::string PathArgument(const flutter::MethodCall<flutter::EncodableValue>& cal
   return value == nullptr ? std::string() : *value;
 }
 
+int64_t IntegerArgument(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    const char* name, int64_t fallback) {
+  const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+  if (arguments == nullptr) return fallback;
+  const auto entry = arguments->find(flutter::EncodableValue(name));
+  if (entry == arguments->end()) return fallback;
+  if (const auto* value = std::get_if<int32_t>(&entry->second)) return *value;
+  if (const auto* value = std::get_if<int64_t>(&entry->second)) return *value;
+  return fallback;
+}
+
 }  // namespace
 
 void RegisterAudioDecoderChannel(flutter::BinaryMessenger* messenger) {
@@ -367,7 +422,8 @@ void RegisterAudioDecoderChannel(flutter::BinaryMessenger* messenger) {
   channel->SetMethodCallHandler(
       [window](const flutter::MethodCall<flutter::EncodableValue>& call,
                std::unique_ptr<MethodResultValue> result) {
-        if (call.method_name() != "decodeToPcm16k") {
+        if (call.method_name() != "decodeToPcm16k" &&
+            call.method_name() != "decodePcm16kChunk") {
           result->NotImplemented();
           return;
         }
@@ -379,6 +435,15 @@ void RegisterAudioDecoderChannel(flutter::BinaryMessenger* messenger) {
         auto job = std::make_unique<DecodeJob>();
         job->result = std::move(result);
         job->path = path;
+        job->chunked = call.method_name() == "decodePcm16kChunk";
+        if (job->chunked) {
+          job->start_ms = IntegerArgument(call, "startMs", -1);
+          job->duration_ms = IntegerArgument(call, "durationMs", -1);
+          if (job->start_ms < 0 || job->duration_ms <= 0) {
+            job->result->Error("BAD_ARGS", "分块解码时间范围无效");
+            return;
+          }
+        }
         if (window == nullptr) {
           // 没有搬运窗口就只能同步解（会卡界面），但绝不能不回包。
           ExecuteJob(job.get());

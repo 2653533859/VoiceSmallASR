@@ -16,6 +16,7 @@ import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/speaker_diarization.dart';
 import 'package:vsasr_app/src/asr/speaker_diarization_model_manager.dart';
+import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/diagnostics/performance_report.dart';
@@ -49,6 +50,8 @@ enum JobStage {
   /// 正在删除或刷新模型缓存。
   managingModel,
 }
+
+typedef VideoTranscriptionUpdate = void Function(TranscriptionResult result);
 
 /// 主界面状态。
 class TranscribeController extends ChangeNotifier {
@@ -461,6 +464,123 @@ class TranscribeController extends ChangeNotifier {
     } finally {
       _stage = JobStage.idle;
       notifyListeners();
+    }
+  }
+
+  /// 以流式会话转写视频音轨，逐段回报字幕，但不覆盖当前项目结果。
+  ///
+  /// 播放列表预处理复用同一个 worker，避免额外加载一份约 240 MB 的模型。
+  Future<TranscriptionResult> transcribeVideoStream(
+    String path, {
+    VideoTranscriptionUpdate? onUpdate,
+  }) async {
+    if (busy) throw StateError('当前正在处理另一个文件');
+    final int generation = _cancelGeneration;
+    final Transcriber? worker = await ensureWorker();
+    if (worker == null) {
+      throw StateError(_errorText ?? '识别模型未就绪');
+    }
+    if (_disposed || generation != _cancelGeneration) {
+      throw StateError('视频字幕转写已取消');
+    }
+
+    LiveSession? session;
+    StreamSubscription<Segment>? subscription;
+    try {
+      _stage = JobStage.decoding;
+      _errorText = null;
+      _progress = null;
+      _statusText = '正在解码视频音轨…';
+      notifyListeners();
+      _stage = JobStage.transcribing;
+      _progress = 0;
+      _statusText = '正在实时转写视频字幕…';
+      notifyListeners();
+      session = await worker.startLive();
+      final List<Segment> finals = <Segment>[];
+      Segment? partial;
+      var decodedSamples = 0;
+      final Completer<void> completed = Completer<void>();
+      subscription = session.segments.listen(
+        (Segment segment) {
+          if (_disposed || generation != _cancelGeneration) return;
+          if (segment.isFinal) {
+            finals.add(segment);
+            partial = null;
+          } else {
+            partial = segment;
+          }
+          onUpdate?.call(
+            TranscriptionResult(
+              segments: <Segment>[...finals, ?partial],
+              duration: decodedSamples / kSampleRate,
+              language: _config.language,
+            ),
+          );
+        },
+        onError: (Object error, StackTrace stack) {
+          if (!completed.isCompleted) completed.completeError(error, stack);
+        },
+        onDone: () {
+          if (!completed.isCompleted) completed.complete();
+        },
+      );
+      await for (final DecodedAudioChunk decoded in _videoAudioChunks(path)) {
+        if (_disposed || generation != _cancelGeneration) {
+          throw StateError('视频字幕转写已取消');
+        }
+        decodedSamples += decoded.samples.length;
+        session.accept(decoded.samples);
+        _progress = null;
+        _statusText = '正在实时转写视频字幕… ${(decodedSamples / kSampleRate).round()} 秒';
+        notifyListeners();
+      }
+      await session.finish();
+      session = null;
+      await completed.future;
+      final TranscriptionResult result = TranscriptionResult(
+        segments: List<Segment>.unmodifiable(finals),
+        duration: decodedSamples / kSampleRate,
+        language: _config.language,
+      );
+      onUpdate?.call(result);
+      _progress = 1;
+      _statusText = '视频字幕转写完成：${result.length} 段';
+      return result;
+    } on AudioDecodeException catch (error) {
+      _errorText = error.message;
+      _statusText = '视频音轨解码失败';
+      rethrow;
+    } on Object catch (error) {
+      _errorText = _humanize(error);
+      _statusText = '视频字幕转写失败';
+      rethrow;
+    } finally {
+      try {
+        await session?.finish();
+      } on Object {
+        // 主错误由上层处理；这里只保证实时会话尽量释放。
+      }
+      await subscription?.cancel();
+      _stage = JobStage.idle;
+      notifyListeners();
+    }
+  }
+
+  Stream<DecodedAudioChunk> _videoAudioChunks(String path) async* {
+    final AudioDecoder decoder = _decoder;
+    if (decoder is ChunkedAudioDecoder) {
+      yield* (decoder as ChunkedAudioDecoder).decodeFileChunks(path);
+      return;
+    }
+    final Float32List samples = await decoder.decodeFile(path);
+    const int chunkSize = kSampleRate * 2;
+    for (int offset = 0; offset < samples.length; offset += chunkSize) {
+      final int end = (offset + chunkSize).clamp(0, samples.length).toInt();
+      yield DecodedAudioChunk(
+        Float32List.sublistView(samples, offset, end),
+        isLast: end == samples.length,
+      );
     }
   }
 

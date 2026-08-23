@@ -33,7 +33,7 @@ enum AudioDecoderChannel {
   static func register(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: name, binaryMessenger: messenger)
     channel.setMethodCallHandler { call, result in
-      guard call.method == "decodeToPcm16k" else {
+      guard call.method == "decodeToPcm16k" || call.method == "decodePcm16kChunk" else {
         result(FlutterMethodNotImplemented)
         return
       }
@@ -46,8 +46,28 @@ enum AudioDecoderChannel {
       // 解一段几十分钟的音轨会占满主线程，必须挪到后台队列。
       DispatchQueue.global(qos: .userInitiated).async {
         do {
-          let pcm = try decode(path: path)
-          DispatchQueue.main.async { result(FlutterStandardTypedData(bytes: pcm)) }
+          if call.method == "decodePcm16kChunk" {
+            guard let startMs = arguments["startMs"] as? NSNumber,
+                  let durationMs = arguments["durationMs"] as? NSNumber,
+                  startMs.int64Value >= 0,
+                  durationMs.int64Value > 0
+            else {
+              throw DecodeError.invalidRange
+            }
+            let decoded = try decodeChunk(
+              path: path,
+              startSeconds: startMs.doubleValue / 1000.0,
+              durationSeconds: durationMs.doubleValue / 1000.0)
+            DispatchQueue.main.async {
+              result([
+                "pcm": FlutterStandardTypedData(bytes: decoded.pcm),
+                "eof": decoded.eof,
+              ])
+            }
+          } else {
+            let pcm = try decode(path: path)
+            DispatchQueue.main.async { result(FlutterStandardTypedData(bytes: pcm)) }
+          }
         } catch {
           DispatchQueue.main.async {
             result(
@@ -64,6 +84,32 @@ enum AudioDecoderChannel {
   /// 返回 float32 小端字节流；Dart 侧按 `Uint8List` 收下再转成 `Float32List`
   /// （按字节回传比直接回 `Float32List` 更不依赖 Flutter SDK 版本）。
   private static func decode(path: String) throws -> Data {
+    return try decode(path: path, timeRange: nil, allowEmpty: false)
+  }
+
+  private static func decodeChunk(
+    path: String,
+    startSeconds: Double,
+    durationSeconds: Double
+  ) throws -> (pcm: Data, eof: Bool) {
+    let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+    let assetSeconds = CMTimeGetSeconds(asset.duration)
+    if assetSeconds.isFinite && startSeconds >= assetSeconds {
+      return (Data(), true)
+    }
+    let range = CMTimeRange(
+      start: CMTime(seconds: startSeconds, preferredTimescale: 1_000_000),
+      duration: CMTime(seconds: durationSeconds, preferredTimescale: 1_000_000))
+    let pcm = try decode(path: path, timeRange: range, allowEmpty: true)
+    let eof = assetSeconds.isFinite && startSeconds + durationSeconds >= assetSeconds
+    return (pcm, eof)
+  }
+
+  private static func decode(
+    path: String,
+    timeRange: CMTimeRange?,
+    allowEmpty: Bool
+  ) throws -> Data {
     let asset = AVURLAsset(url: URL(fileURLWithPath: path))
     let tracks = asset.tracks(withMediaType: .audio)
     guard !tracks.isEmpty else { throw DecodeError.noAudioTrack }
@@ -86,6 +132,7 @@ enum AudioDecoderChannel {
     let output = AVAssetReaderAudioMixOutput(audioTracks: [tracks[0]], audioSettings: settings)
     guard reader.canAdd(output) else { throw DecodeError.unsupportedFormat }
     reader.add(output)
+    if let timeRange { reader.timeRange = timeRange }
     guard reader.startReading() else { throw reader.error ?? DecodeError.unsupportedFormat }
 
     var pcm = Data()
@@ -107,7 +154,7 @@ enum AudioDecoderChannel {
     }
 
     if reader.status == .failed { throw reader.error ?? DecodeError.unsupportedFormat }
-    guard !pcm.isEmpty else { throw DecodeError.emptyTrack }
+    if !allowEmpty && pcm.isEmpty { throw DecodeError.emptyTrack }
     return pcm
   }
 
@@ -116,6 +163,7 @@ enum AudioDecoderChannel {
     case unsupportedFormat
     case copyFailed
     case emptyTrack
+    case invalidRange
 
     var errorDescription: String? {
       switch self {
@@ -123,6 +171,7 @@ enum AudioDecoderChannel {
       case .unsupportedFormat: return "系统无法解码该格式（mkv / webm 需先转码）"
       case .copyFailed: return "读取解码结果失败"
       case .emptyTrack: return "音轨为空"
+      case .invalidRange: return "分块解码时间范围无效"
       }
     }
   }

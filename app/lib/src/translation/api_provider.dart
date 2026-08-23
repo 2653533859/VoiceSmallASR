@@ -227,6 +227,44 @@ class ApiTranslationProvider implements ClosableTranslationProvider {
   }
 }
 
+/// 从 OpenAI-compatible 服务的 Chat Completions 地址获取可用模型。
+///
+/// 例如 `/v1/chat/completions` 会请求同一服务的 `/v1/models`。
+/// 部分第三方服务返回 `data`，也有服务返回 `models`，两种格式都兼容。
+Future<List<String>> fetchTranslationModels({
+  required String apiKey,
+  String endpoint = kDefaultTranslationApiEndpoint,
+  http.Client? client,
+  Duration timeout = const Duration(seconds: 30),
+}) async {
+  final String key = _requireApiKey(apiKey);
+  final Uri modelsEndpoint = _buildModelsEndpoint(_buildEndpoint(endpoint));
+  final Duration requestTimeout = _requireTimeout(timeout);
+  final http.Client requestClient = client ?? http.Client();
+  final bool ownsClient = client == null;
+  try {
+    final http.Response response = await requestClient
+        .get(
+          modelsEndpoint,
+          headers: <String, String>{
+            'Authorization': 'Bearer $key',
+            'Accept': 'application/json',
+          },
+        )
+        .timeout(requestTimeout);
+    final Object? decoded = _decodeJson(response.body);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw TranslationException(
+        _errorMessage(decoded) ?? '模型列表请求失败（HTTP ${response.statusCode}）',
+        statusCode: response.statusCode,
+      );
+    }
+    return _parseModelIds(decoded);
+  } finally {
+    if (ownsClient) requestClient.close();
+  }
+}
+
 /// 解析并校验设置页填写的术语表。
 Map<String, String> parseTranslationGlossary(String raw) {
   final Map<String, String> terms = <String, String>{};
@@ -373,4 +411,52 @@ Uri _buildEndpoint(String value) {
     throw ArgumentError.value(value, 'endpoint', '必须是 http 或 https URL');
   }
   return endpoint;
+}
+
+Uri _buildModelsEndpoint(Uri endpoint) {
+  final List<String> segments = endpoint.pathSegments
+      .where((String segment) => segment.isNotEmpty)
+      .toList(growable: true);
+  if (segments.length >= 2 &&
+      segments[segments.length - 2] == 'chat' &&
+      segments.last == 'completions') {
+    segments.removeLast();
+    segments.removeLast();
+  } else if (segments.isNotEmpty && segments.last == 'completions') {
+    segments.removeLast();
+  }
+  if (segments.isEmpty || segments.last != 'models') {
+    segments.add('models');
+  }
+  return endpoint.replace(path: '/${segments.join('/')}');
+}
+
+List<String> _parseModelIds(Object? decoded) {
+  if (decoded is! Map<String, dynamic>) {
+    throw const TranslationException('模型列表响应的 JSON 格式无效');
+  }
+  final dynamic rawModels = decoded['data'] ?? decoded['models'];
+  if (rawModels is! List) {
+    throw const TranslationException('模型列表响应缺少 data 或 models');
+  }
+  final Set<String> seen = <String>{};
+  final List<String> models = <String>[];
+  for (final dynamic rawModel in rawModels) {
+    String? id;
+    if (rawModel is String) {
+      id = rawModel;
+    } else if (rawModel is Map) {
+      final Object? value =
+          rawModel['id'] ?? rawModel['name'] ?? rawModel['model'];
+      if (value is String) id = value;
+    }
+    final String normalized = id?.trim() ?? '';
+    if (normalized.isNotEmpty && seen.add(normalized)) {
+      models.add(normalized);
+    }
+  }
+  if (models.isEmpty) {
+    throw const TranslationException('模型列表响应中没有可用模型');
+  }
+  return models;
 }

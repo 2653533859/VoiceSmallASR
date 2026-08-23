@@ -31,6 +31,9 @@ class _SettingsPageState extends State<SettingsPage> {
   late double _partialInterval;
   late double _vadThreshold;
   late double _minSilenceDuration;
+  bool _videoSubtitlesEnabled = true;
+  bool _videoTranslationEnabled = false;
+  bool _videoSubtitleCacheEnabled = true;
   late final TextEditingController _apiEndpoint;
   late final TextEditingController _apiModel;
   late final TextEditingController _apiGlossary;
@@ -42,6 +45,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _loading = true;
   bool _saving = false;
   bool _testingConnection = false;
+  bool _loadingModels = false;
+  List<String> _availableModels = <String>[];
   String? _errorText;
   String? _connectionStatus;
 
@@ -76,6 +81,8 @@ class _SettingsPageState extends State<SettingsPage> {
           .loadTranslationApiSettings();
       final List<TranslationProviderPreset> presets = await widget.repository
           .loadTranslationProviderPresets();
+      final VideoSubtitleSettings videoSettings = await widget.repository
+          .loadVideoSubtitleSettings();
       final String? key = await widget.repository.translationSecrets
           .readApiKey();
       if (!mounted) return;
@@ -88,6 +95,9 @@ class _SettingsPageState extends State<SettingsPage> {
           : settings.targetLanguage.trim();
       setState(() {
         _translationPresets = presets;
+        _videoSubtitlesEnabled = videoSettings.subtitlesEnabled;
+        _videoTranslationEnabled = videoSettings.translationEnabled;
+        _videoSubtitleCacheEnabled = videoSettings.cacheEnabled;
         _selectedPresetId = null;
         _loading = false;
       });
@@ -111,7 +121,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _save() async {
-    if (_loading || _saving || _testingConnection) return;
+    if (_loading || _saving || _testingConnection || _loadingModels) return;
     setState(() {
       _saving = true;
       _errorText = null;
@@ -139,6 +149,13 @@ class _SettingsPageState extends State<SettingsPage> {
           glossary: _apiGlossary.text,
         ),
       );
+      await widget.repository.saveVideoSubtitleSettings(
+        VideoSubtitleSettings(
+          subtitlesEnabled: _videoSubtitlesEnabled,
+          translationEnabled: _videoTranslationEnabled,
+          cacheEnabled: _videoSubtitleCacheEnabled,
+        ),
+      );
       final String key = _apiKey.text.trim();
       if (key.isEmpty) {
         await widget.repository.translationSecrets.deleteApiKey();
@@ -159,7 +176,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _testConnection() async {
-    if (_loading || _saving || _testingConnection) return;
+    if (_loading || _saving || _testingConnection || _loadingModels) return;
     final String apiKey = _apiKey.text.trim();
     if (apiKey.isEmpty) {
       setState(() {
@@ -207,6 +224,52 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _fetchModels() async {
+    if (_loading || _saving || _testingConnection || _loadingModels) return;
+    final String apiKey = _apiKey.text.trim();
+    if (apiKey.isEmpty) {
+      setState(() {
+        _connectionStatus = null;
+        _errorText = '获取模型失败：请先输入 API Key';
+      });
+      return;
+    }
+    final String endpoint = _apiEndpoint.text.trim();
+    setState(() {
+      _loadingModels = true;
+      _errorText = null;
+      _connectionStatus = '正在获取 ${_safeEndpoint(endpoint)} 的模型列表…';
+    });
+    try {
+      final List<String> models = await fetchTranslationModels(
+        apiKey: apiKey,
+        endpoint: endpoint,
+      );
+      if (!mounted) return;
+      final String currentModel = _apiModel.text.trim();
+      final List<String> options = <String>[
+        if (currentModel.isNotEmpty && !models.contains(currentModel))
+          currentModel,
+        ...models,
+      ];
+      setState(() {
+        _availableModels = options;
+        _connectionStatus = '已获取 ${models.length} 个模型，可选择或手动填写模型名';
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _availableModels = <String>[];
+        _connectionStatus = null;
+        _errorText =
+            '获取模型失败（${_safeEndpoint(endpoint)}）：'
+            '${_redactApiKey(error.toString(), apiKey)}';
+      });
+    } finally {
+      if (mounted) setState(() => _loadingModels = false);
+    }
+  }
+
   TranslationApiSettings _currentTranslationSettings() =>
       TranslationApiSettings(
         endpoint: _apiEndpoint.text,
@@ -219,6 +282,21 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_selectedPresetId != null) {
       setState(() => _selectedPresetId = null);
     }
+  }
+
+  void _onTranslationEndpointChanged(String _) {
+    setState(() {
+      _availableModels = <String>[];
+      _selectedPresetId = null;
+    });
+  }
+
+  void _onTranslationApiKeyChanged(String _) {
+    if (_availableModels.isEmpty && _selectedPresetId == null) return;
+    setState(() {
+      _availableModels = <String>[];
+      _selectedPresetId = null;
+    });
   }
 
   void _applyTranslationPreset(String id) {
@@ -237,11 +315,14 @@ class _SettingsPageState extends State<SettingsPage> {
     _targetLanguage = settings.targetLanguage.trim().isEmpty
         ? kDefaultTranslationTargetLanguage
         : settings.targetLanguage.trim();
-    setState(() => _selectedPresetId = selected!.id);
+    setState(() {
+      _selectedPresetId = selected!.id;
+      _availableModels = <String>[];
+    });
   }
 
   Future<void> _saveTranslationPreset() async {
-    if (_loading || _saving || _testingConnection) return;
+    if (_loading || _saving || _testingConnection || _loadingModels) return;
     final TextEditingController nameController = TextEditingController(
       text: _translationPresets
           .where(
@@ -314,6 +395,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_loading ||
         _saving ||
         _testingConnection ||
+        _loadingModels ||
         _selectedPresetId == null) {
       return;
     }
@@ -391,7 +473,11 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final bool disabled =
-        _loading || _saving || _testingConnection || widget.controller.busy;
+        _loading ||
+        _saving ||
+        _testingConnection ||
+        _loadingModels ||
+        widget.controller.busy;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: _loading
@@ -519,7 +605,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   autocorrect: false,
                   enableSuggestions: false,
                   keyboardType: TextInputType.url,
-                  onChanged: _onTranslationFieldChanged,
+                  onChanged: _onTranslationEndpointChanged,
                   decoration: const InputDecoration(
                     labelText: '翻译 API 地址',
                     hintText: 'OpenAI-compatible /v1/chat/completions 地址',
@@ -558,11 +644,64 @@ class _SettingsPageState extends State<SettingsPage> {
                   enableSuggestions: false,
                   onChanged: _onTranslationFieldChanged,
                   decoration: const InputDecoration(
-                    labelText: '翻译模型',
-                    hintText: '例如 gpt-4o-mini 或第三方模型名',
+                    labelText: '翻译模型名称',
+                    hintText: '可手动填写，也可从下方列表选择',
                     border: OutlineInputBorder(),
                   ),
                 ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    key: const Key('fetchTranslationModels'),
+                    onPressed: disabled ? null : _fetchModels,
+                    icon: _loadingModels
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_outlined),
+                    label: Text(_loadingModels ? '获取模型中…' : '获取模型列表'),
+                  ),
+                ),
+                if (_availableModels.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 8),
+                  InputDecorator(
+                    key: const Key('translationModelSelector'),
+                    decoration: const InputDecoration(
+                      labelText: '已获取的模型',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value: _availableModels.contains(_apiModel.text.trim())
+                            ? _apiModel.text.trim()
+                            : null,
+                        hint: const Text('选择模型后填入名称'),
+                        items: <DropdownMenuItem<String>>[
+                          for (final String model in _availableModels)
+                            DropdownMenuItem<String>(
+                              value: model,
+                              child: Text(
+                                model,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: disabled
+                            ? null
+                            : (String? value) {
+                                if (value == null) return;
+                                setState(() {
+                                  _apiModel.text = value;
+                                  _selectedPresetId = null;
+                                });
+                              },
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 TextField(
                   key: const Key('translationGlossary'),
@@ -588,6 +727,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   obscureText: true,
                   autocorrect: false,
                   enableSuggestions: false,
+                  onChanged: _onTranslationApiKeyChanged,
                   decoration: const InputDecoration(
                     labelText: '第三方翻译 API Key',
                     hintText: '留空可清除已保存的 Key',
@@ -625,6 +765,42 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ),
                 ],
+                const Divider(height: 24),
+                Text('视频字幕', style: Theme.of(context).textTheme.titleMedium),
+                SwitchListTile.adaptive(
+                  key: const Key('videoSubtitlesEnabled'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('默认显示字幕'),
+                  value: _videoSubtitlesEnabled,
+                  onChanged: disabled
+                      ? null
+                      : (bool value) =>
+                            setState(() => _videoSubtitlesEnabled = value),
+                ),
+                SwitchListTile.adaptive(
+                  key: const Key('videoTranslationEnabled'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('默认开启字幕翻译'),
+                  subtitle: const Text('中文内容会自动跳过翻译'),
+                  value: _videoTranslationEnabled,
+                  onChanged: disabled
+                      ? null
+                      : (bool value) =>
+                            setState(() => _videoTranslationEnabled = value),
+                ),
+                SwitchListTile.adaptive(
+                  key: const Key('videoSubtitleCacheEnabled'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('自动缓存视频字幕'),
+                  subtitle: const Text(
+                    '播放时预转写列表中的后续视频，默认保存到应用数据目录/video_subtitles',
+                  ),
+                  value: _videoSubtitleCacheEnabled,
+                  onChanged: disabled
+                      ? null
+                      : (bool value) =>
+                            setState(() => _videoSubtitleCacheEnabled = value),
+                ),
                 const Divider(height: 24),
                 Text('实时识别', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
