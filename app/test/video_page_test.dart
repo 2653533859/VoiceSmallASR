@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
@@ -90,57 +90,94 @@ void main() {
 
     await tester.tap(find.text('打开视频'));
     await tester.pump();
-    backend.emitDuration(const Duration(seconds: 2));
+    backend.emitDuration(const Duration(seconds: 30));
     backend.emitPosition(const Duration(milliseconds: 500));
     await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(backend.lastSeek, const Duration(milliseconds: 10500));
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(backend.lastSeek, Duration.zero);
 
     expect(find.text('字幕第一条'), findsNWidgets(2));
     await tester.tap(find.text('字幕第一条').last);
     expect(backend.lastSeek, Duration.zero);
 
-    await tester.tap(find.byKey(const Key('videoTranslateSubtitle')));
-    await tester.pumpAndSettle();
+    await _tapMenuItem(
+      tester,
+      menuKey: const Key('videoSubtitleTools'),
+      itemKey: const Key('videoTranslateSubtitle'),
+    );
     expect(find.text('发送字幕到第三方服务？'), findsOneWidget);
     await tester.tap(find.text('继续翻译'));
     await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
     expect(translation.calls, 1);
 
-    await tester.tap(find.byKey(const Key('videoTranslationToggle')));
+    await tester.tap(find.byKey(const Key('videoSubtitleMode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleMode-original')));
     await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNothing);
-    await tester.tap(find.byKey(const Key('videoSubtitlesToggle')));
+    await tester.tap(find.byKey(const Key('videoSubtitleMode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleMode-off')));
     await tester.pumpAndSettle();
     expect(find.text('字幕第一条'), findsNothing);
-    await tester.tap(find.byKey(const Key('videoSubtitlesToggle')));
-    await tester.tap(find.byKey(const Key('videoTranslationToggle')));
+    await tester.tap(find.byKey(const Key('videoSubtitleMode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleMode-translation')));
     await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
-
-    await tester.tap(find.byKey(const Key('videoImportSubtitle')));
+    await tester.tap(find.byKey(const Key('videoSubtitleMode')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleMode-original')));
+    await tester.pumpAndSettle();
+
+    await _tapMenuItem(
+      tester,
+      menuKey: const Key('videoSubtitleTools'),
+      itemKey: const Key('videoImportSubtitle'),
+    );
     expect(transcription.result?.segments.single.text, '外部字幕');
     expect(find.text('外部字幕'), findsNWidgets(2));
     expect(find.textContaining('已加载字幕：external.srt'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('videoExportSubtitles')));
-    await tester.pumpAndSettle();
+    await _tapMenuItem(
+      tester,
+      menuKey: const Key('videoSubtitleTools'),
+      itemKey: const Key('videoExportSubtitles'),
+    );
     await tester.tap(find.byKey(const Key('videoExportFormat-srt')));
     await tester.pumpAndSettle();
     expect(savedFileName, 'movie.srt');
     expect(savedContent, contains('外部字幕'));
 
-    await tester.tap(find.byKey(const Key('videoSubtitleStyle')));
-    await tester.pumpAndSettle();
+    await _tapMenuItem(
+      tester,
+      menuKey: const Key('videoSubtitleTools'),
+      itemKey: const Key('videoSubtitleStyle'),
+    );
     expect(find.byKey(const Key('subtitleStyleFontSize')), findsOneWidget);
     await tester.tap(find.byKey(const Key('saveSubtitleStyle')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('saveSubtitleStyle')), findsNothing);
 
-    await tester.tap(find.byKey(const Key('videoBurnSubtitles')));
-    await tester.pumpAndSettle();
+    await _tapMenuItem(
+      tester,
+      menuKey: const Key('videoSubtitleTools'),
+      itemKey: const Key('videoBurnSubtitles'),
+    );
     expect(hardSubtitleFileName, 'movie_hard_subtitles.mp4');
     expect(hardSubtitleEncoder.calls, 1);
+
+    await tester.tap(find.byKey(const Key('videoPlaybackRate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoPlaybackRate-1.5')));
+    await tester.pumpAndSettle();
+    expect(backend.lastRate, 1.5);
 
     await tester.tap(find.byKey(const Key('videoAddPlaylist')));
     await tester.pumpAndSettle();
@@ -152,6 +189,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.openedPath, nextVideoPath);
     expect(backend.playOrPauseCalls, 1);
+
+    await tester.binding.setSurfaceSize(const Size(600, 900));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('videoSubtitleMode')), findsOneWidget);
+    expect(find.byKey(const Key('videoPlaybackRate')), findsOneWidget);
   });
 
   testWidgets('翻译不可用时播放列表状态保留警告', (WidgetTester tester) async {
@@ -212,8 +255,11 @@ void main() {
       () => Future<void>.delayed(const Duration(milliseconds: 100)),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('videoTranslationToggle')));
-    await tester.pumpAndSettle();
+    await _tapMenuItem(
+      tester,
+      menuKey: const Key('videoBackgroundOptions'),
+      itemKey: const Key('videoTranslationToggle'),
+    );
     await tester.tap(find.text('继续翻译'));
     await tester.pumpAndSettle();
     await tester.runAsync(
@@ -223,6 +269,17 @@ void main() {
 
     expect(find.textContaining('未配置翻译 API Key'), findsOneWidget);
   });
+}
+
+Future<void> _tapMenuItem(
+  WidgetTester tester, {
+  required Key menuKey,
+  required Key itemKey,
+}) async {
+  await tester.tap(find.byKey(menuKey));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(itemKey));
+  await tester.pumpAndSettle();
 }
 
 class _FakeTranslationProvider implements TranslationProvider {
@@ -270,9 +327,16 @@ class _FakeVideoBackend implements VideoPlayerBackend {
   Duration? lastSeek;
   String? openedPath;
   int playOrPauseCalls = 0;
+  double? lastRate;
 
   @override
-  Widget buildVideo() => const SizedBox();
+  Widget buildVideo({VideoOverlayBuilder? overlayBuilder}) => Stack(
+    children: <Widget>[
+      const SizedBox.expand(),
+      if (overlayBuilder != null)
+        Positioned.fill(child: overlayBuilder(() async {})),
+    ],
+  );
 
   @override
   Stream<Duration> get position => _positions.stream;
@@ -291,6 +355,9 @@ class _FakeVideoBackend implements VideoPlayerBackend {
 
   @override
   Future<void> seek(Duration position) async => lastSeek = position;
+
+  @override
+  Future<void> setRate(double rate) async => lastRate = rate;
 
   @override
   Future<void> dispose() async {

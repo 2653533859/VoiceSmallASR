@@ -183,7 +183,13 @@ class _FakeVideoBackend implements VideoPlayerBackend {
   Duration? lastSeek;
 
   @override
-  Widget buildVideo() => const SizedBox();
+  Widget buildVideo({VideoOverlayBuilder? overlayBuilder}) => Stack(
+    children: <Widget>[
+      const SizedBox.expand(),
+      if (overlayBuilder != null)
+        Positioned.fill(child: overlayBuilder(() async {})),
+    ],
+  );
 
   @override
   Stream<Duration> get position => _positions.stream;
@@ -202,6 +208,9 @@ class _FakeVideoBackend implements VideoPlayerBackend {
 
   @override
   Future<void> seek(Duration position) async => lastSeek = position;
+
+  @override
+  Future<void> setRate(double rate) async {}
 
   @override
   Future<void> dispose() async {

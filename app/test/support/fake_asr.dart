@@ -89,7 +89,8 @@ class FakeTranscriber implements Transcriber {
 class FakeLiveSession implements LiveSession {
   FakeLiveSession({this.onAccept});
 
-  final void Function(FakeLiveSession session, Float32List chunk)? onAccept;
+  final FutureOr<void> Function(FakeLiveSession session, Float32List chunk)?
+  onAccept;
   final StreamController<Segment> _out = StreamController<Segment>.broadcast();
 
   /// 收到过的音频块。
@@ -103,9 +104,9 @@ class FakeLiveSession implements LiveSession {
   Stream<Segment> get segments => _out.stream;
 
   @override
-  void accept(Float32List chunk) {
+  Future<void> accept(Float32List chunk) async {
     chunks.add(chunk);
-    onAccept?.call(this, chunk);
+    await onAccept?.call(this, chunk);
   }
 
   /// 从「引擎侧」推一段结果出来。

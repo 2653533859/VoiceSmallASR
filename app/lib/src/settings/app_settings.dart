@@ -27,22 +27,28 @@ const String _translationProviderPresetsKey =
     'settings.translation.provider_presets';
 const String _subtitleStyleKey = 'settings.video.subtitle_style';
 const String _videoSubtitlesEnabledKey = 'settings.video.subtitles_enabled';
+const String _videoSubtitleDisplayModeKey =
+    'settings.video.subtitle_display_mode';
 const String _videoTranslationEnabledKey = 'settings.video.translation_enabled';
 const String _videoSubtitleCacheEnabledKey =
     'settings.video.subtitle_cache_enabled';
 const String _recentProjectsKey = 'settings.projects.recent';
 
 /// 视频播放页的字幕行为设置。
+enum VideoSubtitleDisplayMode { off, original, translation, bilingual }
+
 class VideoSubtitleSettings {
   const VideoSubtitleSettings({
     this.subtitlesEnabled = true,
     this.translationEnabled = false,
     this.cacheEnabled = true,
+    this.displayMode = VideoSubtitleDisplayMode.original,
   });
 
   final bool subtitlesEnabled;
   final bool translationEnabled;
   final bool cacheEnabled;
+  final VideoSubtitleDisplayMode displayMode;
 }
 
 /// 最近项目最多保留的路径数，最新打开的项目排在最前面。
@@ -241,22 +247,44 @@ class AppSettingsRepository {
 
   Future<VideoSubtitleSettings> loadVideoSubtitleSettings({
     VideoSubtitleSettings fallback = const VideoSubtitleSettings(),
-  }) async => VideoSubtitleSettings(
-    subtitlesEnabled:
+  }) async {
+    final bool subtitlesEnabled =
         await _preferences.readBool(_videoSubtitlesEnabledKey) ??
-        fallback.subtitlesEnabled,
-    translationEnabled:
+        fallback.subtitlesEnabled;
+    final bool translationEnabled =
         await _preferences.readBool(_videoTranslationEnabledKey) ??
-        fallback.translationEnabled,
-    cacheEnabled:
-        await _preferences.readBool(_videoSubtitleCacheEnabledKey) ??
-        fallback.cacheEnabled,
-  );
+        fallback.translationEnabled;
+    final String? savedMode = await _preferences.readString(
+      _videoSubtitleDisplayModeKey,
+    );
+    final VideoSubtitleDisplayMode displayMode =
+        VideoSubtitleDisplayMode.values
+            .where((VideoSubtitleDisplayMode mode) => mode.name == savedMode)
+            .firstOrNull ??
+        (!subtitlesEnabled
+            ? VideoSubtitleDisplayMode.off
+            : translationEnabled
+            ? VideoSubtitleDisplayMode.bilingual
+            : fallback.displayMode);
+    return VideoSubtitleSettings(
+      subtitlesEnabled: displayMode != VideoSubtitleDisplayMode.off,
+      translationEnabled: translationEnabled,
+      cacheEnabled:
+          await _preferences.readBool(_videoSubtitleCacheEnabledKey) ??
+          fallback.cacheEnabled,
+      displayMode: displayMode,
+    );
+  }
 
   Future<void> saveVideoSubtitleSettings(VideoSubtitleSettings settings) async {
+    final VideoSubtitleDisplayMode displayMode = !settings.subtitlesEnabled
+        ? VideoSubtitleDisplayMode.off
+        : settings.displayMode == VideoSubtitleDisplayMode.off
+        ? VideoSubtitleDisplayMode.original
+        : settings.displayMode;
     await _preferences.writeBool(
       _videoSubtitlesEnabledKey,
-      settings.subtitlesEnabled,
+      displayMode != VideoSubtitleDisplayMode.off,
     );
     await _preferences.writeBool(
       _videoTranslationEnabledKey,
@@ -265,6 +293,10 @@ class AppSettingsRepository {
     await _preferences.writeBool(
       _videoSubtitleCacheEnabledKey,
       settings.cacheEnabled,
+    );
+    await _preferences.writeString(
+      _videoSubtitleDisplayModeKey,
+      displayMode.name,
     );
   }
 

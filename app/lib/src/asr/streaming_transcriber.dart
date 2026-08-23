@@ -73,7 +73,10 @@ abstract interface class LiveSession {
   Stream<Segment> get segments;
 
   /// 送入一块 16 kHz float32 单声道音频。
-  void accept(Float32List chunk);
+  ///
+  /// 返回的 Future 在该块已被识别器消费后完成。长音频调用方必须等待它，
+  /// 避免解码速度快于识别速度时把整段 PCM 堆进 isolate 消息队列。
+  Future<void> accept(Float32List chunk);
 
   /// 结束录音：取出尾部未定稿的内容，关流并释放资源。
   Future<void> finish();
@@ -124,7 +127,9 @@ class StreamingTranscriber {
     // 而且只有逐窗口喂才能捕捉到「开口」的那一刻，进而维护局部缓冲。
     final int window = config.vad.windowSize;
     for (int offset = 0; offset < chunk.length; offset += window) {
-      final int end = (offset + window) < chunk.length ? offset + window : chunk.length;
+      final int end = (offset + window) < chunk.length
+          ? offset + window
+          : chunk.length;
       final Float32List view = Float32List.sublistView(chunk, offset, end);
       segmenter.accept(view);
       _absorb(view);
@@ -181,7 +186,8 @@ class StreamingTranscriber {
 
   List<Segment> _takeFinals() {
     final List<Segment> finals = <Segment>[];
-    for (final ({Float32List samples, double start}) speech in segmenter.drain()) {
+    for (final ({Float32List samples, double start}) speech
+        in segmenter.drain()) {
       final Segment segment = decoder.decodeSamples(
         speech.samples,
         offset: speech.start,

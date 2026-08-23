@@ -473,6 +473,7 @@ class TranscribeController extends ChangeNotifier {
   Future<TranscriptionResult> transcribeVideoStream(
     String path, {
     VideoTranscriptionUpdate? onUpdate,
+    bool Function()? isCancelled,
   }) async {
     if (busy) throw StateError('当前正在处理另一个文件');
     final int generation = _cancelGeneration;
@@ -497,9 +498,13 @@ class TranscribeController extends ChangeNotifier {
       _statusText = '正在实时转写视频字幕…';
       notifyListeners();
       session = await worker.startLive();
+      if (isCancelled?.call() ?? false) {
+        throw StateError('视频字幕转写已取消');
+      }
       final List<Segment> finals = <Segment>[];
       Segment? partial;
       var decodedSamples = 0;
+      var processedSamples = 0;
       final Completer<void> completed = Completer<void>();
       subscription = session.segments.listen(
         (Segment segment) {
@@ -526,18 +531,45 @@ class TranscribeController extends ChangeNotifier {
         },
       );
       await for (final DecodedAudioChunk decoded in _videoAudioChunks(path)) {
-        if (_disposed || generation != _cancelGeneration) {
+        if (_disposed ||
+            generation != _cancelGeneration ||
+            (isCancelled?.call() ?? false)) {
           throw StateError('视频字幕转写已取消');
         }
         decodedSamples += decoded.samples.length;
-        session.accept(decoded.samples);
         _progress = null;
-        _statusText = '正在实时转写视频字幕… ${(decodedSamples / kSampleRate).round()} 秒';
+        _statusText =
+            '正在实时转写视频字幕… 已解码 ${(decodedSamples / kSampleRate).round()} 秒，'
+            '已识别 ${(processedSamples / kSampleRate).round()} 秒';
         notifyListeners();
+        await session.accept(decoded.samples);
+        if (_disposed ||
+            generation != _cancelGeneration ||
+            (isCancelled?.call() ?? false)) {
+          throw StateError('视频字幕转写已取消');
+        }
+        processedSamples += decoded.samples.length;
+        _progress = null;
+        _statusText =
+            '正在实时转写视频字幕… 已识别 ${(processedSamples / kSampleRate).round()} 秒';
+        notifyListeners();
+      }
+      _statusText =
+          '正在完成视频字幕… 已识别 ${(processedSamples / kSampleRate).round()} 秒';
+      notifyListeners();
+      if (_disposed ||
+          generation != _cancelGeneration ||
+          (isCancelled?.call() ?? false)) {
+        throw StateError('视频字幕转写已取消');
       }
       await session.finish();
       session = null;
       await completed.future;
+      if (_disposed ||
+          generation != _cancelGeneration ||
+          (isCancelled?.call() ?? false)) {
+        throw StateError('视频字幕转写已取消');
+      }
       final TranscriptionResult result = TranscriptionResult(
         segments: List<Segment>.unmodifiable(finals),
         duration: decodedSamples / kSampleRate,

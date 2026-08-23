@@ -454,6 +454,75 @@ void main() {
     await c.shutdown();
   });
 
+  test('视频流式转写等待上一块消费完毕，避免长视频音频无限积压', () async {
+    final _BackpressureDecoder decoder = _BackpressureDecoder();
+    final Completer<void> firstChunkConsumed = Completer<void>();
+    final FakeLiveSession live = FakeLiveSession(
+      onAccept: (_, _) async {
+        if (!firstChunkConsumed.isCompleted) await firstChunkConsumed.future;
+      },
+    );
+    final TranscribeController c = TranscribeController(
+      decoder: decoder,
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => _ProvidedLiveTranscriber(live),
+    );
+
+    final Future<TranscriptionResult> running = c.transcribeVideoStream(
+      '/tmp/long.mp4',
+    );
+    await pumpEventQueue();
+
+    expect(decoder.yieldedChunks, 1);
+    expect(live.chunks, hasLength(1));
+    expect(c.statusText, contains('已解码 10 秒，已识别 0 秒'));
+
+    firstChunkConsumed.complete();
+    final TranscriptionResult result = await running;
+
+    expect(decoder.yieldedChunks, 3);
+    expect(live.chunks, hasLength(3));
+    expect(result.duration, 30);
+    await c.shutdown();
+  });
+
+  test('播放列表切换后视频流式转写在当前块完成时立即取消并释放会话', () async {
+    final _BackpressureDecoder decoder = _BackpressureDecoder();
+    var cancelled = false;
+    final FakeLiveSession live = FakeLiveSession(
+      onAccept: (_, _) async => cancelled = true,
+    );
+    final TranscribeController c = TranscribeController(
+      decoder: decoder,
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => _ProvidedLiveTranscriber(live),
+    );
+
+    await expectLater(
+      c.transcribeVideoStream('/tmp/long.mp4', isCancelled: () => cancelled),
+      throwsA(
+        isA<StateError>().having(
+          (StateError error) => error.message,
+          'message',
+          '视频字幕转写已取消',
+        ),
+      ),
+    );
+
+    expect(decoder.yieldedChunks, 1);
+    expect(live.chunks, hasLength(1));
+    expect(live.finished, isTrue);
+    await c.shutdown();
+  });
+
   // 回归：dispose() 只关「当下的」worker。模型加载要几十秒，界面在这期间
   // 被销毁时 _worker 还是 null，于是 isolate 与 240 MB 模型一起漏掉；
   // 而 prepare 的收尾还会 notifyListeners，抛 "used after being disposed"。
@@ -501,6 +570,45 @@ class _StreamingFakeDecoder implements AudioDecoder, ChunkedAudioDecoder {
     yield DecodedAudioChunk(Float32List(kSampleRate), isLast: false);
     yield DecodedAudioChunk(Float32List(kSampleRate), isLast: true);
   }
+}
+
+class _BackpressureDecoder implements AudioDecoder, ChunkedAudioDecoder {
+  int yieldedChunks = 0;
+
+  @override
+  Future<Float32List> decodeFile(String path) async => Float32List(0);
+
+  @override
+  Stream<DecodedAudioChunk> decodeFileChunks(
+    String path, {
+    Duration chunkDuration = const Duration(seconds: 10),
+  }) async* {
+    for (int index = 0; index < 3; index++) {
+      yieldedChunks++;
+      yield DecodedAudioChunk(
+        Float32List(10 * kSampleRate),
+        isLast: index == 2,
+      );
+    }
+  }
+}
+
+class _ProvidedLiveTranscriber implements Transcriber {
+  _ProvidedLiveTranscriber(this.session);
+
+  final LiveSession session;
+
+  @override
+  Future<LiveSession> startLive() async => session;
+
+  @override
+  Future<TranscriptionResult> transcribe(
+    Float32List samples, {
+    TranscribeProgress? onProgress,
+  }) async => const TranscriptionResult();
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class _FakeTranslationProvider implements TranslationProvider {

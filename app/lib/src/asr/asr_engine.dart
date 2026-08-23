@@ -125,9 +125,12 @@ class AsrEngine implements Transcriber, SegmentDecoder {
     try {
       const int chunk = 16000; // 每次喂 1 秒，便于回报进度
       for (int offset = 0; offset < samples.length; offset += chunk) {
-        final int end = (offset + chunk) < samples.length ? offset + chunk : samples.length;
+        final int end = (offset + chunk) < samples.length
+            ? offset + chunk
+            : samples.length;
         vad.accept(Float32List.sublistView(samples, offset, end));
-        for (final ({Float32List samples, double start}) speech in vad.drain()) {
+        for (final ({Float32List samples, double start}) speech
+            in vad.drain()) {
           collected.add(decodeSamples(speech.samples, offset: speech.start));
         }
         onProgress?.call(end, samples.length);
@@ -193,7 +196,7 @@ class _EngineLiveSession implements LiveSession {
   Stream<Segment> get segments => _out.stream;
 
   @override
-  void accept(Float32List chunk) {
+  Future<void> accept(Float32List chunk) async {
     if (_closed) return;
     for (final Segment segment in _streamer.accept(chunk)) {
       _out.add(segment);

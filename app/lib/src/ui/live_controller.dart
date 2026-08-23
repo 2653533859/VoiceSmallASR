@@ -71,7 +71,7 @@ class LiveController extends ChangeNotifier {
   Segment? _partial;
   LiveSession? _session;
   StreamSubscription<Segment>? _segments;
-  StreamSubscription<Float32List>? _audio;
+  StreamSubscription<void>? _audio;
   Future<void>? _translationQueue;
   int _translationGeneration = 0;
   TranslationProvider? _translationProvider;
@@ -169,13 +169,13 @@ class LiveController extends ChangeNotifier {
 
       // 先开会话再开设备：反过来的话，最早的几块音频会没人接。
       final Stream<Float32List> audio = await _mic.start();
-      _audio = audio.listen(
-        (Float32List chunk) {
-          _audioSamples += chunk.length;
-          _session?.accept(chunk);
-        },
-        onError: _onStreamError,
-      );
+      _audio = audio
+          .asyncMap<void>((Float32List chunk) async {
+            _audioSamples += chunk.length;
+            final LiveSession? active = _session;
+            if (active != null) await active.accept(chunk);
+          })
+          .listen((_) {}, onError: _onStreamError);
       _performanceWatch = Stopwatch()..start();
       _stage = LiveStage.recording;
     } on Object catch (error) {

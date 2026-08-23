@@ -20,7 +20,9 @@ void main() {
     );
     addTearDown(worker.dispose);
 
-    final TranscriptionResult result = await worker.transcribe(Float32List(16000));
+    final TranscriptionResult result = await worker.transcribe(
+      Float32List(16000),
+    );
     expect(result.segments, hasLength(1));
     expect(result.text, '呢几个字都表达唔到');
     expect(result.duration, closeTo(1.0, 1e-9));
@@ -35,7 +37,9 @@ void main() {
   });
 
   test('进度回调按顺序到达主 isolate', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: fakeFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: fakeFactory,
+    );
     addTearDown(worker.dispose);
 
     final List<int> seen = <int>[];
@@ -50,19 +54,30 @@ void main() {
   });
 
   test('多个请求串行处理，结果各归其主', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: countingFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: countingFactory,
+    );
     addTearDown(worker.dispose);
 
-    final List<Future<TranscriptionResult>> requests = <Future<TranscriptionResult>>[
-      worker.transcribe(Float32List(16000)),
-      worker.transcribe(Float32List(32000)),
-      worker.transcribe(Float32List(48000)),
-    ];
+    final List<Future<TranscriptionResult>> requests =
+        <Future<TranscriptionResult>>[
+          worker.transcribe(Float32List(16000)),
+          worker.transcribe(Float32List(32000)),
+          worker.transcribe(Float32List(48000)),
+        ];
     final List<TranscriptionResult> results = await Future.wait(requests);
     // countingFactory 的替身把「第几次调用」写进文本，串行才会是 1/2/3
-    expect(results.map((TranscriptionResult r) => r.text), <String>['第1次', '第2次', '第3次']);
+    expect(results.map((TranscriptionResult r) => r.text), <String>[
+      '第1次',
+      '第2次',
+      '第3次',
+    ]);
     // 时长各自对应自己的入参，没有串号
-    expect(results.map((TranscriptionResult r) => r.duration), <double>[1.0, 2.0, 3.0]);
+    expect(results.map((TranscriptionResult r) => r.duration), <double>[
+      1.0,
+      2.0,
+      3.0,
+    ]);
   });
 
   test('模型加载失败时 start() 抛错，且不留下野 isolate', () async {
@@ -79,7 +94,9 @@ void main() {
   });
 
   test('转写中途抛异常会变成 Future 的错误，worker 仍可继续用', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: flakyFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: flakyFactory,
+    );
     addTearDown(worker.dispose);
 
     // flakyFactory 的替身：偶数次调用成功，奇数次抛
@@ -97,7 +114,9 @@ void main() {
   });
 
   test('dispose 之后再 transcribe 抛 StateError', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: fakeFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: fakeFactory,
+    );
     await worker.dispose();
     expect(() => worker.transcribe(Float32List(16000)), throwsStateError);
     // 重复 dispose 是安全的
@@ -105,8 +124,12 @@ void main() {
   });
 
   test('dispose 会让未完成的请求报错，而不是永远挂着', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: slowFactory);
-    final Future<TranscriptionResult> pending = worker.transcribe(Float32List(16000));
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: slowFactory,
+    );
+    final Future<TranscriptionResult> pending = worker.transcribe(
+      Float32List(16000),
+    );
     final Future<void> failed = expectLater(pending, throwsStateError);
     // 替身永不返回，isolate 卡在 await for 里收不到关闭命令，只能等超时后硬杀
     await worker.dispose(gracePeriod: const Duration(milliseconds: 200));
@@ -126,7 +149,9 @@ void main() {
   });
 
   test('实时会话：音频块送进去，局部段与定稿段按顺序回来', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: liveFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: liveFactory,
+    );
     addTearDown(worker.dispose);
 
     final LiveSession session = await worker.startLive();
@@ -137,8 +162,8 @@ void main() {
       onDone: closed.complete,
     );
 
-    session.accept(Float32List(1600));
-    session.accept(Float32List(1600));
+    await session.accept(Float32List(1600));
+    await session.accept(Float32List(1600));
     await session.finish();
     await closed.future;
 
@@ -147,19 +172,47 @@ void main() {
   });
 
   test('同一时刻只能有一路实时会话；收尾后可以再开', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: liveFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: liveFactory,
+    );
     addTearDown(worker.dispose);
 
     final LiveSession first = await worker.startLive();
-    await expectLater(worker.startLive(), throwsStateError);
+    final Future<LiveSession> waiting = worker.startLive();
+    var secondStarted = false;
+    waiting.then((_) => secondStarted = true);
+    await pumpEventQueue();
+    expect(secondStarted, isFalse);
     await first.finish();
 
-    final LiveSession second = await worker.startLive();
+    final LiveSession second = await waiting;
     await second.finish();
   });
 
+  test('实时音频块失败后会先释放旧会话，再允许开启新会话', () async {
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: failingChunkFactory,
+    );
+    addTearDown(worker.dispose);
+
+    final LiveSession failed = await worker.startLive();
+    final Future<void> streamFailure = expectLater(
+      failed.segments.toList(),
+      throwsStateError,
+    );
+    await expectLater(failed.accept(Float32List(1600)), throwsStateError);
+    await streamFailure;
+    await failed.finish();
+
+    final LiveSession recovered = await worker.startLive();
+    await recovered.accept(Float32List(1600));
+    await recovered.finish();
+  });
+
   test('关闭 worker 时会把还开着的实时会话收掉', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: liveFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: liveFactory,
+    );
     final LiveSession session = await worker.startLive();
     final Completer<void> closed = Completer<void>();
     session.segments.listen((Segment _) {}, onDone: closed.complete);
@@ -171,9 +224,14 @@ void main() {
   // 回归：dispose() 先等实时会话收尾，而 isolate 可能卡在某次解码里 ——
   // 不给这一步设上限的话，连后面「超时硬杀」的兜底都走不到，退出直接挂死。
   test('实时会话收不了尾时 dispose 仍会在 gracePeriod 内返回', () async {
-    final TranscriptionWorker worker = await TranscriptionWorker.start(factory: stuckLiveFactory);
+    final TranscriptionWorker worker = await TranscriptionWorker.start(
+      factory: stuckLiveFactory,
+    );
     final LiveSession session = await worker.startLive();
-    final Future<void> failed = expectLater(session.segments.toList(), throwsStateError);
+    final Future<void> failed = expectLater(
+      session.segments.toList(),
+      throwsStateError,
+    );
 
     await worker.dispose(gracePeriod: const Duration(milliseconds: 200));
     await failed;
@@ -185,9 +243,11 @@ void main() {
 Future<Transcriber> fakeFactory(WorkerSetup setup) async =>
     _FakeTranscriber(setup.config.language);
 
-Future<Transcriber> countingFactory(WorkerSetup setup) async => _CountingTranscriber();
+Future<Transcriber> countingFactory(WorkerSetup setup) async =>
+    _CountingTranscriber();
 
-Future<Transcriber> flakyFactory(WorkerSetup setup) async => _FlakyTranscriber();
+Future<Transcriber> flakyFactory(WorkerSetup setup) async =>
+    _FlakyTranscriber();
 
 Future<Transcriber> slowFactory(WorkerSetup setup) async => _SlowTranscriber();
 
@@ -210,8 +270,12 @@ mixin _NoLive implements Transcriber {
 /// 实时会话替身：每收到一块音频出一条局部结果，收尾时补一条定稿。
 Future<Transcriber> liveFactory(WorkerSetup setup) async => _LiveTranscriber();
 
+Future<Transcriber> failingChunkFactory(WorkerSetup setup) async =>
+    _FailingChunkTranscriber();
+
 /// 实时会话收不了尾的替身：`finish()` 永不返回。
-Future<Transcriber> stuckLiveFactory(WorkerSetup setup) async => _StuckLiveTranscriber();
+Future<Transcriber> stuckLiveFactory(WorkerSetup setup) async =>
+    _StuckLiveTranscriber();
 
 class _StuckLiveTranscriber with _NoLive implements Transcriber {
   @override
@@ -234,7 +298,7 @@ class _StuckLive implements LiveSession {
   Stream<Segment> get segments => _out.stream;
 
   @override
-  void accept(Float32List chunk) {}
+  Future<void> accept(Float32List chunk) async {}
 
   @override
   Future<void> finish() => Completer<void>().future;
@@ -254,6 +318,43 @@ class _LiveTranscriber implements Transcriber {
   Future<void> dispose() async {}
 }
 
+class _FailingChunkTranscriber implements Transcriber {
+  bool _failed = false;
+
+  @override
+  Future<LiveSession> startLive() async {
+    if (_failed) return _FakeLive();
+    _failed = true;
+    return _FailingChunkLive();
+  }
+
+  @override
+  Future<TranscriptionResult> transcribe(
+    Float32List samples, {
+    TranscribeProgress? onProgress,
+  }) async => const TranscriptionResult();
+
+  @override
+  Future<void> dispose() async {}
+}
+
+class _FailingChunkLive implements LiveSession {
+  final StreamController<Segment> _out = StreamController<Segment>.broadcast();
+
+  @override
+  Stream<Segment> get segments => _out.stream;
+
+  @override
+  Future<void> accept(Float32List chunk) async {
+    throw StateError('音频块识别失败');
+  }
+
+  @override
+  Future<void> finish() async {
+    await _out.close();
+  }
+}
+
 class _FakeLive implements LiveSession {
   final StreamController<Segment> _out = StreamController<Segment>.broadcast();
   int _seen = 0;
@@ -262,7 +363,7 @@ class _FakeLive implements LiveSession {
   Stream<Segment> get segments => _out.stream;
 
   @override
-  void accept(Float32List chunk) {
+  Future<void> accept(Float32List chunk) async {
     _seen++;
     _out.add(Segment(text: '局部$_seen', start: 0.0, end: 1.0, isFinal: false));
   }
@@ -275,7 +376,8 @@ class _FakeLive implements LiveSession {
 }
 
 /// 回一段固定结果，并按秒回报进度。
-class _FakeTranscriber with _NoLive implements Transcriber {  _FakeTranscriber(this.language);
+class _FakeTranscriber with _NoLive implements Transcriber {
+  _FakeTranscriber(this.language);
 
   final String language;
 

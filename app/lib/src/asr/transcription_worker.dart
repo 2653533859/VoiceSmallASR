@@ -53,12 +53,11 @@ class WorkerSetup {
 
 /// 启动一个转写器。默认实现 [launchWorkerIsolate] 起后台 isolate；
 /// 界面层的测试可以注入进程内替身，从而不牵扯 isolate 与原生库。
-typedef TranscriberLauncher =
-    Future<Transcriber> Function({
-      required AsrConfig config,
-      required bool allowDownload,
-      required ModelProgress onModelProgress,
-    });
+typedef TranscriberLauncher = Future<Transcriber> Function({
+  required AsrConfig config,
+  required bool allowDownload,
+  required ModelProgress onModelProgress,
+});
 
 /// 默认启动方式：后台 isolate + 真正的 [AsrEngine]。
 Future<Transcriber> launchWorkerIsolate({
@@ -113,7 +112,9 @@ class TranscriptionWorker implements Transcriber {
     final Map<int, _Pending> pending = <int, _Pending>{};
     final _LiveHub live = _LiveHub();
 
-    final StreamSubscription<Object?> subscription = events.listen((Object? message) {
+    final StreamSubscription<Object?> subscription = events.listen((
+      Object? message,
+    ) {
       _dispatch(message, ready, exited, pending, live, onModelProgress);
     });
 
@@ -141,7 +142,15 @@ class TranscriptionWorker implements Transcriber {
 
     try {
       final SendPort commands = await ready.future;
-      return TranscriptionWorker._(isolate, commands, events, subscription, pending, exited, live);
+      return TranscriptionWorker._(
+        isolate,
+        commands,
+        events,
+        subscription,
+        pending,
+        exited,
+        live,
+      );
     } on Object {
       isolate.kill(priority: Isolate.immediate);
       await subscription.cancel();
@@ -163,7 +172,8 @@ class TranscriptionWorker implements Transcriber {
       throw StateError('TranscriptionWorker 已关闭，请重新 start()');
     }
     final int id = _nextId++;
-    final Completer<TranscriptionResult> completer = Completer<TranscriptionResult>();
+    final Completer<TranscriptionResult> completer =
+        Completer<TranscriptionResult>();
     _pending[id] = _Pending(completer, onProgress);
     _commands.send(_TranscribeCommand(id, samples));
     return completer.future;
@@ -174,7 +184,9 @@ class TranscriptionWorker implements Transcriber {
   /// [gracePeriod] 是等它自己退出的上限；超时就硬杀（正在解码的请求会卡住
   /// `await for`，收不到关闭命令，只能这样收场）。
   @override
-  Future<void> dispose({Duration gracePeriod = const Duration(seconds: 5)}) async {
+  Future<void> dispose({
+    Duration gracePeriod = const Duration(seconds: 5),
+  }) async {
     if (_closed) return;
     _closed = true;
     // 录音还开着就先收尾：不然 isolate 里的 VAD 与流控制器不会被释放。
@@ -208,8 +220,14 @@ class TranscriptionWorker implements Transcriber {
     if (_closed) {
       throw StateError('TranscriptionWorker 已关闭，请重新 start()');
     }
-    if (_live.active != null) {
-      throw StateError('已有一路实时识别在跑，先 finish() 再开新的');
+    // 麦克风实时字幕与视频播放列表共用同一个识别器。后来的会话必须等待
+    // 前一路完整收尾；直接抛错会让播放列表永久标记失败。
+    while (_live.active != null) {
+      final _WorkerLiveSession active = _live.active!;
+      await active.done;
+      if (_closed) {
+        throw StateError('TranscriptionWorker 已关闭，请重新 start()');
+      }
     }
     final Completer<void> started = Completer<void>();
     final _WorkerLiveSession session = _WorkerLiveSession(_commands, _live);
@@ -220,6 +238,7 @@ class TranscriptionWorker implements Transcriber {
     try {
       await started.future;
     } on Object {
+      session.releaseBeforeStart();
       _live
         ..active = null
         ..starting = null;
@@ -241,13 +260,26 @@ class TranscriptionWorker implements Transcriber {
     switch (message) {
       case _ReadyEvent(commands: final SendPort commands):
         if (!ready.isCompleted) ready.complete(commands);
-      case _ModelProgressEvent(stage: final String stage, done: final int d, total: final int t):
+      case _ModelProgressEvent(
+        stage: final String stage,
+        done: final int d,
+        total: final int t,
+      ):
         onModelProgress?.call(stage, d, t);
-      case _ProgressEvent(id: final int id, done: final int d, total: final int t):
+      case _ProgressEvent(
+        id: final int id,
+        done: final int d,
+        total: final int t,
+      ):
         pending[id]?.onProgress?.call(d, t);
-      case _ResultEvent(id: final int id, result: final TranscriptionResult result):
+      case _ResultEvent(
+        id: final int id,
+        result: final TranscriptionResult result,
+      ):
         final _Pending? waiter = pending.remove(id);
-        if (waiter != null && !waiter.completer.isCompleted) waiter.completer.complete(result);
+        if (waiter != null && !waiter.completer.isCompleted) {
+          waiter.completer.complete(result);
+        }
       case _FailureEvent(id: final int id, message: final String detail):
         final _Pending? waiter = pending.remove(id);
         if (waiter != null && !waiter.completer.isCompleted) {
@@ -260,33 +292,41 @@ class TranscriptionWorker implements Transcriber {
         if (starting != null && !starting.isCompleted) starting.complete();
       case _LiveSegmentEvent(segment: final Segment segment):
         live.active?.push(segment);
+      case _LiveChunkDoneEvent(id: final int id):
+        live.active?.completeChunk(id);
       case _LiveDoneEvent():
         live.active?.close();
         live.active = null;
       case _LiveFailureEvent(message: final String detail):
-        _failLive(live, detail);
+        // worker 仍然活着，只是当前会话失败。保留 active，等调用方 finish() 的
+        // 有序命令真正释放 worker 里的 VAD 后，才允许下一路会话开始。
+        _failLive(live, detail, terminal: false);
       // onError 端口回的是 [错误, 堆栈]；onExit 端口回 null。
       case final List<Object?> error:
         final String detail = error.isEmpty ? '未知错误' : '${error.first}';
-        if (!ready.isCompleted) ready.completeError(StateError('识别 isolate 异常：$detail'));
+        if (!ready.isCompleted) {
+          ready.completeError(StateError('识别 isolate 异常：$detail'));
+        }
         _failAll(pending, '识别 isolate 异常：$detail');
         _failLive(live, '识别 isolate 异常：$detail');
       case null:
         if (!exited.isCompleted) exited.complete();
-        if (!ready.isCompleted) ready.completeError(StateError('识别 isolate 意外退出'));
+        if (!ready.isCompleted) {
+          ready.completeError(StateError('识别 isolate 意外退出'));
+        }
         _failAll(pending, '识别 isolate 已退出');
         _failLive(live, '识别 isolate 已退出');
     }
   }
 
-  static void _failLive(_LiveHub live, String message) {
+  static void _failLive(_LiveHub live, String message, {bool terminal = true}) {
     final Completer<void>? starting = live.starting;
     if (starting != null && !starting.isCompleted) {
       starting.completeError(StateError(message));
       return;
     }
-    live.active?.fail(message);
-    live.active = null;
+    live.active?.fail(message, terminal: terminal);
+    if (terminal) live.active = null;
   }
 
   static void _failAll(Map<int, _Pending> pending, String message) {
@@ -323,23 +363,41 @@ class _WorkerLiveSession implements LiveSession {
   final _LiveHub _hub;
   final StreamController<Segment> _out = StreamController<Segment>.broadcast();
   final Completer<void> _done = Completer<void>();
+  final Map<int, Completer<void>> _pendingChunks = <int, Completer<void>>{};
+  int _nextChunkId = 0;
   bool _finished = false;
+
+  Future<void> get done => _done.future;
 
   @override
   Stream<Segment> get segments => _out.stream;
 
   @override
-  void accept(Float32List chunk) {
-    if (_finished) return;
-    _commands.send(_LiveChunkCommand(chunk));
+  Future<void> accept(Float32List chunk) {
+    if (_finished) {
+      return Future<void>.error(StateError('实时识别会话已经结束'));
+    }
+    final int id = _nextChunkId++;
+    final Completer<void> consumed = Completer<void>();
+    _pendingChunks[id] = consumed;
+    _commands.send(_LiveChunkCommand(id, chunk));
+    return consumed.future;
   }
 
   @override
   Future<void> finish() async {
     if (_finished) return;
     _finished = true;
+    // 同一个 SendPort 保证命令有序，finish 会排在所有已发送音频块之后。
+    // 不在这里等待 chunk Future：若某块失败，仍需把 finish 送进 worker 释放 VAD。
     _commands.send(const _LiveFinishCommand());
     await _done.future;
+  }
+
+  /// isolate 已经消费完一块音频，解除生产端背压。
+  void completeChunk(int id) {
+    final Completer<void>? pending = _pendingChunks.remove(id);
+    if (pending != null && !pending.isCompleted) pending.complete();
   }
 
   /// 收到一段识别结果。
@@ -354,14 +412,26 @@ class _WorkerLiveSession implements LiveSession {
     _hub.active = null;
   }
 
+  void releaseBeforeStart() {
+    if (!_out.isClosed) _out.close();
+    if (!_done.isCompleted) _done.complete();
+    if (identical(_hub.active, this)) _hub.active = null;
+  }
+
   /// isolate 出错或死掉：把错误送给监听者，别让 finish() 永远挂着。
-  void fail(String message) {
+  void fail(String message, {required bool terminal}) {
+    for (final Completer<void> pending in _pendingChunks.values) {
+      if (!pending.isCompleted) pending.completeError(StateError(message));
+    }
+    _pendingChunks.clear();
     if (!_out.isClosed) {
       _out.addError(StateError(message));
       _out.close();
     }
-    if (!_done.isCompleted) _done.complete();
-    _hub.active = null;
+    if (terminal) {
+      if (!_done.isCompleted) _done.complete();
+      _hub.active = null;
+    }
   }
 }
 
@@ -401,8 +471,9 @@ class _LiveStartCommand {
 }
 
 class _LiveChunkCommand {
-  const _LiveChunkCommand(this.samples);
+  const _LiveChunkCommand(this.id, this.samples);
 
+  final int id;
   final Float32List samples;
 }
 
@@ -418,6 +489,12 @@ class _LiveSegmentEvent {
   const _LiveSegmentEvent(this.segment);
 
   final Segment segment;
+}
+
+class _LiveChunkDoneEvent {
+  const _LiveChunkDoneEvent(this.id);
+
+  final int id;
 }
 
 class _LiveDoneEvent {
@@ -521,7 +598,10 @@ Future<void> _workerMain(_Bootstrap bootstrap) async {
     }
     if (message is _LiveChunkCommand) {
       try {
-        live?.accept(message.samples);
+        final LiveSession? session = live;
+        if (session == null) throw StateError('实时识别会话尚未开始');
+        await session.accept(message.samples);
+        events.send(_LiveChunkDoneEvent(message.id));
       } on Object catch (error) {
         events.send(_LiveFailureEvent('$error'));
       }

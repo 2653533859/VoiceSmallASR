@@ -29,24 +29,65 @@ enum AudioDecoderChannel {
 
   /// 模型要求的采样率，与 Dart 的 `kSampleRate` 一致。
   static let targetSampleRate = 16000.0
+  private static let sessionsLock = NSLock()
+  private static var sessions: [String: StreamingDecoder] = [:]
 
   static func register(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: name, binaryMessenger: messenger)
     channel.setMethodCallHandler { call, result in
-      guard call.method == "decodeToPcm16k" || call.method == "decodePcm16kChunk" else {
+      guard [
+        "decodeToPcm16k",
+        "decodePcm16kChunk",
+        "openPcm16kStream",
+        "readPcm16kStream",
+        "closePcm16kStream",
+      ].contains(call.method) else {
         result(FlutterMethodNotImplemented)
         return
       }
-      guard let arguments = call.arguments as? [String: Any],
-            let path = arguments["path"] as? String
-      else {
+      guard let arguments = call.arguments as? [String: Any] else {
         result(FlutterError(code: "BAD_ARGS", message: "缺少 path 参数", details: nil))
+        return
+      }
+      if call.method == "closePcm16kStream" {
+        guard let sessionId = arguments["sessionId"] as? String else {
+          result(FlutterError(code: "BAD_ARGS", message: "缺少 sessionId 参数", details: nil))
+          return
+        }
+        removeSession(sessionId)?.cancel()
+        result(nil)
         return
       }
       // 解一段几十分钟的音轨会占满主线程，必须挪到后台队列。
       DispatchQueue.global(qos: .userInitiated).async {
         do {
-          if call.method == "decodePcm16kChunk" {
+          if call.method == "openPcm16kStream" {
+            guard let path = arguments["path"] as? String else {
+              throw DecodeError.invalidArguments
+            }
+            let sessionId = UUID().uuidString
+            storeSession(try StreamingDecoder(path: path), id: sessionId)
+            DispatchQueue.main.async { result(sessionId) }
+          } else if call.method == "readPcm16kStream" {
+            guard let sessionId = arguments["sessionId"] as? String,
+                  let maxSamples = arguments["maxSamples"] as? NSNumber,
+                  maxSamples.intValue > 0,
+                  let session = session(sessionId)
+            else {
+              throw DecodeError.invalidSession
+            }
+            let decoded = try session.read(maxSamples: maxSamples.intValue)
+            if decoded.eof { _ = removeSession(sessionId) }
+            DispatchQueue.main.async {
+              result([
+                "pcm": FlutterStandardTypedData(bytes: decoded.pcm),
+                "eof": decoded.eof,
+              ])
+            }
+          } else if call.method == "decodePcm16kChunk" {
+            guard let path = arguments["path"] as? String else {
+              throw DecodeError.invalidArguments
+            }
             guard let startMs = arguments["startMs"] as? NSNumber,
                   let durationMs = arguments["durationMs"] as? NSNumber,
                   startMs.int64Value >= 0,
@@ -65,6 +106,9 @@ enum AudioDecoderChannel {
               ])
             }
           } else {
+            guard let path = arguments["path"] as? String else {
+              throw DecodeError.invalidArguments
+            }
             let pcm = try decode(path: path)
             DispatchQueue.main.async { result(FlutterStandardTypedData(bytes: pcm)) }
           }
@@ -74,10 +118,91 @@ enum AudioDecoderChannel {
               FlutterError(
                 code: "DECODE_FAILED",
                 message: error.localizedDescription,
-                details: path))
+                details: arguments["path"] ?? arguments["sessionId"]))
           }
         }
       }
+    }
+  }
+
+  private static func storeSession(_ session: StreamingDecoder, id: String) {
+    sessionsLock.lock()
+    sessions[id] = session
+    sessionsLock.unlock()
+  }
+
+  private static func session(_ id: String) -> StreamingDecoder? {
+    sessionsLock.lock()
+    defer { sessionsLock.unlock() }
+    return sessions[id]
+  }
+
+  private static func removeSession(_ id: String) -> StreamingDecoder? {
+    sessionsLock.lock()
+    defer { sessionsLock.unlock() }
+    return sessions.removeValue(forKey: id)
+  }
+
+  private final class StreamingDecoder {
+    private let reader: AVAssetReader
+    private let output: AVAssetReaderAudioMixOutput
+    private var reachedEnd = false
+
+    init(path: String) throws {
+      let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+      let tracks = asset.tracks(withMediaType: .audio)
+      guard !tracks.isEmpty else { throw DecodeError.noAudioTrack }
+      reader = try AVAssetReader(asset: asset)
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: targetSampleRate,
+        AVNumberOfChannelsKey: 1,
+        AVLinearPCMBitDepthKey: 32,
+        AVLinearPCMIsFloatKey: true,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+      ]
+      output = AVAssetReaderAudioMixOutput(audioTracks: [tracks[0]], audioSettings: settings)
+      guard reader.canAdd(output) else { throw DecodeError.unsupportedFormat }
+      reader.add(output)
+      guard reader.startReading() else {
+        throw reader.error ?? DecodeError.unsupportedFormat
+      }
+    }
+
+    func read(maxSamples: Int) throws -> (pcm: Data, eof: Bool) {
+      if reachedEnd { return (Data(), true) }
+      var pcm = Data()
+      let maxBytes = maxSamples * MemoryLayout<Float>.size
+      while pcm.count < maxBytes {
+        guard let buffer = output.copyNextSampleBuffer() else {
+          reachedEnd = true
+          break
+        }
+        defer { CMSampleBufferInvalidate(buffer) }
+        guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+        let length = CMBlockBufferGetDataLength(block)
+        if length <= 0 { continue }
+        var chunk = Data(count: length)
+        let status = chunk.withUnsafeMutableBytes { raw -> OSStatus in
+          guard let base = raw.baseAddress else {
+            return kCMBlockBufferBadPointerParameterErr
+          }
+          return CMBlockBufferCopyDataBytes(
+            block, atOffset: 0, dataLength: length, destination: base)
+        }
+        guard status == kCMBlockBufferNoErr else { throw DecodeError.copyFailed }
+        pcm.append(chunk)
+      }
+      if reader.status == .failed {
+        throw reader.error ?? DecodeError.unsupportedFormat
+      }
+      reachedEnd = reachedEnd || reader.status == .completed
+      return (pcm, reachedEnd)
+    }
+
+    func cancel() {
+      if reader.status == .reading { reader.cancelReading() }
     }
   }
 
@@ -164,6 +289,8 @@ enum AudioDecoderChannel {
     case copyFailed
     case emptyTrack
     case invalidRange
+    case invalidArguments
+    case invalidSession
 
     var errorDescription: String? {
       switch self {
@@ -172,6 +299,8 @@ enum AudioDecoderChannel {
       case .copyFailed: return "读取解码结果失败"
       case .emptyTrack: return "音轨为空"
       case .invalidRange: return "分块解码时间范围无效"
+      case .invalidArguments: return "解码参数无效"
+      case .invalidSession: return "持续解码会话不存在或已经结束"
       }
     }
   }

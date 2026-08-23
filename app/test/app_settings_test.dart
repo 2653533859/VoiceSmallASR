@@ -130,16 +130,18 @@ void main() {
 
     await repository.saveVideoSubtitleSettings(
       const VideoSubtitleSettings(
-        subtitlesEnabled: false,
+        subtitlesEnabled: true,
         translationEnabled: true,
         cacheEnabled: false,
+        displayMode: VideoSubtitleDisplayMode.translation,
       ),
     );
     final VideoSubtitleSettings restored = await repository
         .loadVideoSubtitleSettings();
-    expect(restored.subtitlesEnabled, isFalse);
+    expect(restored.subtitlesEnabled, isTrue);
     expect(restored.translationEnabled, isTrue);
     expect(restored.cacheEnabled, isFalse);
+    expect(restored.displayMode, VideoSubtitleDisplayMode.translation);
   });
 
   test('最近项目会去重、置顶并限制数量，损坏数据回退为空列表', () async {

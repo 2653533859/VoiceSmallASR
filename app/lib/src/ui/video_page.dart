@@ -4,10 +4,10 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/segment.dart';
@@ -39,6 +39,15 @@ typedef SaveVideoSubtitleFile = Future<String?> Function(
 
 /// 选择硬字幕视频输出路径；测试可以注入本地临时路径。
 typedef SaveHardSubtitleVideo = Future<String?> Function(String fileName);
+
+extension on VideoSubtitleDisplayMode {
+  String get label => switch (this) {
+    VideoSubtitleDisplayMode.off => '关闭',
+    VideoSubtitleDisplayMode.original => '原文',
+    VideoSubtitleDisplayMode.translation => '译文',
+    VideoSubtitleDisplayMode.bilingual => '双语',
+  };
+}
 
 class VideoPage extends StatefulWidget {
   const VideoPage({
@@ -75,7 +84,8 @@ class VideoPage extends StatefulWidget {
 class _VideoPageState extends State<VideoPage> {
   bool _translationDisclosureAccepted = false;
   SubtitleStyle _subtitleStyle = const SubtitleStyle();
-  bool _subtitlesEnabled = true;
+  VideoSubtitleDisplayMode _subtitleDisplayMode =
+      VideoSubtitleDisplayMode.original;
   bool _translationEnabled = false;
   bool _subtitleCacheEnabled = true;
   bool _encodingHardSubtitles = false;
@@ -88,6 +98,7 @@ class _VideoPageState extends State<VideoPage> {
   int _currentPlaylistIndex = -1;
   int _playlistGeneration = 0;
   bool _processingRequested = false;
+  bool _waitingForTranscription = false;
   Future<void>? _processingFuture;
   Future<void> _translationQueue = Future<void>.value();
   bool _autoAdvancing = false;
@@ -100,6 +111,7 @@ class _VideoPageState extends State<VideoPage> {
   void initState() {
     super.initState();
     widget.controller.addListener(_onVideoChanged);
+    widget.transcription.addListener(_onTranscriptionChanged);
     unawaited(_loadVideoPreferences());
   }
 
@@ -121,7 +133,7 @@ class _VideoPageState extends State<VideoPage> {
       if (!mounted) return;
       setState(() {
         _subtitleStyle = style;
-        _subtitlesEnabled = settings.subtitlesEnabled;
+        _subtitleDisplayMode = settings.displayMode;
         _translationEnabled = settings.translationEnabled;
         _subtitleCacheEnabled = settings.cacheEnabled;
         _cacheDirectory = cacheDirectory;
@@ -135,7 +147,16 @@ class _VideoPageState extends State<VideoPage> {
   void dispose() {
     _playlistGeneration++;
     widget.controller.removeListener(_onVideoChanged);
+    widget.transcription.removeListener(_onTranscriptionChanged);
     super.dispose();
+  }
+
+  void _onTranscriptionChanged() {
+    if (!_waitingForTranscription || widget.transcription.busy || !mounted) {
+      return;
+    }
+    _waitingForTranscription = false;
+    _requestPlaylistProcessing();
   }
 
   Future<String?> _pickFile() async {
@@ -451,20 +472,27 @@ class _VideoPageState extends State<VideoPage> {
     );
   }
 
+  void _seekVideoBy(Duration offset) {
+    final VideoPlaybackController controller = widget.controller;
+    if (controller.filePath == null || controller.busy) return;
+    unawaited(controller.seek(controller.position + offset));
+  }
+
   Future<void> _saveVideoSubtitleSettings() async {
     final AppSettingsRepository? repository = widget.settings;
     if (repository == null) return;
     await repository.saveVideoSubtitleSettings(
       VideoSubtitleSettings(
-        subtitlesEnabled: _subtitlesEnabled,
+        subtitlesEnabled: _subtitleDisplayMode != VideoSubtitleDisplayMode.off,
         translationEnabled: _translationEnabled,
         cacheEnabled: _subtitleCacheEnabled,
+        displayMode: _subtitleDisplayMode,
       ),
     );
   }
 
-  void _setSubtitlesEnabled(bool enabled) {
-    setState(() => _subtitlesEnabled = enabled);
+  void _setSubtitleDisplayMode(VideoSubtitleDisplayMode mode) {
+    setState(() => _subtitleDisplayMode = mode);
     unawaited(_saveVideoSubtitleSettings());
   }
 
@@ -551,6 +579,11 @@ class _VideoPageState extends State<VideoPage> {
           }
         }
         if (result == null) {
+          if (widget.transcription.busy) {
+            _waitingForTranscription = true;
+            _setPlaylistStatus(path, '等待当前转写任务结束');
+            return;
+          }
           _setPlaylistStatus(
             path,
             path == widget.controller.filePath ? '实时转写中' : '后台预转写中',
@@ -574,11 +607,20 @@ class _VideoPageState extends State<VideoPage> {
                   );
                 }
               },
+              isCancelled: () => !mounted || generation != _playlistGeneration,
             );
             result = _mergeTranslations(result, _playlistResults[path]);
             _storePlaylistResult(path, result);
           } on Object catch (error) {
-            _setPlaylistStatus(path, '转写失败：$error');
+            if (!mounted || generation != _playlistGeneration) return;
+            if (widget.transcription.busy &&
+                error is StateError &&
+                error.message == '当前正在处理另一个文件') {
+              _waitingForTranscription = true;
+              _setPlaylistStatus(path, '等待当前转写任务结束');
+              return;
+            }
+            _setPlaylistStatus(path, '转写失败：${_playlistError(error)}');
             continue;
           }
         }
@@ -717,6 +759,11 @@ class _VideoPageState extends State<VideoPage> {
     _setPlaylistStatus(path, warning == null ? status : '$status；$warning');
   }
 
+  String _playlistError(Object error) {
+    final String raw = error is StateError ? error.message : '$error';
+    return raw.replaceFirst(RegExp(r'^(Bad state: |Exception: )+'), '');
+  }
+
   String _videoSubtitleCacheScope(TranslationApiSettings settings) {
     final Map<String, Object?> scope = <String, Object?>{
       'asr': widget.transcription.config.toJson(),
@@ -802,6 +849,12 @@ class _VideoPageState extends State<VideoPage> {
           provider,
           to: settings.targetLanguage,
         );
+        if (mounted) {
+          setState(() {
+            _subtitleDisplayMode = VideoSubtitleDisplayMode.bilingual;
+          });
+          unawaited(_saveVideoSubtitleSettings());
+        }
         _storePlaylistResult(mediaPath, translated);
         widget.transcription.applyImportedResult(
           translated,
@@ -915,6 +968,127 @@ class _VideoPageState extends State<VideoPage> {
     );
   }
 
+  Widget _buildSubtitleToolsMenu({
+    required VideoPlaybackController video,
+    required bool transcribedVideo,
+    required bool hasLinkedResult,
+    required TranscriptionResult? result,
+  }) {
+    return MenuAnchor(
+      menuChildren: <Widget>[
+        if (transcribedVideo)
+          MenuItemButton(
+            onPressed: video.busy ? null : _openTranscribedVideo,
+            leadingIcon: const Icon(Icons.subtitles_outlined),
+            child: const Text('加载已转写视频'),
+          ),
+        if (video.filePath != null)
+          MenuItemButton(
+            key: const Key('videoImportSubtitle'),
+            onPressed: video.busy || widget.transcription.busy
+                ? null
+                : _importSubtitle,
+            leadingIcon: const Icon(Icons.file_open_outlined),
+            child: const Text('加载外部字幕'),
+          ),
+        if (hasLinkedResult && result != null) ...<Widget>[
+          MenuItemButton(
+            key: const Key('videoSubtitleEditor'),
+            onPressed: video.busy ? null : () => _openEditor(result),
+            leadingIcon: const Icon(Icons.edit_note),
+            child: const Text('编辑字幕'),
+          ),
+          MenuItemButton(
+            key: const Key('videoTranslateSubtitle'),
+            onPressed: video.busy || widget.transcription.busy
+                ? null
+                : _translate,
+            leadingIcon: const Icon(Icons.translate),
+            child: const Text('翻译当前字幕'),
+          ),
+          MenuItemButton(
+            key: const Key('videoExportSubtitles'),
+            onPressed:
+                video.busy ||
+                    widget.transcription.busy ||
+                    _encodingHardSubtitles
+                ? null
+                : () => _exportSubtitles(result),
+            leadingIcon: const Icon(Icons.file_download_outlined),
+            child: const Text('导出字幕'),
+          ),
+          MenuItemButton(
+            key: const Key('videoBurnSubtitles'),
+            onPressed:
+                video.busy ||
+                    widget.transcription.busy ||
+                    _encodingHardSubtitles
+                ? null
+                : () => _encodeHardSubtitles(result),
+            leadingIcon: const Icon(Icons.local_fire_department_outlined),
+            child: const Text('生成硬字幕视频'),
+          ),
+        ],
+        if (video.filePath != null)
+          MenuItemButton(
+            key: const Key('videoSubtitleStyle'),
+            onPressed: video.busy || _encodingHardSubtitles
+                ? null
+                : _editSubtitleStyle,
+            leadingIcon: const Icon(Icons.format_color_text_outlined),
+            child: const Text('字幕样式'),
+          ),
+      ],
+      builder:
+          (BuildContext context, MenuController controller, Widget? child) =>
+              OutlinedButton.icon(
+                key: const Key('videoSubtitleTools'),
+                onPressed: transcribedVideo || video.filePath != null
+                    ? controller.open
+                    : null,
+                icon: const Icon(Icons.subtitles_outlined),
+                label: const Text('字幕工具'),
+              ),
+    );
+  }
+
+  Widget _buildBackgroundMenu() {
+    return MenuAnchor(
+      menuChildren: <Widget>[
+        MenuItemButton(
+          key: const Key('videoTranslationToggle'),
+          onPressed: () =>
+              unawaited(_setTranslationEnabled(!_translationEnabled)),
+          leadingIcon: Icon(
+            _translationEnabled ? Icons.check : Icons.translate,
+          ),
+          child: const Text('自动翻译字幕'),
+        ),
+        MenuItemButton(
+          key: const Key('videoCacheToggle'),
+          onPressed: () => _setSubtitleCacheEnabled(!_subtitleCacheEnabled),
+          leadingIcon: Icon(
+            _subtitleCacheEnabled ? Icons.check : Icons.cached_outlined,
+          ),
+          child: Tooltip(
+            message: _cacheDirectory == null
+                ? '默认保存到应用数据目录/video_subtitles'
+                : '默认位置：$_cacheDirectory',
+            child: const Text('缓存后续字幕'),
+          ),
+        ),
+      ],
+      builder:
+          (BuildContext context, MenuController controller, Widget? child) =>
+              OutlinedButton.icon(
+                key: const Key('videoBackgroundOptions'),
+                onPressed: controller.open,
+                icon: const Icon(Icons.tune),
+                label: const Text('后台处理'),
+              ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -932,7 +1106,9 @@ class _VideoPageState extends State<VideoPage> {
                       ? widget.transcription.result
                       : null);
         final bool hasLinkedResult = result != null && currentPath != null;
-        final Segment? current = hasLinkedResult && _subtitlesEnabled
+        final Segment? current =
+            hasLinkedResult &&
+                _subtitleDisplayMode != VideoSubtitleDisplayMode.off
             ? activeSegment(result.segments, video.position)
             : null;
         final String? transcribedPath = widget.transcription.filePath;
@@ -943,7 +1119,7 @@ class _VideoPageState extends State<VideoPage> {
             transcribedPath != null &&
             kVideoExtensions.contains(transcribedExtension);
 
-        return Column(
+        final Widget content = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Padding(
@@ -964,93 +1140,13 @@ class _VideoPageState extends State<VideoPage> {
                     icon: const Icon(Icons.playlist_add),
                     label: const Text('添加播放列表'),
                   ),
-                  if (transcribedVideo) ...<Widget>[
-                    OutlinedButton.icon(
-                      onPressed: video.busy ? null : _openTranscribedVideo,
-                      icon: const Icon(Icons.subtitles_outlined),
-                      label: const Text('加载已转写视频'),
-                    ),
-                  ],
-                  if (video.filePath != null)
-                    OutlinedButton.icon(
-                      key: const Key('videoImportSubtitle'),
-                      onPressed: video.busy || widget.transcription.busy
-                          ? null
-                          : _importSubtitle,
-                      icon: const Icon(Icons.subtitles_outlined),
-                      label: const Text('加载外部字幕'),
-                    ),
-                  if (hasLinkedResult) ...<Widget>[
-                    OutlinedButton.icon(
-                      key: const Key('videoSubtitleEditor'),
-                      onPressed: video.busy ? null : () => _openEditor(result),
-                      icon: const Icon(Icons.edit_note),
-                      label: const Text('编辑字幕'),
-                    ),
-                    OutlinedButton.icon(
-                      key: const Key('videoTranslateSubtitle'),
-                      onPressed: video.busy || widget.transcription.busy
-                          ? null
-                          : _translate,
-                      icon: const Icon(Icons.translate),
-                      label: const Text('翻译当前字幕'),
-                    ),
-                    OutlinedButton.icon(
-                      key: const Key('videoExportSubtitles'),
-                      onPressed:
-                          video.busy ||
-                              widget.transcription.busy ||
-                              _encodingHardSubtitles
-                          ? null
-                          : () => _exportSubtitles(result),
-                      icon: const Icon(Icons.file_download_outlined),
-                      label: const Text('导出字幕'),
-                    ),
-                    OutlinedButton.icon(
-                      key: const Key('videoBurnSubtitles'),
-                      onPressed:
-                          video.busy ||
-                              widget.transcription.busy ||
-                              _encodingHardSubtitles
-                          ? null
-                          : () => _encodeHardSubtitles(result),
-                      icon: const Icon(Icons.local_fire_department_outlined),
-                      label: const Text('生成硬字幕视频'),
-                    ),
-                  ],
-                  if (video.filePath != null)
-                    OutlinedButton.icon(
-                      key: const Key('videoSubtitleStyle'),
-                      onPressed: video.busy || _encodingHardSubtitles
-                          ? null
-                          : _editSubtitleStyle,
-                      icon: const Icon(Icons.format_color_text_outlined),
-                      label: const Text('字幕样式'),
-                    ),
-                  FilterChip(
-                    key: const Key('videoSubtitlesToggle'),
-                    label: const Text('显示字幕'),
-                    selected: _subtitlesEnabled,
-                    onSelected: _setSubtitlesEnabled,
+                  _buildSubtitleToolsMenu(
+                    video: video,
+                    transcribedVideo: transcribedVideo,
+                    hasLinkedResult: hasLinkedResult,
+                    result: result,
                   ),
-                  FilterChip(
-                    key: const Key('videoTranslationToggle'),
-                    label: const Text('字幕翻译'),
-                    selected: _translationEnabled,
-                    onSelected: (bool enabled) =>
-                        unawaited(_setTranslationEnabled(enabled)),
-                  ),
-                  Tooltip(
-                    message: _cacheDirectory == null
-                        ? '默认保存到应用数据目录/video_subtitles'
-                        : '默认位置：$_cacheDirectory',
-                    child: FilterChip(
-                      key: const Key('videoCacheToggle'),
-                      label: const Text('缓存后续字幕'),
-                      selected: _subtitleCacheEnabled,
-                      onSelected: _setSubtitleCacheEnabled,
-                    ),
-                  ),
+                  _buildBackgroundMenu(),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 240),
                     child: Text(
@@ -1099,25 +1195,29 @@ class _VideoPageState extends State<VideoPage> {
                 controller: video,
                 current: current,
                 style: _subtitleStyle,
-                showTranslation: _translationEnabled,
+                displayMode: _subtitleDisplayMode,
+                controls: video.filePath == null
+                    ? null
+                    : _PlaybackControls(
+                        controller: video,
+                        onPrevious: _currentPlaylistIndex > 0
+                            ? () => unawaited(
+                                _openPlaylistVideo(_currentPlaylistIndex - 1),
+                              )
+                            : null,
+                        onNext:
+                            _currentPlaylistIndex >= 0 &&
+                                _currentPlaylistIndex + 1 < _playlist.length
+                            ? () => unawaited(
+                                _openPlaylistVideo(_currentPlaylistIndex + 1),
+                              )
+                            : null,
+                        hasSubtitles: hasLinkedResult,
+                        subtitleDisplayMode: _subtitleDisplayMode,
+                        onSubtitleDisplayModeChanged: _setSubtitleDisplayMode,
+                      ),
               ),
             ),
-            if (video.filePath != null)
-              _PlaybackControls(
-                controller: video,
-                onPrevious: _currentPlaylistIndex > 0
-                    ? () => unawaited(
-                        _openPlaylistVideo(_currentPlaylistIndex - 1),
-                      )
-                    : null,
-                onNext:
-                    _currentPlaylistIndex >= 0 &&
-                        _currentPlaylistIndex + 1 < _playlist.length
-                    ? () => unawaited(
-                        _openPlaylistVideo(_currentPlaylistIndex + 1),
-                      )
-                    : null,
-              ),
             if (video.errorText != null)
               Padding(
                 padding: const EdgeInsets.symmetric(
@@ -1129,13 +1229,14 @@ class _VideoPageState extends State<VideoPage> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
-            if (hasLinkedResult && _subtitlesEnabled)
+            if (hasLinkedResult &&
+                _subtitleDisplayMode != VideoSubtitleDisplayMode.off)
               Expanded(
                 flex: 2,
                 child: _SubtitleList(
                   controller: video,
                   result: result,
-                  showTranslation: _translationEnabled,
+                  displayMode: _subtitleDisplayMode,
                 ),
               )
             else if (video.filePath == null)
@@ -1143,6 +1244,15 @@ class _VideoPageState extends State<VideoPage> {
                 child: Center(child: Text('打开视频，或先在「文件转写」页签识别一个视频')),
               ),
           ],
+        );
+        return CallbackShortcuts(
+          bindings: <ShortcutActivator, VoidCallback>{
+            const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+                _seekVideoBy(const Duration(seconds: -10)),
+            const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+                _seekVideoBy(const Duration(seconds: 10)),
+          },
+          child: Focus(autofocus: true, child: content),
         );
       },
     );
@@ -1154,24 +1264,37 @@ class _VideoSurface extends StatelessWidget {
     required this.controller,
     required this.current,
     required this.style,
-    required this.showTranslation,
+    required this.displayMode,
+    required this.controls,
   });
 
   final VideoPlaybackController controller;
   final Segment? current;
   final SubtitleStyle style;
-  final bool showTranslation;
+  final VideoSubtitleDisplayMode displayMode;
+  final Widget? controls;
 
   @override
   Widget build(BuildContext context) {
-    final Widget? subtitle = current == null
+    final String subtitleText = current == null
+        ? ''
+        : _subtitleText(current!, displayMode);
+    final Widget? subtitle = subtitleText.isEmpty
         ? null
         : Positioned.fill(
             child: IgnorePointer(
               child: Align(
                 alignment: style.position.alignment,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    20,
+                    16,
+                    style.position == SubtitlePosition.bottom &&
+                            controls != null
+                        ? 92
+                        : 20,
+                  ),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: style.background,
@@ -1182,21 +1305,24 @@ class _VideoSurface extends StatelessWidget {
                         horizontal: 12,
                         vertical: 8,
                       ),
-                      child: Text(
-                        <String>[
-                          if ((current!.speaker ?? '').trim().isNotEmpty)
-                            '【${current!.speaker!.trim()}】',
-                          current!.text,
-                          if (showTranslation &&
-                              (current!.translation ?? '').trim().isNotEmpty)
-                            current!.translation!,
-                        ].join('\n'),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: style.foreground,
-                          fontSize: style.fontSize,
-                          height: 1.35,
-                        ),
+                      child: Builder(
+                        builder: (BuildContext context) {
+                          final Widget text = Text(
+                            subtitleText,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: style.foreground,
+                              fontSize: style.fontSize,
+                              height: 1.35,
+                            ),
+                          );
+                          // Flutter macOS 的 AccessibilityBridge 在高频替换
+                          // 字幕语义节点时可能崩溃。只排除动态字幕文本，保留
+                          // 播放按钮、时间轴、菜单等控件的辅助功能语义。
+                          return Platform.isMacOS
+                              ? ExcludeSemantics(child: text)
+                              : text;
+                        },
                       ),
                     ),
                   ),
@@ -1211,17 +1337,60 @@ class _VideoSurface extends StatelessWidget {
           ? const Center(
               child: Text('打开视频开始播放', style: TextStyle(color: Colors.white70)),
             )
-          : Stack(
-              fit: StackFit.expand,
-              children: <Widget>[
-                controller.buildVideo(),
-                ?subtitle,
-                if (controller.busy)
-                  const Center(child: CircularProgressIndicator()),
-              ],
+          : controller.buildVideo(
+              overlayBuilder: (Future<void> Function() toggleFullscreen) =>
+                  Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      ?subtitle,
+                      if (controls != null)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: DecoratedBox(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: <Color>[
+                                  Colors.transparent,
+                                  Color(0xD9000000),
+                                ],
+                              ),
+                            ),
+                            child: Theme(
+                              data: ThemeData.dark(useMaterial3: true),
+                              child: _PlaybackControlsScope(
+                                toggleFullscreen: toggleFullscreen,
+                                child: controls!,
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (controller.busy)
+                        const Center(child: CircularProgressIndicator()),
+                    ],
+                  ),
             ),
     );
   }
+}
+
+class _PlaybackControlsScope extends InheritedWidget {
+  const _PlaybackControlsScope({
+    required this.toggleFullscreen,
+    required super.child,
+  });
+
+  final Future<void> Function() toggleFullscreen;
+
+  static Future<void> Function() of(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_PlaybackControlsScope>()!
+      .toggleFullscreen;
+
+  @override
+  bool updateShouldNotify(_PlaybackControlsScope oldWidget) => false;
 }
 
 class _SubtitleStyleDialog extends StatefulWidget {
@@ -1378,62 +1547,174 @@ class _ColorOption extends StatelessWidget {
 class _PlaybackControls extends StatelessWidget {
   const _PlaybackControls({
     required this.controller,
+    required this.hasSubtitles,
+    required this.subtitleDisplayMode,
+    required this.onSubtitleDisplayModeChanged,
     this.onPrevious,
     this.onNext,
   });
 
   final VideoPlaybackController controller;
+  final bool hasSubtitles;
+  final VideoSubtitleDisplayMode subtitleDisplayMode;
+  final ValueChanged<VideoSubtitleDisplayMode> onSubtitleDisplayModeChanged;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
 
   @override
   Widget build(BuildContext context) {
+    final Future<void> Function() toggleFullscreen = _PlaybackControlsScope.of(
+      context,
+    );
     final double total =
         controller.duration.inMicroseconds / Duration.microsecondsPerSecond;
     final double current =
         controller.position.inMicroseconds / Duration.microsecondsPerSecond;
     final double max = total > 0 ? total : 1;
+    final Widget subtitleMenu = PopupMenuButton<VideoSubtitleDisplayMode>(
+      key: const Key('videoSubtitleMode'),
+      enabled: hasSubtitles,
+      initialValue: subtitleDisplayMode,
+      tooltip: '选择字幕显示内容',
+      onSelected: onSubtitleDisplayModeChanged,
+      itemBuilder: (BuildContext context) =>
+          <PopupMenuEntry<VideoSubtitleDisplayMode>>[
+            for (final VideoSubtitleDisplayMode mode
+                in VideoSubtitleDisplayMode.values)
+              PopupMenuItem<VideoSubtitleDisplayMode>(
+                key: Key('videoSubtitleMode-${mode.name}'),
+                value: mode,
+                child: Text(mode.label),
+              ),
+          ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.closed_caption_outlined, size: 20),
+            const SizedBox(width: 4),
+            Text('字幕：${subtitleDisplayMode.label}'),
+            const Icon(Icons.arrow_drop_down),
+          ],
+        ),
+      ),
+    );
+    final Widget rateMenu = PopupMenuButton<double>(
+      key: const Key('videoPlaybackRate'),
+      initialValue: controller.rate,
+      tooltip: '调整播放倍速',
+      onSelected: (double rate) => unawaited(controller.setRate(rate)),
+      itemBuilder: (BuildContext context) => <PopupMenuEntry<double>>[
+        for (final double rate in const <double>[
+          0.5,
+          0.75,
+          1.0,
+          1.25,
+          1.5,
+          2.0,
+        ])
+          PopupMenuItem<double>(
+            key: Key('videoPlaybackRate-$rate'),
+            value: rate,
+            child: Text('${rate}x'),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.speed, size: 20),
+            const SizedBox(width: 4),
+            Text('${controller.rate}x'),
+            const Icon(Icons.arrow_drop_down),
+          ],
+        ),
+      ),
+    );
+    Widget timeline() => Expanded(
+      child: Slider(
+        value: current.clamp(0.0, max),
+        max: max,
+        onChanged: total <= 0 || controller.busy
+            ? null
+            : (double value) => unawaited(
+                controller.seek(
+                  Duration(
+                    microseconds: (value * Duration.microsecondsPerSecond)
+                        .round(),
+                  ),
+                ),
+              ),
+      ),
+    );
+    final Widget previous = IconButton(
+      tooltip: '上一个视频',
+      onPressed: controller.busy ? null : onPrevious,
+      icon: const Icon(Icons.skip_previous),
+    );
+    final Widget play = IconButton(
+      tooltip: controller.playing ? '暂停' : '播放',
+      onPressed: controller.busy
+          ? null
+          : () => unawaited(controller.playOrPause()),
+      icon: Icon(controller.playing ? Icons.pause : Icons.play_arrow),
+    );
+    final Widget next = IconButton(
+      tooltip: '下一个视频',
+      onPressed: controller.busy ? null : onNext,
+      icon: const Icon(Icons.skip_next),
+    );
+    final Widget position = Text(
+      '${_formatDuration(controller.position)} / ${_formatDuration(controller.duration)}',
+    );
+    final Widget fullscreen = IconButton(
+      tooltip: '切换全屏',
+      onPressed: () => unawaited(toggleFullscreen()),
+      icon: const Icon(Icons.fullscreen),
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-      child: Row(
-        children: <Widget>[
-          IconButton(
-            tooltip: '上一个视频',
-            onPressed: controller.busy ? null : onPrevious,
-            icon: const Icon(Icons.skip_previous),
-          ),
-          IconButton(
-            tooltip: controller.playing ? '暂停' : '播放',
-            onPressed: controller.busy
-                ? null
-                : () => unawaited(controller.playOrPause()),
-            icon: Icon(controller.playing ? Icons.pause : Icons.play_arrow),
-          ),
-          Text(
-            '${_formatDuration(controller.position)} / ${_formatDuration(controller.duration)}',
-          ),
-          Expanded(
-            child: Slider(
-              value: current.clamp(0.0, max),
-              max: max,
-              onChanged: total <= 0 || controller.busy
-                  ? null
-                  : (double value) => unawaited(
-                      controller.seek(
-                        Duration(
-                          microseconds: (value * Duration.microsecondsPerSecond)
-                              .round(),
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-          IconButton(
-            tooltip: '下一个视频',
-            onPressed: controller.busy ? null : onNext,
-            icon: const Icon(Icons.skip_next),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          if (constraints.maxWidth < 720) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    previous,
+                    play,
+                    position,
+                    timeline(),
+                    next,
+                  ],
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[subtitleMenu, rateMenu, fullscreen],
+                  ),
+                ),
+              ],
+            );
+          }
+          return Row(
+            children: <Widget>[
+              previous,
+              play,
+              position,
+              const SizedBox(width: 8),
+              subtitleMenu,
+              rateMenu,
+              timeline(),
+              next,
+              fullscreen,
+            ],
+          );
+        },
       ),
     );
   }
@@ -1443,12 +1724,12 @@ class _SubtitleList extends StatelessWidget {
   const _SubtitleList({
     required this.controller,
     required this.result,
-    required this.showTranslation,
+    required this.displayMode,
   });
 
   final VideoPlaybackController controller;
   final TranscriptionResult result;
-  final bool showTranslation;
+  final VideoSubtitleDisplayMode displayMode;
 
   @override
   Widget build(BuildContext context) {
@@ -1463,6 +1744,13 @@ class _SubtitleList extends StatelessWidget {
           const Divider(height: 1),
       itemBuilder: (BuildContext context, int index) {
         final Segment segment = result.segments[index];
+        final String translation = (segment.translation ?? '').trim();
+        final bool showOriginal =
+            displayMode == VideoSubtitleDisplayMode.original ||
+            displayMode == VideoSubtitleDisplayMode.bilingual;
+        final bool showTranslation =
+            displayMode == VideoSubtitleDisplayMode.translation ||
+            displayMode == VideoSubtitleDisplayMode.bilingual;
         final bool selected =
             identical(segment, current) ||
             (current != null &&
@@ -1474,18 +1762,23 @@ class _SubtitleList extends StatelessWidget {
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              if ((segment.speaker ?? '').trim().isNotEmpty)
+              if (showOriginal && (segment.speaker ?? '').trim().isNotEmpty)
                 Text(
                   '【${segment.speaker!.trim()}】',
                   style: Theme.of(context).textTheme.labelMedium,
                 ),
-              Text(segment.text),
-              if (showTranslation &&
-                  (segment.translation ?? '').trim().isNotEmpty)
+              if (showOriginal) Text(segment.text),
+              if (showTranslation && translation.isNotEmpty)
                 Text(
-                  segment.translation!.trim(),
+                  translation,
                   style: Theme.of(context).textTheme.bodyMedium
                       ?.copyWith(color: Theme.of(context).colorScheme.primary),
+                )
+              else if (showTranslation && !showOriginal)
+                Text(
+                  '暂无译文',
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: Theme.of(context).colorScheme.outline),
                 ),
             ],
           ),
@@ -1518,6 +1811,25 @@ String _formatDuration(Duration duration) {
   return totalSeconds >= 3600
       ? '$hours:$minutes:$seconds'
       : '$minutes:$seconds';
+}
+
+String _subtitleText(Segment segment, VideoSubtitleDisplayMode mode) {
+  final String translation = (segment.translation ?? '').trim();
+  return switch (mode) {
+    VideoSubtitleDisplayMode.off => '',
+    VideoSubtitleDisplayMode.original => <String>[
+      if ((segment.speaker ?? '').trim().isNotEmpty)
+        '【${segment.speaker!.trim()}】',
+      segment.text,
+    ].join('\n'),
+    VideoSubtitleDisplayMode.translation => translation,
+    VideoSubtitleDisplayMode.bilingual => <String>[
+      if ((segment.speaker ?? '').trim().isNotEmpty)
+        '【${segment.speaker!.trim()}】',
+      segment.text,
+      if (translation.isNotEmpty) translation,
+    ].join('\n'),
+  };
 }
 
 String _segmentKey(Segment segment) =>

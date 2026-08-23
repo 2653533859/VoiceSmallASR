@@ -157,6 +157,80 @@ class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
       return;
     }
 
+    if (Platform.isMacOS) {
+      yield* _decodeMacOSStream(path, chunkDuration);
+      return;
+    }
+
+    yield* _decodeLegacyNativeChunks(path, chunkDuration);
+  }
+
+  Stream<DecodedAudioChunk> _decodeMacOSStream(
+    String path,
+    Duration chunkDuration,
+  ) async* {
+    String? sessionId;
+    try {
+      sessionId = await channel.invokeMethod<String>(
+        'openPcm16kStream',
+        <String, Object?>{'path': path},
+      );
+      if (sessionId == null || sessionId.isEmpty) {
+        throw AudioDecodeException('原生持续解码会话启动失败', path: path);
+      }
+      while (true) {
+        final Object? response = await channel.invokeMethod<Object?>(
+          'readPcm16kStream',
+          <String, Object?>{
+            'sessionId': sessionId,
+            'maxSamples':
+                chunkDuration.inMicroseconds *
+                16000 ~/
+                Duration.microsecondsPerSecond,
+          },
+        );
+        if (response is! Map<Object?, Object?>) {
+          throw AudioDecodeException('原生持续解码返回格式无效', path: path);
+        }
+        final Float32List samples = _asFloat32(response['pcm'], path);
+        final bool isLast = response['eof'] == true;
+        if (samples.isNotEmpty) {
+          yield DecodedAudioChunk(samples, isLast: isLast);
+        }
+        if (isLast) return;
+        if (samples.isEmpty) {
+          throw AudioDecodeException('原生持续解码未返回采样数据', path: path);
+        }
+      }
+    } on MissingPluginException {
+      yield* _decodeLegacyNativeChunks(path, chunkDuration);
+    } on PlatformException catch (error) {
+      throw AudioDecodeException(
+        '解码失败：${error.message ?? error.code}',
+        path: path,
+      );
+    } finally {
+      if (sessionId != null) {
+        try {
+          await channel.invokeMethod<void>(
+            'closePcm16kStream',
+            <String, Object?>{'sessionId': sessionId},
+          );
+        } on Object {
+          // 主解码结果优先；关闭失败由原生会话随进程退出释放。
+        }
+      }
+    }
+  }
+
+  Stream<DecodedAudioChunk> _decodeLegacyNativeChunks(
+    String path,
+    Duration chunkDuration,
+  ) async* {
+    final String extension = p
+        .extension(path)
+        .replaceFirst('.', '')
+        .toLowerCase();
     int startMilliseconds = 0;
     while (true) {
       final Object? response;

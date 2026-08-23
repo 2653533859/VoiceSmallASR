@@ -9,7 +9,9 @@ import 'package:vsasr_app/src/asr/segment.dart';
 void main() {
   test('播放控制器同步状态、播放暂停和带边界的跳转', () async {
     final _FakeVideoBackend backend = _FakeVideoBackend();
-    final VideoPlaybackController controller = VideoPlaybackController(backend: backend);
+    final VideoPlaybackController controller = VideoPlaybackController(
+      backend: backend,
+    );
     addTearDown(controller.dispose);
 
     await controller.open('/tmp/movie.mp4');
@@ -26,6 +28,9 @@ void main() {
     expect(backend.playOrPauseCalls, 1);
     await controller.seek(const Duration(seconds: 99));
     expect(backend.lastSeek, const Duration(seconds: 10));
+    await controller.setRate(1.5);
+    expect(controller.rate, 1.5);
+    expect(backend.lastRate, 1.5);
   });
 
   test('字幕时间轴在段首包含、段尾切换', () {
@@ -34,33 +39,70 @@ void main() {
       Segment(text: '第二句', start: 1, end: 2, index: 1),
     ];
 
-    expect(activeSegment(segments, const Duration(milliseconds: 500))?.text, '第一句');
+    expect(
+      activeSegment(segments, const Duration(milliseconds: 500))?.text,
+      '第一句',
+    );
     expect(activeSegment(segments, const Duration(seconds: 1))?.text, '第二句');
     expect(activeSegment(segments, const Duration(seconds: 2)), isNull);
   });
 
   test('关闭期间打开操作完成后不访问已销毁的控制器', () async {
-    final _FakeVideoBackend backend = _FakeVideoBackend()..pendingOpen = Completer<void>();
-    final VideoPlaybackController controller = VideoPlaybackController(backend: backend);
+    final _FakeVideoBackend backend = _FakeVideoBackend()
+      ..pendingOpen = Completer<void>();
+    final VideoPlaybackController controller = VideoPlaybackController(
+      backend: backend,
+    );
     final Future<void> opening = controller.open('/tmp/movie.mp4');
     controller.dispose();
     backend.pendingOpen!.complete();
     await opening;
   });
+
+  test('即使位置更新被节流，首次进入播放末尾窗口仍会通知监听者', () async {
+    final _FakeVideoBackend backend = _FakeVideoBackend();
+    final VideoPlaybackController controller = VideoPlaybackController(
+      backend: backend,
+    );
+    addTearDown(controller.dispose);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+
+    await controller.open('/tmp/movie.mp4');
+    backend.emitDuration(const Duration(seconds: 10));
+    backend.emitPosition(const Duration(milliseconds: 9700));
+    final int beforeEndWindow = notifications;
+
+    backend.emitPosition(const Duration(milliseconds: 9890));
+
+    expect(notifications, beforeEndWindow + 1);
+    expect(controller.position, const Duration(milliseconds: 9890));
+  });
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {
-  final StreamController<Duration> _positions = StreamController<Duration>.broadcast(sync: true);
-  final StreamController<Duration> _durations = StreamController<Duration>.broadcast(sync: true);
-  final StreamController<bool> _playing = StreamController<bool>.broadcast(sync: true);
+  final StreamController<Duration> _positions =
+      StreamController<Duration>.broadcast(sync: true);
+  final StreamController<Duration> _durations =
+      StreamController<Duration>.broadcast(sync: true);
+  final StreamController<bool> _playing = StreamController<bool>.broadcast(
+    sync: true,
+  );
 
   String? openedPath;
   Duration? lastSeek;
   int playOrPauseCalls = 0;
+  double? lastRate;
   Completer<void>? pendingOpen;
 
   @override
-  Widget buildVideo() => const SizedBox();
+  Widget buildVideo({VideoOverlayBuilder? overlayBuilder}) => Stack(
+    children: <Widget>[
+      const SizedBox.expand(),
+      if (overlayBuilder != null)
+        Positioned.fill(child: overlayBuilder(() async {})),
+    ],
+  );
 
   @override
   Stream<Duration> get position => _positions.stream;
@@ -83,6 +125,9 @@ class _FakeVideoBackend implements VideoPlayerBackend {
 
   @override
   Future<void> seek(Duration position) async => lastSeek = position;
+
+  @override
+  Future<void> setRate(double rate) async => lastRate = rate;
 
   @override
   Future<void> dispose() async {

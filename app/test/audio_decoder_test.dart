@@ -100,6 +100,8 @@ void main() {
   test('视频分块解码逐块请求且在 eof 后停止', () async {
     var index = 0;
     _mock((MethodCall call) async {
+      if (call.method == 'openPcm16kStream') return 'session-1';
+      if (call.method == 'closePcm16kStream') return null;
       index++;
       return <String, Object>{
         'pcm': Float32List.fromList(<double>[index.toDouble()]),
@@ -117,13 +119,22 @@ void main() {
       <double>[1, 2],
     );
     expect(chunks.last.isLast, isTrue);
-    expect(calls.map((MethodCall call) => call.method).toSet(), <String>{
-      'decodePcm16kChunk',
-    });
-    expect(
-      calls.map((MethodCall call) => (call.arguments as Map)['startMs']),
-      <int>[0, 3000],
-    );
+    if (Platform.isMacOS) {
+      expect(calls.map((MethodCall call) => call.method), <String>[
+        'openPcm16kStream',
+        'readPcm16kStream',
+        'readPcm16kStream',
+        'closePcm16kStream',
+      ]);
+    } else {
+      expect(calls.map((MethodCall call) => call.method).toSet(), <String>{
+        'decodePcm16kChunk',
+      });
+      expect(
+        calls.map((MethodCall call) => (call.arguments as Map)['startMs']),
+        <int>[0, 3000],
+      );
+    }
   });
 
   test('原生按字节回传时也能解出 float32', () async {

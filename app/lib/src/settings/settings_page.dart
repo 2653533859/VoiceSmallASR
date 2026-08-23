@@ -34,6 +34,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _videoSubtitlesEnabled = true;
   bool _videoTranslationEnabled = false;
   bool _videoSubtitleCacheEnabled = true;
+  VideoSubtitleDisplayMode _videoSubtitleDisplayMode =
+      VideoSubtitleDisplayMode.original;
   late final TextEditingController _apiEndpoint;
   late final TextEditingController _apiModel;
   late final TextEditingController _apiGlossary;
@@ -98,6 +100,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _videoSubtitlesEnabled = videoSettings.subtitlesEnabled;
         _videoTranslationEnabled = videoSettings.translationEnabled;
         _videoSubtitleCacheEnabled = videoSettings.cacheEnabled;
+        _videoSubtitleDisplayMode = videoSettings.displayMode;
         _selectedPresetId = null;
         _loading = false;
       });
@@ -154,6 +157,11 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitlesEnabled: _videoSubtitlesEnabled,
           translationEnabled: _videoTranslationEnabled,
           cacheEnabled: _videoSubtitleCacheEnabled,
+          displayMode: !_videoSubtitlesEnabled
+              ? VideoSubtitleDisplayMode.off
+              : _videoSubtitleDisplayMode == VideoSubtitleDisplayMode.off
+              ? VideoSubtitleDisplayMode.original
+              : _videoSubtitleDisplayMode,
         ),
       );
       final String key = _apiKey.text.trim();
