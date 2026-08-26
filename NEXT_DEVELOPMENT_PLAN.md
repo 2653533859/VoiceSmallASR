@@ -24,6 +24,7 @@
 - M16 已完成：提交 [`f36fa52`](https://github.com/2653533859/VoiceSmallASR/commit/f36fa52) 将实时字幕、当前视频、文件转写和播放列表预缓存接入共享调度器，后台任务遇到高优先级任务会协作暂停；视频流式解码增加检查点恢复、取消/收尾超时和无进展错误，macOS 检查点续读复用同一原生解码会话；视频页在周期检查点之外，遇到抢占或失败也会保存最近进度；诊断报告保留队列等待、解码/识别耗时、峰值 RSS、已处理采样数和最后进度。
 - M17 已完成：提交 [`2575a37`](https://github.com/2653533859/VoiceSmallASR/commit/2575a37) 为 Android MediaExtractor/MediaCodec 和 Windows Media Foundation 增加 `openPcm16kStream`、`readPcm16kStream`、`closePcm16kStream` 连续会话，Dart 端在三端统一使用该协议；连续缓冲支持增量混声道与重采样，EOF、坏文件、无音轨、超时和异常均回传可展示错误，读取失败会释放会话。随后提交 [`a575456`](https://github.com/2653533859/VoiceSmallASR/commit/a575456) 修复 Windows 静态 worker 的 MSVC lambda 捕获错误。Android Kotlin 编译、Dart 单测、macOS Debug 构建以及 Windows Release 云端 run [`32994030721`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32994030721) 的 MSVC/桌面 smoke/安装启动均通过；真实长视频资源和 Android 真机仍列入 M20。
 - M18 已完成代码审查和相关验证：播放列表路径以版本化 JSON 保存在应用支持目录，支持拖拽排序、单项取消/失败重试/移除，并在页面重启后恢复；字幕缓存管理器显示默认位置、条目数和占用空间，可删除单条或清理其他缓存；缓存会识别检查点-only、视频文件变化、配置作用域变化和损坏条目，按访问时间执行 2 GiB 上限淘汰，清理时保护当前字幕、检查点和正在写入的临时文件，7 天以上孤立临时文件可回收。`flutter analyze`、全量 Flutter 测试 259 项和 macOS Debug 构建通过；M20 仍保留真实长视频、Android 真机和 Windows 用户桌面验收。
+- M19 第一阶段已完成代码审查和相关验证：从 `video_page.dart` 提取播放器叠加层、播放控制、字幕列表、播放列表视图和缓存管理对话框，页面保留业务状态与事件组装；快捷键、字幕显示模式、倍速、播放列表操作和缓存管理回归通过。`flutter analyze` 与视频页/字幕缓存/播放列表相关测试通过；下一阶段继续提取视频转写与播放列表业务协调器。
 
 ## 已完成的稳定化修复
 
@@ -253,7 +254,8 @@
 
 任务：
 
-- [ ] 从 `video_page.dart` 提取播放列表、视频转写协调器、播放器叠加层、字幕面板和工具栏。
+- [x] 从 `video_page.dart` 提取播放器叠加层、播放控制、字幕列表、播放列表视图和缓存管理对话框。
+- [ ] 从 `video_page.dart` 提取播放列表与视频转写协调器，以及工具栏业务事件。
 - [ ] 从 `home_page.dart` 提取项目恢复、批量队列、性能历史和导出协调器。
 - [ ] 将任务生命周期和错误处理集中到控制器，纯 Widget 只负责渲染和事件转发。
 - [ ] 保留现有快捷键、字幕显示模式、翻译、缓存和播放列表行为，拆分过程中以控制器测试和页面回归测试为准。
