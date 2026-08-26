@@ -187,7 +187,7 @@ class VideoPlaybackControls extends StatelessWidget {
       key: const Key('videoSubtitleMode'),
       enabled: hasSubtitles,
       initialValue: subtitleDisplayMode,
-      tooltip: '选择字幕显示内容',
+      tooltip: '字幕显示：${subtitleDisplayMode.label}',
       onSelected: onSubtitleDisplayModeChanged,
       itemBuilder: (BuildContext context) =>
           <PopupMenuEntry<VideoSubtitleDisplayMode>>[
@@ -201,21 +201,26 @@ class VideoPlaybackControls extends StatelessWidget {
           ],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Icon(Icons.closed_caption_outlined, size: 20),
-            const SizedBox(width: 4),
-            Text('字幕：${subtitleDisplayMode.label}'),
-            const Icon(Icons.arrow_drop_down),
-          ],
+        child: Semantics(
+          label: '字幕显示：${subtitleDisplayMode.label}',
+          child: ExcludeSemantics(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Icon(Icons.closed_caption_outlined, size: 20),
+                const SizedBox(width: 4),
+                Text('字幕：${subtitleDisplayMode.label}'),
+                const Icon(Icons.arrow_drop_down),
+              ],
+            ),
+          ),
         ),
       ),
     );
     final Widget rateMenu = PopupMenuButton<double>(
       key: const Key('videoPlaybackRate'),
       initialValue: controller.rate,
-      tooltip: '调整播放倍速',
+      tooltip: '播放倍速：${controller.rate}x',
       onSelected: (double rate) => unawaited(controller.setRate(rate)),
       itemBuilder: (BuildContext context) => <PopupMenuEntry<double>>[
         for (final double rate in const <double>[
@@ -234,33 +239,80 @@ class VideoPlaybackControls extends StatelessWidget {
       ],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Icon(Icons.speed, size: 20),
-            const SizedBox(width: 4),
-            Text('${controller.rate}x'),
-            const Icon(Icons.arrow_drop_down),
-          ],
+        child: Semantics(
+          label: '播放倍速：${controller.rate}x',
+          child: ExcludeSemantics(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Icon(Icons.speed, size: 20),
+                const SizedBox(width: 4),
+                Text('${controller.rate}x'),
+                const Icon(Icons.arrow_drop_down),
+              ],
+            ),
+          ),
         ),
       ),
     );
-    Widget timeline() => Expanded(
+    final String currentLabel = formatVideoDuration(controller.position);
+    final String totalLabel = formatVideoDuration(controller.duration);
+    final bool canSeek = total > 0 && !controller.busy;
+    final Duration increasedPosition =
+        controller.position + const Duration(seconds: 10) > controller.duration
+        ? controller.duration
+        : controller.position + const Duration(seconds: 10);
+    final Duration decreasedPosition =
+        controller.position > const Duration(seconds: 10)
+        ? controller.position - const Duration(seconds: 10)
+        : Duration.zero;
+    final Widget position = Semantics(
+      container: true,
+      label: '当前播放位置',
+      value: '$currentLabel / $totalLabel',
+      child: ExcludeSemantics(child: Text('$currentLabel / $totalLabel')),
+    );
+    final Widget progress = Semantics(
+      slider: true,
+      enabled: canSeek,
+      container: true,
+      explicitChildNodes: true,
+      label: '播放进度',
+      value: '$currentLabel / $totalLabel',
+      increasedValue: '${formatVideoDuration(increasedPosition)} / $totalLabel',
+      decreasedValue: '${formatVideoDuration(decreasedPosition)} / $totalLabel',
+      hint: '拖动调整播放位置，每次增减 10 秒',
+      onIncrease: canSeek
+          ? () => unawaited(
+              controller.seek(
+                controller.position + const Duration(seconds: 10),
+              ),
+            )
+          : null,
+      onDecrease: canSeek
+          ? () => unawaited(
+              controller.seek(
+                controller.position - const Duration(seconds: 10),
+              ),
+            )
+          : null,
+      excludeSemantics: true,
       child: Slider(
         value: current.clamp(0.0, max),
         max: max,
-        onChanged: total <= 0 || controller.busy
-            ? null
-            : (double value) => unawaited(
+        onChanged: canSeek
+            ? (double value) => unawaited(
                 controller.seek(
                   Duration(
                     microseconds: (value * Duration.microsecondsPerSecond)
                         .round(),
                   ),
                 ),
-              ),
+              )
+            : null,
       ),
     );
+    Widget timeline() => Expanded(child: progress);
     final Widget previous = IconButton(
       tooltip: '上一个视频',
       onPressed: controller.busy ? null : onPrevious,
@@ -277,10 +329,6 @@ class VideoPlaybackControls extends StatelessWidget {
       tooltip: '下一个视频',
       onPressed: controller.busy ? null : onNext,
       icon: const Icon(Icons.skip_next),
-    );
-    final Widget position = Text(
-      '${formatVideoDuration(controller.position)} / '
-      '${formatVideoDuration(controller.duration)}',
     );
     final Widget fullscreen = IconButton(
       tooltip: '切换全屏',

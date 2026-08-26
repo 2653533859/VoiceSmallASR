@@ -21,6 +21,7 @@ import 'support/fake_asr.dart';
 
 void main() {
   testWidgets('载入已转写视频、显示当前字幕并可点击跳转', (WidgetTester tester) async {
+    final SemanticsHandle semantics = tester.ensureSemantics();
     final Directory workspace = Directory.systemTemp.createTempSync(
       'vsasr_video_test',
     );
@@ -93,6 +94,16 @@ void main() {
     backend.emitDuration(const Duration(seconds: 30));
     backend.emitPosition(const Duration(milliseconds: 500));
     await tester.pump();
+
+    expect(find.bySemanticsLabel('字幕显示：原文'), findsOneWidget);
+    expect(find.bySemanticsLabel('播放倍速：1.0x'), findsOneWidget);
+    expect(find.bySemanticsLabel('播放进度'), findsOneWidget);
+    expect(find.bySemanticsLabel('当前播放位置'), findsOneWidget);
+
+    tester.semantics.increase(find.semantics.byLabel('播放进度'));
+    expect(backend.lastSeek, const Duration(milliseconds: 10500));
+    tester.semantics.decrease(find.semantics.byLabel('播放进度'));
+    expect(backend.lastSeek, Duration.zero);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pump();
@@ -178,6 +189,7 @@ void main() {
     await tester.tap(find.byKey(const Key('videoPlaybackRate-1.5')));
     await tester.pumpAndSettle();
     expect(backend.lastRate, 1.5);
+    expect(find.bySemanticsLabel('播放倍速：1.5x'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('videoAddPlaylist')));
     await tester.pumpAndSettle();
@@ -195,6 +207,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('videoSubtitleMode')), findsOneWidget);
     expect(find.byKey(const Key('videoPlaybackRate')), findsOneWidget);
+    semantics.dispose();
   });
 
   testWidgets('翻译不可用时播放列表状态保留警告', (WidgetTester tester) async {

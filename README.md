@@ -258,7 +258,7 @@ macOS 端已端到端验收：同一个 `yue.wav`，Flutter 端与 Python 端输
 M18 已加入播放列表持久化、拖拽排序、单项取消/重试/移除、字幕缓存清单/清理、检查点恢复展示、配置/媒体变更标记、访问时间淘汰和容量上限；M19 已将视频播放器组件、视频转写/播放列表协调器，以及首页项目恢复、自动保存、批量队列、性能历史和批量导出协调器拆出；首页和导出回归测试覆盖，`flutter test` 当前 264 项通过。
 后续计划进入 M20 真实设备兼容性验收，包括 Android 真机、Windows 用户桌面和真实长视频运行验证；个人使用不要求真实第三方 API 网络验收。
 
-M20 当前已在 macOS Apple Silicon 完成 1 小时合成视频的连续分块音轨解码、播放器推进和播放列表切换验收；详细结果与复现命令见 [`M20_DEVICE_ACCEPTANCE.md`](M20_DEVICE_ACCEPTANCE.md)。Android 真机、Windows 用户桌面、macOS 睡眠唤醒和辅助功能语义树仍待验收。
+M20 当前已在 macOS Apple Silicon 完成 1 小时合成视频的连续分块音轨解码、播放器推进、播放列表切换和播放器语义 widget 回归；详细结果与复现命令见 [`M20_DEVICE_ACCEPTANCE.md`](M20_DEVICE_ACCEPTANCE.md)。Android 真机、Windows 用户桌面、macOS 睡眠唤醒和辅助功能检查器仍待验收。
 当前已可通过 `scripts/build_macos_unsigned.sh` 生成不含模型的 macOS Release `.app`/`.dmg`；脚本会对嵌入 Framework 做 ad-hoc 签名，不需要开发者证书，并已在本机成功构建 Android release APK/AAB；个人使用时未提供签名变量即可使用 Android debug signing 构建 APK，正式发布/商店签名不在本项目范围内。Android signing 配置仍支持 `VSASR_ANDROID_KEYSTORE_FILE`、`VSASR_ANDROID_KEY_ALIAS`、`VSASR_ANDROID_KEYSTORE_PASSWORD` 和 `VSASR_ANDROID_KEY_PASSWORD` 四个环境变量，并已用临时 keystore 验证可选的外部签名链路。
 macOS 无开发者证书包可以完成个人使用所需的编译、打包和本机启动；如果 `flutter_secure_storage` 因 Keychain Sharing 不可用，应用会把 API Key 仅保存在当前会话内，退出后需要重新输入，不写入普通配置或明文文件。
 Android 硬字幕编解码器矩阵已在 API 35 ARM64 模拟器通过 H.264+AAC、H.264+MP3、VP9+Opus、HEVC+AAC、AV1+AAC 和 VP8+Vorbis 输入；可复用的多输入命令与范围限制见 [`M13_CODEC_ACCEPTANCE.md`](M13_CODEC_ACCEPTANCE.md)，真机和厂商 Codec 仍需实测。
