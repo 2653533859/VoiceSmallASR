@@ -217,7 +217,7 @@
 - [x] 记录队列等待时间、解码/识别耗时、峰值 RSS、已处理采样数、块数和最后进度，并通过控制器诊断报告提供给上层。
 - [ ] 使用 400 MB 以上、1～2 小时视频，以及至少 3 个播放列表条目进行真实长时间回归；当前受本机样本和真实设备环境限制，作为 M20 验收项继续执行。
 
-验收结果：代码提交 [`f36fa52`](https://github.com/2653533859/VoiceSmallASR/commit/f36fa52) 已通过 `flutter analyze`、全量 Flutter 测试 252 项和 macOS Debug 构建；已覆盖调度优先级、实时启动取消、缓存检查点读写、看门狗失败和视频页回归。真实 400 MB/1～2 小时视频及三条播放列表的长时压力数据尚未生成，继续列入 M20 真实设备验收。
+验收结果：代码提交 [`f36fa52`](https://github.com/2653533859/VoiceSmallASR/commit/f36fa52) 已通过 `flutter analyze`、全量 Flutter 测试 252 项和 macOS Debug 构建；已覆盖调度优先级、实时启动取消、缓存检查点读写、看门狗失败和视频页回归。本机已用 1 小时/约 400 MiB 合成视频及三条播放列表完成自动化压力验证；真实含语音长视频的持续转写和真实设备长时数据仍列入 M20 验收。
 
 ## M17 · Android/Windows 连续音频解码（P1，已完成）
 
@@ -230,7 +230,7 @@
 - [x] 增加 Dart 连续读取与检查点位置回归测试，完成 Android Kotlin 编译以及 Windows 云端 MSVC、桌面 smoke 和安装启动验证。
 - [ ] 在真实长视频上比较单块解码耗时、总耗时、句柄数量和峰值内存，连同 400 MB/1～2 小时视频及三条播放列表压力数据纳入 M20。
 
-验收结果：代码提交 [`2575a37`](https://github.com/2653533859/VoiceSmallASR/commit/2575a37) 与 Windows 修复提交 [`a575456`](https://github.com/2653533859/VoiceSmallASR/commit/a575456) 已推送；本地 `flutter analyze`、全量 Flutter 测试 253 项、Android `:app:compileDebugKotlin` 和 macOS Debug 构建通过；Windows Release run [`32994030721`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32994030721) 的 MSVC 编译、安装包、桌面 smoke、硬字幕 smoke、产物校验和安装启动检查通过。真实长视频资源和 Android 真机仍列入 M20。
+验收结果：代码提交 [`2575a37`](https://github.com/2653533859/VoiceSmallASR/commit/2575a37) 与 Windows 修复提交 [`a575456`](https://github.com/2653533859/VoiceSmallASR/commit/a575456) 已推送；本地 `flutter analyze`、全量 Flutter 测试 253 项、Android `:app:compileDebugKotlin` 和 macOS Debug 构建通过；Windows Release run [`32994030721`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32994030721) 的 MSVC 编译、安装包、桌面 smoke、硬字幕 smoke、产物校验和安装启动检查通过。本机合成长视频和三条播放列表压力数据已在 M20 记录，真实长视频资源和 Android 真机仍列入 M20。
 
 ## M18 · 播放列表和字幕缓存管理（P2）
 
