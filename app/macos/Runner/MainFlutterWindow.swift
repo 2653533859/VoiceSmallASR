@@ -65,8 +65,12 @@ enum AudioDecoderChannel {
             guard let path = arguments["path"] as? String else {
               throw DecodeError.invalidArguments
             }
+            let startMs = (arguments["startMs"] as? NSNumber)?.doubleValue ?? 0
+            guard startMs >= 0 else { throw DecodeError.invalidRange }
             let sessionId = UUID().uuidString
-            storeSession(try StreamingDecoder(path: path), id: sessionId)
+            storeSession(
+              try StreamingDecoder(path: path, startSeconds: startMs / 1000.0),
+              id: sessionId)
             DispatchQueue.main.async { result(sessionId) }
           } else if call.method == "readPcm16kStream" {
             guard let sessionId = arguments["sessionId"] as? String,
@@ -148,10 +152,11 @@ enum AudioDecoderChannel {
     private let output: AVAssetReaderAudioMixOutput
     private var reachedEnd = false
 
-    init(path: String) throws {
+    init(path: String, startSeconds: Double = 0) throws {
       let asset = AVURLAsset(url: URL(fileURLWithPath: path))
       let tracks = asset.tracks(withMediaType: .audio)
       guard !tracks.isEmpty else { throw DecodeError.noAudioTrack }
+      let assetSeconds = CMTimeGetSeconds(asset.duration)
       reader = try AVAssetReader(asset: asset)
       let settings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
@@ -165,8 +170,16 @@ enum AudioDecoderChannel {
       output = AVAssetReaderAudioMixOutput(audioTracks: [tracks[0]], audioSettings: settings)
       guard reader.canAdd(output) else { throw DecodeError.unsupportedFormat }
       reader.add(output)
-      guard reader.startReading() else {
-        throw reader.error ?? DecodeError.unsupportedFormat
+      if assetSeconds.isFinite && startSeconds >= assetSeconds {
+        reachedEnd = true
+      } else {
+        if startSeconds > 0 {
+          let start = CMTime(seconds: startSeconds, preferredTimescale: 1_000_000)
+          reader.timeRange = CMTimeRange(start: start, duration: CMTimeSubtract(asset.duration, start))
+        }
+        guard reader.startReading() else {
+          throw reader.error ?? DecodeError.unsupportedFormat
+        }
       }
     }
 

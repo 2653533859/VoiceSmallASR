@@ -17,6 +17,7 @@ import 'package:vsasr_app/src/audio/microphone.dart';
 import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
+import 'package:vsasr_app/src/ui/transcription_task_scheduler.dart';
 
 /// 借用识别器。返回 null 表示模型没准备好（原因由提供方自己展示）。
 typedef WorkerProvider = Future<Transcriber?> Function();
@@ -49,6 +50,7 @@ class LiveController extends ChangeNotifier {
     this.provideTranslationProvider,
     String translationTargetLanguage = 'zh-CN',
     AudioSource? mic,
+    this.scheduler,
   }) : _mic = mic ?? MicrophoneSource() {
     final String target = translationTargetLanguage.trim();
     if (target.isEmpty) {
@@ -64,6 +66,7 @@ class LiveController extends ChangeNotifier {
   final WorkerProvider provideWorker;
   final LanguageOf languageOf;
   final TranslationProviderResolver? provideTranslationProvider;
+  final TranscriptionTaskScheduler? scheduler;
   late String _translationTargetLanguage;
   final AudioSource _mic;
 
@@ -88,6 +91,8 @@ class LiveController extends ChangeNotifier {
   Stopwatch? _performanceWatch;
   int _audioSamples = 0;
   LivePerformanceReport? _performanceReport;
+  TranscriptionTaskLease? _taskLease;
+  int _startGeneration = 0;
 
   LiveStage get stage => _stage;
 
@@ -152,6 +157,7 @@ class LiveController extends ChangeNotifier {
   /// 开始录音。权限、设备、模型任一不就绪都会写进 [errorText] 并回到空闲。
   Future<void> start() async {
     if (_stage != LiveStage.idle) return;
+    final int generation = ++_startGeneration;
     _resetTranslationProvider();
     _performanceReport = null;
     _audioSamples = 0;
@@ -159,16 +165,48 @@ class LiveController extends ChangeNotifier {
     _errorText = null;
     notifyListeners();
     try {
+      final TranscriptionTaskScheduler? taskScheduler = scheduler;
+      if (taskScheduler != null) {
+        _taskLease = await taskScheduler.acquire(
+          priority: TranscriptionTaskPriority.live,
+          label: '实时字幕',
+        );
+      }
+      if (_disposed ||
+          generation != _startGeneration ||
+          _stage != LiveStage.starting) {
+        _releaseTaskLease();
+        return;
+      }
       final Transcriber? worker = await provideWorker();
       if (worker == null) throw StateError('模型未就绪，先在「文件转写」页把模型下载好');
-      if (_disposed) return;
+      if (_disposed ||
+          generation != _startGeneration ||
+          _stage != LiveStage.starting) {
+        _releaseTaskLease();
+        return;
+      }
 
       final LiveSession session = await worker.startLive();
+      if (_disposed ||
+          generation != _startGeneration ||
+          _stage != LiveStage.starting) {
+        await session.finish();
+        _releaseTaskLease();
+        return;
+      }
       _session = session;
       _segments = session.segments.listen(_onSegment, onError: _onStreamError);
 
       // 先开会话再开设备：反过来的话，最早的几块音频会没人接。
       final Stream<Float32List> audio = await _mic.start();
+      if (_disposed ||
+          generation != _startGeneration ||
+          _stage != LiveStage.starting) {
+        await _teardown();
+        _releaseTaskLease();
+        return;
+      }
       _audio = audio
           .asyncMap<void>((Float32List chunk) async {
             _audioSamples += chunk.length;
@@ -188,6 +226,7 @@ class LiveController extends ChangeNotifier {
       _audioSamples = 0;
       _performanceReport = null;
       _stage = LiveStage.idle;
+      _releaseTaskLease();
     }
     notifyListeners();
   }
@@ -218,6 +257,7 @@ class LiveController extends ChangeNotifier {
     }
     // 使尚未开始的排队请求失效；当前正在进行的请求最多只需等待一次超时。
     _translationGeneration++;
+    _releaseTaskLease();
     await _awaitTranslationQueue();
     _closeTranslationProvider();
     _performanceWatch = null;
@@ -379,6 +419,12 @@ class LiveController extends ChangeNotifier {
     _segments = null;
   }
 
+  void _releaseTaskLease() {
+    final TranscriptionTaskLease? lease = _taskLease;
+    _taskLease = null;
+    lease?.release();
+  }
+
   String _humanize(Object error) {
     final String raw = switch (error) {
       MicrophoneException(message: final String m) => m,
@@ -390,8 +436,10 @@ class LiveController extends ChangeNotifier {
 
   /// 显式收尾。`dispose()` 是同步的，测试与退出流程用这个。
   Future<void> shutdown() async {
+    _startGeneration++;
     final bool wasActive = _stage != LiveStage.idle;
     await _teardown();
+    _releaseTaskLease();
     _translationGeneration++;
     await _awaitTranslationQueue();
     _closeTranslationProvider();

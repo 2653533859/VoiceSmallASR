@@ -10,6 +10,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
+import 'package:vsasr_app/src/ui/transcription_task_scheduler.dart';
 
 import 'support/fake_asr.dart';
 
@@ -356,6 +357,26 @@ void main() {
     expect(f.live.stage, LiveStage.idle);
   });
 
+  test('等待调度器时 shutdown 不会延迟启动麦克风', () async {
+    final TranscriptionTaskScheduler scheduler = TranscriptionTaskScheduler();
+    addTearDown(scheduler.dispose);
+    final TranscriptionTaskLease background = await scheduler.acquire(
+      priority: TranscriptionTaskPriority.backgroundCache,
+      label: '后台预缓存',
+    );
+    final _Fixture f = _Fixture(scheduler: scheduler);
+    addTearDown(f.dispose);
+
+    final Future<void> starting = f.live.start();
+    await pumpEventQueue();
+    await f.live.shutdown();
+    background.release();
+    await starting;
+
+    expect(f.mic.started, isFalse);
+    expect(f.live.stage, LiveStage.idle);
+  });
+
   test('dispose 之后到达的段不会触发 notifyListeners', () async {
     final _Fixture f = _Fixture();
     await f.live.start();
@@ -375,6 +396,7 @@ class _Fixture {
     Future<Transcriber?> Function()? worker,
     String Function()? language,
     TranslationProviderResolver? translationProvider,
+    TranscriptionTaskScheduler? scheduler,
   }) : mic = mic ?? FakeMicrophone() {
     live = LiveController(
       provideWorker: worker ?? () async => transcriber,
@@ -383,6 +405,7 @@ class _Fixture {
       // 必须写 this.mic：构造体里的 mic 是那个可空的形参，传进去等于没传，
       // LiveController 会退回真实的 MicrophoneSource
       mic: this.mic,
+      scheduler: scheduler,
     );
   }
 

@@ -49,6 +49,7 @@ class _VsasrAppState extends State<VsasrApp> {
       LiveController(
         provideWorker: _controller.ensureWorker,
         languageOf: () => _controller.language,
+        scheduler: _controller.scheduler,
         provideTranslationProvider:
             widget.translationProviderResolver ?? _loadTranslationProvider,
       );

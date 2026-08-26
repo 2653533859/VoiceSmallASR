@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
@@ -24,6 +25,7 @@ import 'package:vsasr_app/src/video/hard_subtitle_encoder.dart';
 import 'package:vsasr_app/src/video/video_subtitle_cache.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/ui/transcription_task_scheduler.dart';
 
 /// 选择视频文件，取消时返回 null。
 typedef PickVideoFile = Future<String?> Function();
@@ -93,6 +95,7 @@ class _VideoPageState extends State<VideoPage> {
   final List<String> _playlist = <String>[];
   final Map<String, TranscriptionResult> _playlistResults =
       <String, TranscriptionResult>{};
+  final Set<String> _partialPlaylistResults = <String>{};
   final Map<String, String> _playlistStatus = <String, String>{};
   final Map<String, String> _translationWarnings = <String, String>{};
   int _currentPlaylistIndex = -1;
@@ -112,6 +115,7 @@ class _VideoPageState extends State<VideoPage> {
     super.initState();
     widget.controller.addListener(_onVideoChanged);
     widget.transcription.addListener(_onTranscriptionChanged);
+    widget.transcription.scheduler.addListener(_onSchedulerChanged);
     unawaited(_loadVideoPreferences());
   }
 
@@ -148,11 +152,23 @@ class _VideoPageState extends State<VideoPage> {
     _playlistGeneration++;
     widget.controller.removeListener(_onVideoChanged);
     widget.transcription.removeListener(_onTranscriptionChanged);
+    widget.transcription.scheduler.removeListener(_onSchedulerChanged);
     super.dispose();
   }
 
   void _onTranscriptionChanged() {
     if (!_waitingForTranscription || widget.transcription.busy || !mounted) {
+      return;
+    }
+    _waitingForTranscription = false;
+    _requestPlaylistProcessing();
+  }
+
+  void _onSchedulerChanged() {
+    if (!_waitingForTranscription ||
+        widget.transcription.scheduler.active != null ||
+        widget.transcription.busy ||
+        !mounted) {
       return;
     }
     _waitingForTranscription = false;
@@ -401,6 +417,7 @@ class _VideoPageState extends State<VideoPage> {
     if (path == null) return;
     final TranscriptionResult? result = widget.transcription.result;
     if (result != null) _playlistResults[path] = result;
+    _partialPlaylistResults.remove(path);
     _playlistGeneration++;
     setState(() {
       _playlist
@@ -437,6 +454,7 @@ class _VideoPageState extends State<VideoPage> {
         ? widget.transcription.result
         : null;
     if (linked != null) _playlistResults[path] = linked;
+    _partialPlaylistResults.remove(path);
     _playlistGeneration++;
     setState(() => _currentPlaylistIndex = index);
     await widget.controller.open(path);
@@ -567,15 +585,39 @@ class _VideoPageState extends State<VideoPage> {
     try {
       for (final String path in paths) {
         if (!mounted || generation != _playlistGeneration) return;
-        TranscriptionResult? result = _playlistResults[path];
+        TranscriptionResult? result = _partialPlaylistResults.contains(path)
+            ? null
+            : _playlistResults[path];
+        TranscriptionResult? resumeResult;
+        Duration resumeAt = Duration.zero;
+        Future<TranscriptionResult?>? cacheRead;
+        Future<VideoSubtitleCheckpoint?>? checkpointRead;
         if (result == null && _subtitleCacheEnabled) {
-          result = await _subtitleCache.read(
+          cacheRead = _subtitleCache.read(path, configurationScope: cacheScope);
+          checkpointRead = _subtitleCache.readCheckpoint(
             path,
             configurationScope: cacheScope,
           );
+          result = await cacheRead;
           if (result != null) {
+            _partialPlaylistResults.remove(path);
             _storePlaylistResult(path, result);
             _setPlaylistStatus(path, '已载入字幕缓存');
+          }
+        }
+        if (result == null && _subtitleCacheEnabled) {
+          final VideoSubtitleCheckpoint? checkpoint = await checkpointRead;
+          if (checkpoint != null && checkpoint.processedSamples > 0) {
+            resumeResult = checkpoint.result;
+            resumeAt = Duration(
+              microseconds:
+                  checkpoint.processedSamples *
+                  Duration.microsecondsPerSecond ~/
+                  kSampleRate,
+            );
+            _partialPlaylistResults.add(path);
+            _storePlaylistResult(path, checkpoint.result);
+            _setPlaylistStatus(path, '从字幕检查点继续');
           }
         }
         if (result == null) {
@@ -588,9 +630,68 @@ class _VideoPageState extends State<VideoPage> {
             path,
             path == widget.controller.filePath ? '实时转写中' : '后台预转写中',
           );
+          final bool isCurrentVideo = path == widget.controller.filePath;
+          final TranscriptionTaskPriority taskPriority = isCurrentVideo
+              ? TranscriptionTaskPriority.currentVideo
+              : TranscriptionTaskPriority.backgroundCache;
+          double lastCheckpointSeconds = resumeAt.inMicroseconds / 1000000;
+          Future<void> checkpointWrite = Future<void>.value();
+
+          void scheduleCheckpoint(TranscriptionResult value) {
+            if (!_subtitleCacheEnabled ||
+                generation != _playlistGeneration ||
+                value.duration - lastCheckpointSeconds < 30) {
+              return;
+            }
+            lastCheckpointSeconds = value.duration;
+            _partialPlaylistResults.add(path);
+            final int processedSamples = (value.duration * kSampleRate).round();
+            checkpointWrite = checkpointWrite
+                .then<void>(
+                  (_) => _subtitleCache.writeCheckpoint(
+                    path,
+                    value,
+                    processedSamples: processedSamples,
+                    configurationScope: cacheScope,
+                  ),
+                )
+                .catchError((Object _) {});
+          }
+
+          Future<void> persistCheckpointNow() async {
+            if (!_subtitleCacheEnabled ||
+                generation != _playlistGeneration ||
+                lastCheckpointSeconds <= resumeAt.inMicroseconds / 1000000) {
+              return;
+            }
+            final TranscriptionResult? value = _playlistResults[path];
+            if (value == null) return;
+            final int processedSamples = (value.duration * kSampleRate).round();
+            final int resumeSamples =
+                (resumeAt.inMicroseconds *
+                kSampleRate ~/
+                Duration.microsecondsPerSecond);
+            if (processedSamples <= resumeSamples) return;
+            _partialPlaylistResults.add(path);
+            await checkpointWrite;
+            try {
+              await _subtitleCache.writeCheckpoint(
+                path,
+                value,
+                processedSamples: processedSamples,
+                configurationScope: cacheScope,
+              );
+            } on Object {
+              // 检查点只是恢复加速；写入失败不应覆盖真正的转写错误。
+            }
+          }
+
           try {
             result = await widget.transcription.transcribeVideoStream(
               path,
+              taskPriority: taskPriority,
+              initialResult: resumeResult,
+              startAt: resumeAt,
               onUpdate: (TranscriptionResult update) {
                 if (generation != _playlistGeneration) return;
                 final TranscriptionResult merged = _mergeTranslations(
@@ -598,6 +699,7 @@ class _VideoPageState extends State<VideoPage> {
                   _playlistResults[path],
                 );
                 _storePlaylistResult(path, merged);
+                scheduleCheckpoint(merged);
                 if (_translationEnabled) {
                   _queueMissingTranslations(
                     path,
@@ -609,10 +711,22 @@ class _VideoPageState extends State<VideoPage> {
               },
               isCancelled: () => !mounted || generation != _playlistGeneration,
             );
+            await checkpointWrite;
             result = _mergeTranslations(result, _playlistResults[path]);
+            _partialPlaylistResults.remove(path);
             _storePlaylistResult(path, result);
           } on Object catch (error) {
             if (!mounted || generation != _playlistGeneration) return;
+            await persistCheckpointNow();
+            if (error is TranscriptionTaskPreempted) {
+              _partialPlaylistResults.add(path);
+              _waitingForTranscription = true;
+              _setPlaylistStatus(
+                path,
+                isCurrentVideo ? '当前视频转写已暂停，等待高优先级任务结束' : '后台预转写已暂停，等待高优先级任务结束',
+              );
+              return;
+            }
             if (widget.transcription.busy &&
                 error is StateError &&
                 error.message == '当前正在处理另一个文件') {
@@ -642,6 +756,7 @@ class _VideoPageState extends State<VideoPage> {
               configurationScope: cacheScope,
             );
             _cacheDirectory = p.dirname(saved);
+            _partialPlaylistResults.remove(path);
             _setPlaylistReadyStatus(path, '字幕已缓存');
           } on Object catch (error) {
             _setPlaylistReadyStatus(path, '字幕可用，缓存失败：$error');

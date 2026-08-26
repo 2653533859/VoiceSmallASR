@@ -14,6 +14,7 @@ import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/diagnostics/video_transcription_report.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 
@@ -521,6 +522,33 @@ void main() {
     expect(live.chunks, hasLength(1));
     expect(live.finished, isTrue);
     await c.shutdown();
+  });
+
+  test('视频流式转写无进展时在超时内失败并留下诊断报告', () async {
+    final Completer<void> neverConsumed = Completer<void>();
+    final FakeLiveSession live = FakeLiveSession(
+      onAccept: (_, _) => neverConsumed.future,
+    );
+    final TranscribeController c = TranscribeController(
+      decoder: _BackpressureDecoder(),
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => _ProvidedLiveTranscriber(live),
+    );
+    addTearDown(c.shutdown);
+
+    await expectLater(
+      c.transcribeVideoStream(
+        '/tmp/stalled.mp4',
+        progressTimeout: const Duration(milliseconds: 10),
+      ),
+      throwsA(isA<VideoTranscriptionStalledException>()),
+    );
+    expect(c.videoTranscriptionReport?.completed, isFalse);
+    expect(c.videoTranscriptionReport?.chunkCount, 1);
   });
 
   // 回归：dispose() 只关「当下的」worker。模型加载要几十秒，界面在这期间

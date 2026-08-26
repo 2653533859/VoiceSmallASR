@@ -20,9 +20,11 @@ import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/diagnostics/performance_report.dart';
+import 'package:vsasr_app/src/diagnostics/video_transcription_report.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
+import 'package:vsasr_app/src/ui/transcription_task_scheduler.dart';
 
 /// 当前正在做什么。
 enum JobStage {
@@ -52,6 +54,9 @@ enum JobStage {
 }
 
 typedef VideoTranscriptionUpdate = void Function(TranscriptionResult result);
+typedef VideoTranscriptionDiagnosticsCallback = void Function(
+  VideoTranscriptionReport report,
+);
 
 /// 主界面状态。
 class TranscribeController extends ChangeNotifier {
@@ -63,11 +68,13 @@ class TranscribeController extends ChangeNotifier {
     bool offlineMode = false,
     SpeakerDiarizationModelManager? speakerModels,
     SpeakerDiarizationRunner? diarize,
+    TranscriptionTaskScheduler? scheduler,
   }) : _decoder = decoder ?? const PlatformAudioDecoder(),
        _models = models ?? ModelManager(),
        _speakerModels = speakerModels ?? SpeakerDiarizationModelManager(),
        _diarize = diarize ?? runOfflineSpeakerDiarization,
        _config = config ?? AsrConfig(),
+       _scheduler = scheduler ?? TranscriptionTaskScheduler(),
        _offlineMode = false {
     _offlineMode = offlineMode;
   }
@@ -76,6 +83,7 @@ class TranscribeController extends ChangeNotifier {
   final ModelManager _models;
   final SpeakerDiarizationModelManager _speakerModels;
   final SpeakerDiarizationRunner _diarize;
+  final TranscriptionTaskScheduler _scheduler;
 
   /// 怎么起转写器。默认后台 isolate；测试可注入进程内替身。
   final TranscriberLauncher launch;
@@ -99,6 +107,7 @@ class TranscribeController extends ChangeNotifier {
   TranscriptionResult? _result;
   Duration? _elapsed;
   PerformanceReport? _performanceReport;
+  VideoTranscriptionReport? _videoTranscriptionReport;
   int _projectRevision = 0;
   int _cancelGeneration = 0;
 
@@ -207,6 +216,13 @@ class TranscribeController extends ChangeNotifier {
 
   /// 最近一次成功文件转写的详细性能诊断；导入/打开项目不会伪造该报告。
   PerformanceReport? get performanceReport => _performanceReport;
+
+  /// 视频流式转写最近一次运行的诊断指标。
+  VideoTranscriptionReport? get videoTranscriptionReport =>
+      _videoTranscriptionReport;
+
+  /// 文件转写、实时字幕和视频预缓存共享的任务调度器。
+  TranscriptionTaskScheduler get scheduler => _scheduler;
 
   /// 识别语言（`auto`/`zh`/`en`/`ja`/`ko`/`yue`）。
   String get language => _config.language;
@@ -382,6 +398,20 @@ class TranscribeController extends ChangeNotifier {
   /// 解码并识别一个文件。这是主流程的入口。
   Future<void> transcribeFile(String path) async {
     if (busy) return;
+    final TranscriptionTaskLease lease = await _scheduler.acquire(
+      priority: TranscriptionTaskPriority.userTask,
+      label: p.basename(path),
+    );
+    try {
+      if (_disposed) return;
+      await _transcribeFile(path);
+    } finally {
+      lease.release();
+    }
+  }
+
+  Future<void> _transcribeFile(String path) async {
+    if (busy) return;
     final int generation = _cancelGeneration;
     _filePath = path;
     _result = null;
@@ -474,20 +504,112 @@ class TranscribeController extends ChangeNotifier {
     String path, {
     VideoTranscriptionUpdate? onUpdate,
     bool Function()? isCancelled,
+    TranscriptionTaskPriority taskPriority =
+        TranscriptionTaskPriority.currentVideo,
+    TranscriptionResult? initialResult,
+    Duration startAt = Duration.zero,
+    Duration progressTimeout = const Duration(seconds: 30),
+    VideoTranscriptionDiagnosticsCallback? onDiagnostics,
   }) async {
     if (busy) throw StateError('当前正在处理另一个文件');
+    if (startAt < Duration.zero) {
+      throw ArgumentError.value(startAt, 'startAt', '不能小于 0');
+    }
+    if (progressTimeout <= Duration.zero) {
+      throw ArgumentError.value(progressTimeout, 'progressTimeout', '必须大于 0');
+    }
     final int generation = _cancelGeneration;
-    final Transcriber? worker = await ensureWorker();
-    if (worker == null) {
-      throw StateError(_errorText ?? '识别模型未就绪');
-    }
-    if (_disposed || generation != _cancelGeneration) {
-      throw StateError('视频字幕转写已取消');
-    }
-
+    final DateTime requestedAt = DateTime.now();
+    TranscriptionTaskLease? lease;
+    DateTime startedAt = requestedAt;
     LiveSession? session;
     StreamSubscription<Segment>? subscription;
+    StreamIterator<DecodedAudioChunk>? chunks;
+    Duration decodeElapsed = Duration.zero;
+    Duration transcriptionElapsed = Duration.zero;
+    int decodedSamples = 0;
+    int processedSamples = 0;
+    int chunkCount = 0;
+    int peakRssBytes = ProcessInfo.currentRss;
+    DateTime lastProgressAt = requestedAt;
+    bool reportEmitted = false;
+    bool completedSuccessfully = false;
+    final Stopwatch taskWatch = Stopwatch();
+
+    void sampleRss() {
+      final int current = ProcessInfo.currentRss;
+      if (current > peakRssBytes) peakRssBytes = current;
+    }
+
+    void emitReport(bool completed) {
+      if (reportEmitted) return;
+      reportEmitted = true;
+      final VideoTranscriptionReport report = VideoTranscriptionReport(
+        path: path,
+        startedAt: startedAt,
+        queueWait: startedAt.difference(requestedAt),
+        elapsed: taskWatch.elapsed,
+        decodeElapsed: decodeElapsed,
+        transcriptionElapsed: transcriptionElapsed,
+        decodedSamples: decodedSamples,
+        processedSamples: processedSamples,
+        chunkCount: chunkCount,
+        peakRssBytes: peakRssBytes,
+        lastProgressAt: lastProgressAt,
+        completed: completed,
+      );
+      _videoTranscriptionReport = report;
+      onDiagnostics?.call(report);
+    }
+
     try {
+      final TranscriptionTaskLease acquiredLease = await _scheduler.acquire(
+        priority: taskPriority,
+        label: p.basename(path),
+      );
+      lease = acquiredLease;
+      if (_disposed ||
+          generation != _cancelGeneration ||
+          (isCancelled?.call() ?? false)) {
+        throw StateError('视频字幕转写已取消');
+      }
+      if (acquiredLease.pauseRequested) {
+        throw TranscriptionTaskPreempted(acquiredLease.pauseReason ?? '高优先级任务');
+      }
+      startedAt = DateTime.now();
+      taskWatch.start();
+      final bool canResume =
+          startAt == Duration.zero || _decoder is ResumableChunkedAudioDecoder;
+      final Duration effectiveStartAt = canResume ? startAt : Duration.zero;
+      final TranscriptionResult? seed = canResume ? initialResult : null;
+      final double startSeconds = effectiveStartAt.inMicroseconds / 1000000;
+      final int indexOffset = seed == null
+          ? 0
+          : seed.segments.where((Segment segment) => segment.isFinal).length;
+      final List<Segment> finals = <Segment>[
+        if (seed != null)
+          ...seed.segments.where((Segment segment) => segment.isFinal),
+      ];
+      Segment? partial;
+
+      TranscriptionResult currentResult() => TranscriptionResult(
+        segments: <Segment>[...finals, ?partial],
+        duration: startSeconds + decodedSamples / kSampleRate,
+        language: seed?.language ?? _config.language,
+      );
+
+      void emitUpdate() {
+        if (_disposed || generation != _cancelGeneration) return;
+        onUpdate?.call(currentResult());
+      }
+
+      final Transcriber? worker = await ensureWorker();
+      if (worker == null) {
+        throw StateError(_errorText ?? '识别模型未就绪');
+      }
+      if (_videoTaskCancelled(lease, generation, isCancelled)) {
+        throw StateError('视频字幕转写已取消');
+      }
       _stage = JobStage.decoding;
       _errorText = null;
       _progress = null;
@@ -498,30 +620,27 @@ class TranscribeController extends ChangeNotifier {
       _statusText = '正在实时转写视频字幕…';
       notifyListeners();
       session = await worker.startLive();
-      if (isCancelled?.call() ?? false) {
+      if (_videoTaskCancelled(lease, generation, isCancelled)) {
         throw StateError('视频字幕转写已取消');
       }
-      final List<Segment> finals = <Segment>[];
-      Segment? partial;
-      var decodedSamples = 0;
-      var processedSamples = 0;
       final Completer<void> completed = Completer<void>();
       subscription = session.segments.listen(
         (Segment segment) {
           if (_disposed || generation != _cancelGeneration) return;
-          if (segment.isFinal) {
-            finals.add(segment);
+          final Segment shifted = _offsetVideoSegment(
+            segment,
+            startSeconds,
+            indexOffset,
+          );
+          if (shifted.isFinal) {
+            finals.add(shifted);
             partial = null;
           } else {
-            partial = segment;
+            partial = shifted;
           }
-          onUpdate?.call(
-            TranscriptionResult(
-              segments: <Segment>[...finals, ?partial],
-              duration: decodedSamples / kSampleRate,
-              language: _config.language,
-            ),
-          );
+          lastProgressAt = DateTime.now();
+          sampleRss();
+          emitUpdate();
         },
         onError: (Object error, StackTrace stack) {
           if (!completed.isCompleted) completed.completeError(error, stack);
@@ -530,77 +649,186 @@ class TranscribeController extends ChangeNotifier {
           if (!completed.isCompleted) completed.complete();
         },
       );
-      await for (final DecodedAudioChunk decoded in _videoAudioChunks(path)) {
-        if (_disposed ||
-            generation != _cancelGeneration ||
-            (isCancelled?.call() ?? false)) {
+      final LiveSession activeSession = session;
+      final StreamIterator<DecodedAudioChunk> audioChunks =
+          StreamIterator<DecodedAudioChunk>(
+            _videoAudioChunks(path, startAt: effectiveStartAt),
+          );
+      chunks = audioChunks;
+
+      Future<bool> moveNextWithCancellation() {
+        final Completer<void> cancellation = Completer<void>();
+        final Timer timer = Timer.periodic(const Duration(milliseconds: 100), (
+          Timer _,
+        ) {
+          try {
+            if (_videoTaskCancelled(lease, generation, isCancelled) &&
+                !cancellation.isCompleted) {
+              cancellation.complete();
+            }
+          } on Object catch (error, stack) {
+            if (!cancellation.isCompleted) {
+              cancellation.completeError(error, stack);
+            }
+          }
+        });
+        final Future<bool> next = audioChunks.moveNext().timeout(
+          progressTimeout,
+          onTimeout: () {
+            throw VideoTranscriptionStalledException(
+              path: path,
+              phase: '音频解码',
+              timeout: progressTimeout,
+            );
+          },
+        );
+        final Future<bool> cancelled = cancellation.future.then<bool>((_) {
+          throw StateError('视频字幕转写已取消');
+        });
+        return Future.any<bool>(<Future<bool>>[next, cancelled])
+            .whenComplete(timer.cancel);
+      }
+
+      while (true) {
+        final Stopwatch decodeWatch = Stopwatch()..start();
+        final bool hasNext;
+        try {
+          hasNext = await moveNextWithCancellation();
+        } finally {
+          decodeElapsed += decodeWatch.elapsed;
+        }
+        if (!hasNext) break;
+        final DecodedAudioChunk decoded = audioChunks.current;
+        if (_videoTaskCancelled(lease, generation, isCancelled)) {
           throw StateError('视频字幕转写已取消');
         }
         decodedSamples += decoded.samples.length;
+        chunkCount++;
         _progress = null;
         _statusText =
-            '正在实时转写视频字幕… 已解码 ${(decodedSamples / kSampleRate).round()} 秒，'
+            '正在实时转写视频字幕… 已解码 ${(startSeconds + decodedSamples / kSampleRate).round()} 秒，'
             '已识别 ${(processedSamples / kSampleRate).round()} 秒';
         notifyListeners();
-        await session.accept(decoded.samples);
-        if (_disposed ||
-            generation != _cancelGeneration ||
-            (isCancelled?.call() ?? false)) {
+        final Stopwatch transcribeWatch = Stopwatch()..start();
+        try {
+          await activeSession.accept(decoded.samples).timeout(progressTimeout);
+        } on TimeoutException {
+          throw VideoTranscriptionStalledException(
+            path: path,
+            phase: '语音识别',
+            timeout: progressTimeout,
+          );
+        } finally {
+          transcriptionElapsed += transcribeWatch.elapsed;
+        }
+        if (_videoTaskCancelled(lease, generation, isCancelled)) {
           throw StateError('视频字幕转写已取消');
         }
         processedSamples += decoded.samples.length;
+        lastProgressAt = DateTime.now();
+        sampleRss();
         _progress = null;
         _statusText =
-            '正在实时转写视频字幕… 已识别 ${(processedSamples / kSampleRate).round()} 秒';
+            '正在实时转写视频字幕… 已识别 ${(startSeconds + processedSamples / kSampleRate).round()} 秒';
         notifyListeners();
+        emitUpdate();
       }
       _statusText =
-          '正在完成视频字幕… 已识别 ${(processedSamples / kSampleRate).round()} 秒';
+          '正在完成视频字幕… 已识别 ${(startSeconds + processedSamples / kSampleRate).round()} 秒';
       notifyListeners();
-      if (_disposed ||
-          generation != _cancelGeneration ||
-          (isCancelled?.call() ?? false)) {
+      if (_videoTaskCancelled(lease, generation, isCancelled)) {
         throw StateError('视频字幕转写已取消');
       }
-      await session.finish();
+      final Stopwatch finishWatch = Stopwatch()..start();
+      try {
+        await activeSession.finish().timeout(progressTimeout);
+      } on TimeoutException {
+        throw VideoTranscriptionStalledException(
+          path: path,
+          phase: '语音识别收尾',
+          timeout: progressTimeout,
+        );
+      } finally {
+        transcriptionElapsed += finishWatch.elapsed;
+      }
       session = null;
-      await completed.future;
-      if (_disposed ||
-          generation != _cancelGeneration ||
-          (isCancelled?.call() ?? false)) {
+      try {
+        await completed.future.timeout(progressTimeout);
+      } on TimeoutException {
+        throw VideoTranscriptionStalledException(
+          path: path,
+          phase: '字幕结果收尾',
+          timeout: progressTimeout,
+        );
+      }
+      if (_videoTaskCancelled(lease, generation, isCancelled)) {
         throw StateError('视频字幕转写已取消');
       }
       final TranscriptionResult result = TranscriptionResult(
         segments: List<Segment>.unmodifiable(finals),
-        duration: decodedSamples / kSampleRate,
-        language: _config.language,
+        duration: startSeconds + decodedSamples / kSampleRate,
+        language: seed?.language ?? _config.language,
       );
       onUpdate?.call(result);
       _progress = 1;
       _statusText = '视频字幕转写完成：${result.length} 段';
+      completedSuccessfully = true;
+      emitReport(true);
       return result;
+    } on TranscriptionTaskPreempted {
+      emitReport(false);
+      _errorText = null;
+      _statusText = '视频字幕转写已暂停，等待高优先级任务结束';
+      rethrow;
+    } on VideoTranscriptionStalledException catch (error) {
+      emitReport(false);
+      _errorText = error.message;
+      _statusText = '视频字幕转写无进展，可重试';
+      rethrow;
     } on AudioDecodeException catch (error) {
+      emitReport(false);
       _errorText = error.message;
       _statusText = '视频音轨解码失败';
       rethrow;
     } on Object catch (error) {
+      emitReport(false);
       _errorText = _humanize(error);
       _statusText = '视频字幕转写失败';
       rethrow;
     } finally {
+      const Duration cleanupTimeout = Duration(seconds: 2);
       try {
-        await session?.finish();
+        await session?.finish().timeout(cleanupTimeout);
       } on Object {
         // 主错误由上层处理；这里只保证实时会话尽量释放。
       }
+      try {
+        await chunks?.cancel().timeout(cleanupTimeout);
+      } on Object {
+        // 解码器异常时不再阻塞任务收尾。
+      }
       await subscription?.cancel();
+      taskWatch.stop();
+      if (!reportEmitted) emitReport(completedSuccessfully);
       _stage = JobStage.idle;
+      lease?.release();
       notifyListeners();
     }
   }
 
-  Stream<DecodedAudioChunk> _videoAudioChunks(String path) async* {
+  Stream<DecodedAudioChunk> _videoAudioChunks(
+    String path, {
+    Duration startAt = Duration.zero,
+  }) async* {
     final AudioDecoder decoder = _decoder;
+    final ResumableChunkedAudioDecoder? resumable =
+        decoder is ResumableChunkedAudioDecoder
+        ? decoder as ResumableChunkedAudioDecoder
+        : null;
+    if (startAt > Duration.zero && resumable != null) {
+      yield* resumable.decodeFileChunksFrom(path, startAt: startAt);
+      return;
+    }
     if (decoder is ChunkedAudioDecoder) {
       yield* (decoder as ChunkedAudioDecoder).decodeFileChunks(path);
       return;
@@ -614,6 +842,40 @@ class TranscribeController extends ChangeNotifier {
         isLast: end == samples.length,
       );
     }
+  }
+
+  bool _videoTaskCancelled(
+    TranscriptionTaskLease? lease,
+    int generation,
+    bool Function()? isCancelled,
+  ) {
+    if (lease?.pauseRequested == true) {
+      throw TranscriptionTaskPreempted(lease?.pauseReason ?? '高优先级任务');
+    }
+    return _disposed ||
+        generation != _cancelGeneration ||
+        (isCancelled?.call() ?? false);
+  }
+
+  Segment _offsetVideoSegment(
+    Segment segment,
+    double offsetSeconds,
+    int indexOffset,
+  ) {
+    return segment.copyWith(
+      start: segment.start + offsetSeconds,
+      end: segment.end + offsetSeconds,
+      words: segment.words
+          .map(
+            (Word word) => Word(
+              text: word.text,
+              start: word.start + offsetSeconds,
+              end: word.end + offsetSeconds,
+            ),
+          )
+          .toList(growable: false),
+      index: segment.index < 0 ? segment.index : segment.index + indexOffset,
+    );
   }
 
   /// 为当前识别结果自动标注说话人。

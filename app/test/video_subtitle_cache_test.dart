@@ -70,4 +70,32 @@ void main() {
       isNull,
     );
   });
+
+  test('未完成字幕检查点可以恢复，并在完成缓存后清理', () async {
+    const TranscriptionResult partial = TranscriptionResult(
+      segments: <Segment>[Segment(text: '前半句', start: 0, end: 1, index: 0)],
+      duration: 30,
+      language: 'zh',
+    );
+
+    await cache.writeCheckpoint(
+      video.path,
+      partial,
+      processedSamples: 30 * 16000,
+      configurationScope: 'zh',
+    );
+    final VideoSubtitleCheckpoint? checkpoint = await cache.readCheckpoint(
+      video.path,
+      configurationScope: 'zh',
+    );
+    expect(checkpoint, isNotNull);
+    expect(checkpoint!.processedSamples, 30 * 16000);
+    expect(checkpoint.result.segments.single.text, '前半句');
+
+    await cache.write(video.path, partial, configurationScope: 'zh');
+    expect(
+      await cache.readCheckpoint(video.path, configurationScope: 'zh'),
+      isNull,
+    );
+  });
 }

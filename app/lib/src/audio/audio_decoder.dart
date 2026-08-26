@@ -84,6 +84,18 @@ abstract interface class ChunkedAudioDecoder {
   });
 }
 
+/// 支持从已完成的音频位置继续分块解码的解码器。
+///
+/// 单独定义该接口是为了不破坏测试替身和第三方解码器；不支持续接时，
+/// 调用方会安全地从文件开头重新解码。
+abstract interface class ResumableChunkedAudioDecoder {
+  Stream<DecodedAudioChunk> decodeFileChunksFrom(
+    String path, {
+    required Duration startAt,
+    Duration chunkDuration = const Duration(seconds: 10),
+  });
+}
+
 class DecodedAudioChunk {
   const DecodedAudioChunk(this.samples, {required this.isLast});
 
@@ -92,7 +104,8 @@ class DecodedAudioChunk {
 }
 
 /// 默认解码器：wav 走纯 Dart，其余交给平台原生实现。
-class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
+class PlatformAudioDecoder
+    implements AudioDecoder, ChunkedAudioDecoder, ResumableChunkedAudioDecoder {
   const PlatformAudioDecoder({this.channel = kAudioDecoderChannel});
 
   final MethodChannel channel;
@@ -124,9 +137,23 @@ class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
   Stream<DecodedAudioChunk> decodeFileChunks(
     String path, {
     Duration chunkDuration = const Duration(seconds: 10),
+  }) => decodeFileChunksFrom(
+    path,
+    startAt: Duration.zero,
+    chunkDuration: chunkDuration,
+  );
+
+  @override
+  Stream<DecodedAudioChunk> decodeFileChunksFrom(
+    String path, {
+    required Duration startAt,
+    Duration chunkDuration = const Duration(seconds: 10),
   }) async* {
     if (chunkDuration <= Duration.zero) {
       throw ArgumentError.value(chunkDuration, 'chunkDuration', '必须大于 0');
+    }
+    if (startAt < Duration.zero) {
+      throw ArgumentError.value(startAt, 'startAt', '不能小于 0');
     }
     final File file = File(path);
     if (!file.existsSync()) {
@@ -139,13 +166,22 @@ class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
     if (kWavExtensions.contains(extension)) {
       final Float32List samples = await decodeFile(path);
       if (samples.isEmpty) return;
+      final int startSamples =
+          (startAt.inMicroseconds * 16000 ~/ Duration.microsecondsPerSecond)
+              .clamp(0, samples.length)
+              .toInt();
+      if (startSamples >= samples.length) return;
       final int chunkSamples =
           (chunkDuration.inMicroseconds *
                   16000 ~/
                   Duration.microsecondsPerSecond)
               .clamp(1, samples.length)
               .toInt();
-      for (int offset = 0; offset < samples.length; offset += chunkSamples) {
+      for (
+        int offset = startSamples;
+        offset < samples.length;
+        offset += chunkSamples
+      ) {
         final int end = (offset + chunkSamples)
             .clamp(0, samples.length)
             .toInt();
@@ -158,22 +194,23 @@ class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
     }
 
     if (Platform.isMacOS) {
-      yield* _decodeMacOSStream(path, chunkDuration);
+      yield* _decodeMacOSStream(path, chunkDuration, startAt);
       return;
     }
 
-    yield* _decodeLegacyNativeChunks(path, chunkDuration);
+    yield* _decodeLegacyNativeChunks(path, chunkDuration, startAt);
   }
 
   Stream<DecodedAudioChunk> _decodeMacOSStream(
     String path,
     Duration chunkDuration,
+    Duration startAt,
   ) async* {
     String? sessionId;
     try {
       sessionId = await channel.invokeMethod<String>(
         'openPcm16kStream',
-        <String, Object?>{'path': path},
+        <String, Object?>{'path': path, 'startMs': startAt.inMilliseconds},
       );
       if (sessionId == null || sessionId.isEmpty) {
         throw AudioDecodeException('原生持续解码会话启动失败', path: path);
@@ -203,7 +240,7 @@ class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
         }
       }
     } on MissingPluginException {
-      yield* _decodeLegacyNativeChunks(path, chunkDuration);
+      yield* _decodeLegacyNativeChunks(path, chunkDuration, startAt);
     } on PlatformException catch (error) {
       throw AudioDecodeException(
         '解码失败：${error.message ?? error.code}',
@@ -226,12 +263,13 @@ class PlatformAudioDecoder implements AudioDecoder, ChunkedAudioDecoder {
   Stream<DecodedAudioChunk> _decodeLegacyNativeChunks(
     String path,
     Duration chunkDuration,
+    Duration startAt,
   ) async* {
     final String extension = p
         .extension(path)
         .replaceFirst('.', '')
         .toLowerCase();
-    int startMilliseconds = 0;
+    int startMilliseconds = startAt.inMilliseconds;
     while (true) {
       final Object? response;
       try {
