@@ -92,6 +92,7 @@ void main() {
         _setting(_definedAudio, 'VSASR_DEVICE_TEST_AUDIO') ??
         p.join(p.dirname(paths.asrModel), 'test_wavs', 'yue.wav');
     deviceConfig = _deviceConfig();
+    final Map<String, Object?> device = await _deviceInfo(deviceConfig);
     report = <String, Object?>{
       'schema_version': 1,
       'generated_at': DateTime.now().toUtc().toIso8601String(),
@@ -102,6 +103,7 @@ void main() {
         'language': deviceConfig.language,
         'num_threads': deviceConfig.numThreads,
       },
+      'device': device,
       'process_memory': <String, Object?>{
         'source': 'dart:io ProcessInfo',
         'unit': 'bytes',
@@ -430,6 +432,71 @@ AsrConfig _deviceConfig() {
   final String language =
       _setting(_definedLanguage, 'VSASR_DEVICE_LANGUAGE') ?? 'auto';
   return AsrConfig(language: language, numThreads: threads);
+}
+
+Future<Map<String, Object?>> _deviceInfo(AsrConfig config) async =>
+    <String, Object?>{
+      'architecture': await _architecture(),
+      'logical_processor_count': Platform.numberOfProcessors,
+      'physical_memory_bytes': await _physicalMemoryBytes(),
+      'recommended_threads': config.numThreads,
+    };
+
+Future<int?> _physicalMemoryBytes() async {
+  if (Platform.isMacOS) {
+    final String? value = await _commandOutput('sysctl', <String>[
+      '-n',
+      'hw.memsize',
+    ]);
+    return value == null ? null : int.tryParse(value);
+  }
+  if (Platform.isAndroid) {
+    try {
+      final String content = await File('/proc/meminfo').readAsString();
+      final RegExpMatch? match = RegExp(
+        r'^MemTotal:\s+(\d+)\s+kB$',
+        multiLine: true,
+      ).firstMatch(content);
+      final int? kibibytes = match == null
+          ? null
+          : int.tryParse(match.group(1)!);
+      return kibibytes == null ? null : kibibytes * 1024;
+    } on Object {
+      return null;
+    }
+  }
+  if (Platform.isWindows) {
+    final String? value = await _commandOutput('powershell', <String>[
+      '-NoProfile',
+      '-Command',
+      '(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory',
+    ]);
+    return value == null ? null : int.tryParse(value);
+  }
+  return null;
+}
+
+Future<String?> _architecture() async {
+  if (Platform.isWindows) {
+    return Platform.environment['PROCESSOR_ARCHITEW6432'] ??
+        Platform.environment['PROCESSOR_ARCHITECTURE'];
+  }
+  return await _commandOutput('uname', <String>['-m']) ??
+      Platform.environment['PROCESSOR_ARCHITECTURE'];
+}
+
+Future<String?> _commandOutput(
+  String executable,
+  List<String> arguments,
+) async {
+  try {
+    final ProcessResult result = await Process.run(executable, arguments);
+    if (result.exitCode != 0) return null;
+    final String output = result.stdout.toString().trim();
+    return output.isEmpty ? null : output;
+  } on Object {
+    return null;
+  }
 }
 
 Future<void> _writeReport(Map<String, Object?> report, String modelRoot) async {
