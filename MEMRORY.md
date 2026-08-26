@@ -48,6 +48,8 @@
 - M19 首页侧已完成：新增 `HomeWorkflowCoordinator` 管理项目恢复、自动保存、批量队列快照、生命周期、最近项目和性能历史，新增 `HomeExportCoordinator` 管理批量导出格式校验、重名文件名和取消/失败汇总；页面保留文件选择、弹窗、保存器和展示逻辑。新增首页/导出协调器单测，首页项目恢复、批量处理、性能历史和批量导出回归通过；`flutter analyze`、全量 Flutter 测试 264 项和 macOS Debug 构建通过。下一步进入 M20 真实设备兼容性验收。
 - M20 已开始：新增播放列表设备验收参数 `VSASR_DEVICE_TEST_PLAYLIST`，并将视频音轨验收改为连续分块解码，避免大视频一次性构造整段 `Float32List` 导致测试进程内存突增；播放器补充字幕模式、倍速、当前位置和 10 秒播放进度增减的稳定语义，并加入 widget 回归测试；验收报告补充架构、逻辑处理器、物理内存和推荐线程记录。2026-08-27 macOS 26.5.2 Apple Silicon 已通过 1 小时/约 400 MiB 合成视频解码、播放器打开/推进和三个播放列表条目切换；报告记录音轨样本数、解码耗时、打开耗时、读取时长和 RSS。详见 [`M20_DEVICE_ACCEPTANCE.md`](M20_DEVICE_ACCEPTANCE.md)。Android 真机、Windows 用户桌面、macOS 睡眠唤醒和 macOS 辅助功能检查器仍待验收，M20 未完成。
 - M20 生命周期稳定性补充：`VideoPlaylistCoordinator` 监听应用 `hidden`/`paused`/`detached` 状态，暂停时停止继续读取视频音轨并保存当前字幕检查点，恢复到 `resumed` 后重新排队；取消了最终检查点必须跨过 30 秒的限制，短片段暂停也能保留进度。新增协调器回归覆盖暂停、检查点和恢复；真实 macOS 睡眠唤醒、Android 真机和 Windows 用户桌面仍待验收，M20 未完成。
+- M20 视频流式转写验收入口已补充：设置 `VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION=1` 后，`device_acceptance_test.dart` 会调用生产 `TranscribeController.transcribeVideoStream`，记录 `VideoTranscriptionReport`、分块/解码/识别耗时和进程 RSS；macOS 已用 8.021 秒合成 MP4 通过，处理 `127,994` samples、1 个分块，耗时约 `3,069` ms，报告标记完成。该合成音频没有语音，只是生产管线 smoke，真实长语音视频仍待 M22/M20 设备验收。
+- 2026-08-27 已将 M20 之后的建议路线写入 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：先完成 M20 真实设备报告，再依次推进 M21 播放器内字幕显示模式/倍速/快捷键和响应式布局收敛、M22 长视频与播放列表恢复及崩溃隔离、M23 自定义翻译 API 的模型列表/重试/限流/缓存作用域可诊断性、M24 字幕缓存与队列成本控制及三端发布维护。规划项不等于已完成，真实设备和真实长语音视频仍不能用模拟器或合成样本替代。
 
 ## 已验证结果
 

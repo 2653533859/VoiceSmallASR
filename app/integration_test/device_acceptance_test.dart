@@ -5,6 +5,7 @@
 /// ```bash
 /// VSASR_DEVICE_TEST_VIDEO=/path/to/input.mp4 \
 /// VSASR_DEVICE_TEST_PLAYLIST=/path/to/one.mp4\|/path/to/two.mp4 \
+/// VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION=1 \
 /// VSASR_DEVICE_TEST_REPORT=/path/to/device_acceptance_report.json \
 /// flutter test integration_test/device_acceptance_test.dart -d <device-id>
 /// ```
@@ -35,12 +36,17 @@ import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
+import 'package:vsasr_app/src/diagnostics/video_transcription_report.dart';
+import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 const String _definedAudio = String.fromEnvironment('VSASR_DEVICE_TEST_AUDIO');
 const String _definedVideo = String.fromEnvironment('VSASR_DEVICE_TEST_VIDEO');
 const String _definedPlaylist = String.fromEnvironment(
   'VSASR_DEVICE_TEST_PLAYLIST',
+);
+const String _definedVideoTranscription = String.fromEnvironment(
+  'VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION',
 );
 const String _definedReport = String.fromEnvironment(
   'VSASR_DEVICE_TEST_REPORT',
@@ -284,6 +290,66 @@ void main() {
       _recordProcessMemory(report, 'after_video_player_dispose');
       await _writeReport(report, paths.root);
     }
+  });
+
+  test('可选真实视频流式转写并记录诊断', () async {
+    final String? enabled = _setting(
+      _definedVideoTranscription,
+      'VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION',
+    );
+    if (enabled == null ||
+        !<String>{'1', 'true', 'yes'}.contains(enabled.toLowerCase())) {
+      markTestSkipped('未设置 VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION=1');
+      return;
+    }
+    final String? configuredVideoPath = _setting(
+      _definedVideo,
+      'VSASR_DEVICE_TEST_VIDEO',
+    );
+    final List<String> playlistPaths = _playlistPaths(
+      _setting(_definedPlaylist, 'VSASR_DEVICE_TEST_PLAYLIST'),
+    );
+    final String? videoPath =
+        configuredVideoPath ??
+        (playlistPaths.isEmpty ? null : playlistPaths.first);
+    if (videoPath == null) {
+      markTestSkipped('启用视频流式转写时还需要 VSASR_DEVICE_TEST_VIDEO 或播放列表');
+      return;
+    }
+    expect(File(videoPath).existsSync(), isTrue, reason: '视频不存在：$videoPath');
+
+    final TranscribeController controller = TranscribeController(
+      decoder: const PlatformAudioDecoder(),
+      models: models,
+      config: deviceConfig,
+    );
+    TranscriptionResult? result;
+    _recordProcessMemory(report, 'before_video_transcription');
+    try {
+      result = await controller.transcribeVideoStream(videoPath);
+    } finally {
+      _recordProcessMemory(report, 'after_video_transcription');
+      final VideoTranscriptionReport? diagnostics =
+          controller.videoTranscriptionReport;
+      if (diagnostics != null) {
+        report['video_transcription'] = <String, Object?>{
+          ...diagnostics.toJson(),
+          'segment_count': result?.segments.length,
+          'result_duration_seconds': result?.duration,
+        };
+      }
+      await _writeReport(report, paths.root);
+      await controller.shutdown();
+      _recordProcessMemory(report, 'after_video_transcription_worker_dispose');
+      await _writeReport(report, paths.root);
+    }
+
+    final VideoTranscriptionReport? diagnostics =
+        controller.videoTranscriptionReport;
+    expect(diagnostics, isNotNull);
+    expect(diagnostics!.completed, isTrue);
+    expect(result, isNotNull);
+    expect(result.duration, greaterThan(0));
   });
 
   test('真实麦克风实时识别不持续积压', () async {

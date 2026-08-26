@@ -32,6 +32,12 @@ H.264 + AAC 合成压力视频，并额外切换三个 8 秒 MP4 播放列表条
 - 播放器 widget 语义回归通过：字幕显示模式、当前倍速、当前位置、可调播放进度均有稳定标签；播放进度的辅助功能增减操作按 10 秒步进。
 - 播放列表协调器回归通过：应用进入 `hidden`、`paused` 或 `detached` 时停止继续读取音频并保存当前检查点，恢复到 `resumed` 后重新排队；首个 30 秒检查点之前的短片段也会持久化，避免暂停时丢失进度。
 
+另用可选的生产视频流式转写入口对一个 8.021 秒 H.264 + AAC MP4 做了管线 smoke：
+
+- `TranscribeController.transcribeVideoStream` 成功完成，解码和识别分别耗时 `17` ms / `28` ms，读取并处理 `127,994` samples，1 个分块，结果时长 `7.999625` 秒。
+- 该合成音频没有可识别语音，因此结果为 0 段字幕；这次只证明生产控制器、连续解码、worker 收尾和 `VideoTranscriptionReport` 写入链路可运行，不代表真实语音识别质量或长视频稳定性。
+- 测试期间报告的流式转写峰值 RSS 为 `858,324,992` bytes；该数值受同一进程前序模型、文件识别和播放器测试影响，只作为本次 smoke 记录。
+
 上述物理内存和 RSS 仅是当前 macOS 机器的资源基线，不能直接推导应用的最低可用内存；最低配置仍需在
 内存受限的真实 Android/Windows 设备上通过长视频和持续转写压测确定。
 
@@ -41,6 +47,7 @@ H.264 + AAC 合成压力视频，并额外切换三个 8 秒 MP4 播放列表条
 cd app
 VSASR_DEVICE_TEST_VIDEO=/path/to/long-video.mp4 \
 VSASR_DEVICE_TEST_PLAYLIST='/path/to/one.mp4|/path/to/two.mp4|/path/to/three.mp4' \
+VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION=1 \
 VSASR_DEVICE_TEST_REPORT=/tmp/vsasr-m20-macos-report.json \
 VSASR_DEVICE_LABEL=macOS-Apple-Silicon \
 flutter test integration_test/device_acceptance_test.dart -d macos
@@ -49,6 +56,8 @@ flutter test integration_test/device_acceptance_test.dart -d macos
 `VSASR_DEVICE_TEST_PLAYLIST` 使用 `|` 分隔，至少需要两个存在的文件；不设置时仍只验收
 `VSASR_DEVICE_TEST_VIDEO`，保持原有入口行为。报告会增加 `video_playlist.opened_items`，记录每个条目的
 打开耗时和读取时长，并在 `device` 节点记录架构、逻辑处理器、可读取的物理内存和推荐线程数。
+设置 `VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION=1` 后，会使用同一个视频（或播放列表首项）执行生产视频流式转写，
+并在报告中增加 `video_transcription` 诊断节点；未设置时该测试明确跳过。短视频 smoke 不能替代真实含语音的长视频验收。
 
 ## 尚未完成的手工清单
 
