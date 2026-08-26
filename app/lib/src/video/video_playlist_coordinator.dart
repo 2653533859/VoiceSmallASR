@@ -5,7 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
@@ -21,7 +21,8 @@ import 'package:vsasr_app/src/video/video_subtitle_cache.dart';
 typedef RequestTranslationDisclosure = Future<bool> Function();
 typedef TranslationPreferenceChanged = Future<void> Function(bool enabled);
 
-class VideoPlaylistCoordinator extends ChangeNotifier {
+class VideoPlaylistCoordinator extends ChangeNotifier
+    with WidgetsBindingObserver {
   VideoPlaylistCoordinator({
     required this.controller,
     required this.transcription,
@@ -67,6 +68,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
   bool _translationDisclosureAccepted = false;
   bool _initialized = false;
   bool _disposed = false;
+  bool _lifecycleSuspended = false;
 
   List<String> get playlist => List<String>.unmodifiable(_playlist);
 
@@ -87,6 +89,8 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
 
   bool get subtitleCacheEnabled => _subtitleCacheEnabled;
 
+  bool get lifecycleSuspended => _lifecycleSuspended;
+
   VideoSubtitleCache get subtitleCache => _subtitleCache;
 
   TranscriptionResult? resultFor(String path) => _playlistResults[path];
@@ -100,6 +104,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
   void init() {
     if (_initialized || _disposed) return;
     _initialized = true;
+    WidgetsBinding.instance.addObserver(this);
     controller.addListener(_onVideoChanged);
     transcription.addListener(onTranscriptionChanged);
     transcription.scheduler.addListener(onSchedulerChanged);
@@ -355,7 +360,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
   void requestPlaylistProcessing() {
     if (_disposed) return;
     _processingRequested = true;
-    if (_processingFuture != null) return;
+    if (_lifecycleSuspended || _processingFuture != null) return;
     final Future<void> future = _drainPlaylistProcessing();
     _processingFuture = future;
     unawaited(
@@ -367,7 +372,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
   }
 
   Future<void> _drainPlaylistProcessing() async {
-    while (_processingRequested && !_disposed) {
+    while (_processingRequested && !_disposed && !_lifecycleSuspended) {
       _processingRequested = false;
       await _processPlaylist(_playlistGeneration);
     }
@@ -375,6 +380,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
 
   Future<void> _processPlaylist(int generation) async {
     if (_disposed ||
+        _lifecycleSuspended ||
         _currentPlaylistIndex < 0 ||
         _currentPlaylistIndex >= _playlist.length) {
       return;
@@ -484,9 +490,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
           }
 
           Future<void> persistCheckpointNow() async {
-            if (!_subtitleCacheEnabled ||
-                generation != _playlistGeneration ||
-                lastCheckpointSeconds <= resumeAt.inMicroseconds / 1000000) {
+            if (!_subtitleCacheEnabled || generation != _playlistGeneration) {
               return;
             }
             final TranscriptionResult? value = _playlistResults[path];
@@ -534,7 +538,10 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
                   );
                 }
               },
-              isCancelled: () => _disposed || generation != _playlistGeneration,
+              isCancelled: () =>
+                  _disposed ||
+                  generation != _playlistGeneration ||
+                  _lifecycleSuspended,
             );
             await checkpointWrite;
             result = _mergeTranslations(result, _playlistResults[path]);
@@ -543,6 +550,13 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
           } on Object catch (error) {
             if (_disposed || generation != _playlistGeneration) return;
             await persistCheckpointNow();
+            if (_lifecycleSuspended) {
+              _partialPlaylistResults.add(path);
+              _setPlaylistStatus(path, '应用已暂停，字幕检查点已保存，唤醒后继续');
+              _processingPath = null;
+              _notifyListeners();
+              return;
+            }
             if (error is TranscriptionTaskPreempted) {
               _partialPlaylistResults.add(path);
               _waitingForTranscription = true;
@@ -819,6 +833,37 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
     );
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_disposed) return;
+    if (state == AppLifecycleState.resumed) {
+      if (!_lifecycleSuspended) return;
+      _lifecycleSuspended = false;
+      _notifyListeners();
+      if (_processingRequested || _processingPath != null) {
+        requestPlaylistProcessing();
+      }
+      return;
+    }
+    if (state != AppLifecycleState.hidden &&
+        state != AppLifecycleState.paused &&
+        state != AppLifecycleState.detached) {
+      return;
+    }
+    if (_lifecycleSuspended) return;
+    _lifecycleSuspended = true;
+    if (_processingFuture != null ||
+        _processingRequested ||
+        _processingPath != null) {
+      _processingRequested = true;
+      final String? path = _processingPath;
+      if (path != null) {
+        _setPlaylistStatus(path, '应用即将暂停，正在保存字幕检查点');
+      }
+    }
+    _notifyListeners();
+  }
+
   void _notifyListeners() {
     if (!_disposed) notifyListeners();
   }
@@ -829,6 +874,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier {
     _disposed = true;
     _playlistGeneration++;
     if (_initialized) {
+      WidgetsBinding.instance.removeObserver(this);
       controller.removeListener(_onVideoChanged);
       transcription.removeListener(onTranscriptionChanged);
       transcription.scheduler.removeListener(onSchedulerChanged);
