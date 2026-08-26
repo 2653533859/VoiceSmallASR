@@ -1,6 +1,6 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-26　　基线版本：v1.0.3　　下一目标：v1.0.4
+> 更新日期：2026-08-27　　基线版本：v1.0.4　　下一目标：M16 长视频稳定性
 
 本计划建立在三端个人使用版本已经可以打包发布的基础上。后续优先保证安装包可验证、无开发者证书环境可用，再增加项目管理和批量处理能力。
 
@@ -9,16 +9,16 @@
 - Python 端：离线多语种识别、CLI、实时 VAD、时间戳和字幕导出已完成；`pytest` 107 项通过。
 - Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；项目文件数据层、首页保存/打开、最近项目、Android SAF 字节读取、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 字幕导入和 M12 多文件队列/批量翻译/安全导出/文本缓存/队列恢复已接入；M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总报告、持续性能历史和自动说话人分离，M14 已加入视频流式字幕、播放列表和后续字幕预缓存；最近一次稳定化修复补充了长视频背压、播放列表任务取消、macOS 连续音频解码、播放器快捷键和崩溃规避；当前 `flutter analyze` 与 `flutter test` 通过，Flutter 测试共 247 项。
 - 平台验收：macOS ASR 与自动说话人分离真实模型、Android API 35 模拟器识别/播放与硬字幕编码、Windows CI 完整模型 E2E/桌面 smoke/硬字幕编码已通过；Android 真机和 Windows 用户桌面仍待验收。
-- 发布能力：`v1.0.3` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/ZIP，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`；最新发布 run 见当前审计记录。
+- 发布能力：`v1.0.4` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/ZIP，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`；最新发布 run 见当前审计记录。
 - macOS 本机安装历史：2026-08-21 曾安装并启动 `VoiceSmallASR 1.0.2 (build 4)`；构建脚本对嵌入 Framework 使用 ad-hoc 签名，不需要开发者证书，`codesign --verify --deep --strict` 通过。
 - 明确范围：个人使用，不做商店发布、公证和正式签名证书；真实第三方翻译 API 网络验收不作为自动化门禁。
 
-## 当前审计（2026-08-26）
+## 当前审计（2026-08-27）
 
-- 上一发布基线提交为 `5165ca1`（`fix: stabilize playlist transcription and video playback`），已推送到 `origin/main`；本次 M15 发布一致性改动尚未提交，完成后将以新提交创建 `v1.0.4` tag。
-- 本地 `flutter analyze`、全量 `flutter test`（247 项）和 macOS Release 构建均通过；云端 Publish Release run [`32652465543`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32652465543) 的质量门禁、Android APK/AAB、macOS DMG/ZIP、Windows 安装包和 Android 模拟器冷启动验收均通过。
+- `v1.0.4` 发布提交为 `57ae764`（`ci: enforce release artifact identity`），已推送到 `origin/main`，远程 `v1.0.4` tag 展开后指向同一提交。
+- 本地 `flutter analyze`、全量 `flutter test`（247 项）和 macOS Release 构建均通过；云端 Publish Release run [`32986322161`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32986322161) 的质量门禁、Android APK/AAB、macOS DMG/ZIP、Windows 安装包和 Android 模拟器冷启动验收均通过。
 - `v1.0.3` Release 的二进制资产由提交 `5165ca1` 构建，但远程同名 tag 仍指向更早提交 `db82e67`。这不影响当前个人使用安装包，但下一次发布必须使用新版本号并校验 tag、构建提交和 `BUILD_INFO.txt` 一致，避免源码快照与安装包不一致。
-- M15 当前已将应用版本升为 `1.0.4+4`，并为 Release workflow 增加 tag commit、既有 `BUILD_INFO.txt` commit 和 Android/macOS/Windows 包内版本校验；`v1.0.4` tag 及云端发布仍待本次提交推送后执行。
+- `v1.0.4` 已完成 M15 验收：Publish Release run [`32986322161`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32986322161) 的质量门禁、tag/构建提交一致性、Android/macOS/Windows 包内版本校验、三端构建、Android API 35 冷启动和 Release 上传均通过；`BUILD_INFO.txt` 的 Commit 为 `57ae7648df1125bbd0ffdfc24c12fd6cb066271b`，Release 资产包含 SHA-256 清单。
 - 已清理本地 `app/build`、`app/.dart_tool`、`app/macos/build` 及测试缓存；这些目录均为可再生产物，后续构建前会由 Flutter/Xcode 重新生成。
 - M10 的 Android 真机和 Windows 用户桌面仍未完成真实环境验收；它们不阻塞个人开发，但应作为兼容性数据来源持续记录。
 
@@ -193,12 +193,12 @@
 
 任务：
 
-- [x] 将应用版本号升级为 `1.0.4+4`；待提交推送后新建唯一的 `v1.0.4` tag，不复用已经指向其他提交的发布 tag。
+- [x] 将应用版本号升级为 `1.0.4+4`，并新建唯一的 `v1.0.4` tag；不复用已经指向其他提交的发布 tag。
 - [x] Release workflow 校验 tag commit 与 `GITHUB_SHA`，并在已有 Release 时校验 `BUILD_INFO.txt` 的 Commit；不一致时禁止上传或覆盖 Release 资产。
 - [x] 发布前自动核对 Android APK、macOS App 和 Windows 可执行文件版本号与 Release tag 一致。
-- [ ] 发布说明记录本次提交、构建编号、资产 SHA-256 和个人使用的未签名/Debug 签名策略。
+- [x] 发布说明记录本次提交、构建编号、资产 SHA-256 和个人使用的未签名/Debug 签名策略。
 
-验收标准：从 GitHub Release 下载的源码快照和全部安装包均来自同一个提交；重复触发同一 tag 时，如果提交不同则直接失败。
+验收结果：run [`32986322161`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32986322161) 和 [GitHub Release v1.0.4](https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.4) 已通过；从 GitHub Release 下载的源码快照和全部安装包来自提交 `57ae7648df1125bbd0ffdfc24c12fd6cb066271b`，重复触发同一 tag 时，tag 或既有 `BUILD_INFO.txt` 提交不一致会在质量门禁失败。
 
 ## M16 · 长视频转写稳定性（P1）
 
@@ -288,7 +288,7 @@ M14 视频实时字幕与播放列表
 
 每个阶段按“实现 → 代码审查 → 相关测试 → 文档同步 → 提交推送 → 必要时发布”完成，不把真实 API Key、签名证书或模型文件提交到仓库。
 
-## v1.0.3 之后的推荐执行顺序
+## v1.0.4 之后的推荐执行顺序
 
 ```text
 M15 发布一致性
