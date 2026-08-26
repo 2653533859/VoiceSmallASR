@@ -709,7 +709,7 @@ void RegisterAudioDecoderChannel(flutter::BinaryMessenger* messenger) {
           messenger, kChannelName,
           &flutter::StandardMethodCodec::GetInstance());
   channel->SetMethodCallHandler(
-      [window, streaming_worker](const flutter::MethodCall<flutter::EncodableValue>& call,
+      [window](const flutter::MethodCall<flutter::EncodableValue>& call,
                std::unique_ptr<MethodResultValue> result) {
         const bool streaming =
             call.method_name() == "openPcm16kStream" ||
