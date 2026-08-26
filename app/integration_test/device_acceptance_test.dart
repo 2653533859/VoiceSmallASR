@@ -1,9 +1,10 @@
-/// Android 真机 / Windows 用户桌面验收入口。
+/// Android 真机 / Windows 用户桌面 / macOS 验收入口。
 ///
 /// 该测试不会进入普通 `flutter test`，必须在目标设备或桌面上显式运行：
 ///
 /// ```bash
 /// VSASR_DEVICE_TEST_VIDEO=/path/to/input.mp4 \
+/// VSASR_DEVICE_TEST_PLAYLIST=/path/to/one.mp4\|/path/to/two.mp4 \
 /// VSASR_DEVICE_TEST_REPORT=/path/to/device_acceptance_report.json \
 /// flutter test integration_test/device_acceptance_test.dart -d <device-id>
 /// ```
@@ -38,6 +39,9 @@ import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 const String _definedAudio = String.fromEnvironment('VSASR_DEVICE_TEST_AUDIO');
 const String _definedVideo = String.fromEnvironment('VSASR_DEVICE_TEST_VIDEO');
+const String _definedPlaylist = String.fromEnvironment(
+  'VSASR_DEVICE_TEST_PLAYLIST',
+);
 const String _definedReport = String.fromEnvironment(
   'VSASR_DEVICE_TEST_REPORT',
 );
@@ -174,25 +178,48 @@ void main() {
   });
 
   testWidgets('真实 MP4 播放和视频音轨解码性能记录', (WidgetTester tester) async {
-    final String? videoPath = _setting(
+    final String? configuredVideoPath = _setting(
       _definedVideo,
       'VSASR_DEVICE_TEST_VIDEO',
     );
-    if (videoPath == null) {
-      markTestSkipped('未提供 VSASR_DEVICE_TEST_VIDEO');
+    final String? playlistDefinition = _setting(
+      _definedPlaylist,
+      'VSASR_DEVICE_TEST_PLAYLIST',
+    );
+    final List<String> playlistPaths = _playlistPaths(playlistDefinition);
+    if (configuredVideoPath == null && playlistPaths.isEmpty) {
+      markTestSkipped(
+        '未提供 VSASR_DEVICE_TEST_VIDEO 或 VSASR_DEVICE_TEST_PLAYLIST',
+      );
       return;
     }
+    if (playlistDefinition != null) {
+      expect(
+        playlistPaths.length,
+        greaterThanOrEqualTo(2),
+        reason: 'VSASR_DEVICE_TEST_PLAYLIST 至少需要两个以 | 分隔的视频路径',
+      );
+      for (final String path in playlistPaths) {
+        expect(File(path).existsSync(), isTrue, reason: '播放列表视频不存在：$path');
+      }
+    }
+    final String videoPath = configuredVideoPath ?? playlistPaths.first;
     final File video = File(videoPath);
     expect(video.existsSync(), isTrue, reason: '视频不存在：$videoPath');
 
     _recordProcessMemory(report, 'before_video_decode');
     final Stopwatch decodeWatch = Stopwatch()..start();
-    final Float32List samples = await const PlatformAudioDecoder().decodeFile(
-      videoPath,
-    );
+    int audioSampleCount = 0;
+    await for (final DecodedAudioChunk chunk
+        in const PlatformAudioDecoder().decodeFileChunks(
+          videoPath,
+          chunkDuration: const Duration(seconds: 30),
+        )) {
+      audioSampleCount += chunk.samples.length;
+    }
     decodeWatch.stop();
     _recordProcessMemory(report, 'after_video_decode');
-    expect(samples, isNotEmpty, reason: '视频没有可供原生解码的音轨');
+    expect(audioSampleCount, greaterThan(0), reason: '视频没有可供原生解码的音轨');
 
     final VideoPlaybackController player = VideoPlaybackController();
     try {
@@ -217,11 +244,38 @@ void main() {
       await player.playOrPause();
       report['video_playback'] = <String, Object?>{
         'path': videoPath,
-        'audio_sample_count': samples.length,
+        'audio_sample_count': audioSampleCount,
         'audio_decode_elapsed_ms': decodeWatch.elapsedMilliseconds,
         'open_elapsed_ms': openWatch.elapsedMilliseconds,
         'duration_seconds': duration.inMilliseconds / 1000,
       };
+      if (playlistPaths.isNotEmpty) {
+        final List<Map<String, Object?>> openedItems = <Map<String, Object?>>[];
+        final Iterable<String> pathsToSwitch = playlistPaths.first == videoPath
+            ? playlistPaths.skip(1)
+            : playlistPaths;
+        for (final String path in pathsToSwitch) {
+          final Stopwatch playlistOpenWatch = Stopwatch()..start();
+          await player.open(path);
+          await _waitUntil(
+            () =>
+                player.filePath == path &&
+                player.duration > const Duration(seconds: 1),
+            reason: '播放列表视频未能切换或读取时长：$path',
+          );
+          playlistOpenWatch.stop();
+          openedItems.add(<String, Object?>{
+            'path': path,
+            'open_elapsed_ms': playlistOpenWatch.elapsedMilliseconds,
+            'duration_seconds': player.duration.inMilliseconds / 1000,
+          });
+        }
+        report['video_playlist'] = <String, Object?>{
+          'paths': playlistPaths,
+          'switched_count': openedItems.length,
+          'opened_items': openedItems,
+        };
+      }
       await _writeReport(report, paths.root);
     } finally {
       player.dispose();
@@ -340,6 +394,15 @@ double? _positiveSetting(String defined, String name) {
   final String? value = _setting(defined, name);
   final double? parsed = value == null ? null : double.tryParse(value);
   return parsed == null || parsed <= 0 ? null : parsed;
+}
+
+List<String> _playlistPaths(String? definition) {
+  if (definition == null) return <String>[];
+  return definition
+      .split('|')
+      .map((String path) => path.trim())
+      .where((String path) => path.isNotEmpty)
+      .toList(growable: false);
 }
 
 void _recordProcessMemory(Map<String, Object?> report, String stage) {
