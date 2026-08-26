@@ -1,14 +1,14 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-27　　基线版本：v1.0.4　　下一目标：M17 Android/Windows 连续解码
+> 更新日期：2026-08-27　　基线版本：v1.0.4　　下一目标：M18 播放列表与字幕缓存管理
 
 本计划建立在三端个人使用版本已经可以打包发布的基础上。后续优先保证安装包可验证、无开发者证书环境可用，再增加项目管理和批量处理能力。
 
 ## 当前基线
 
 - Python 端：离线多语种识别、CLI、实时 VAD、时间戳和字幕导出已完成；`pytest` 107 项通过。
-- Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；项目文件数据层、首页保存/打开、最近项目、Android SAF 字节读取、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 字幕导入和 M12 多文件队列/批量翻译/安全导出/文本缓存/队列恢复已接入；M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总报告、持续性能历史和自动说话人分离，M14 已加入视频流式字幕、播放列表和后续字幕预缓存；M16 已加入共享任务调度、优先级让行、长视频背压、断点检查点、无进展看门狗、资源收尾和诊断报告；当前 `flutter analyze` 与 `flutter test` 通过，Flutter 测试共 252 项。
-- 平台验收：macOS ASR 与自动说话人分离真实模型、Android API 35 模拟器识别/播放与硬字幕编码、Windows CI 完整模型 E2E/桌面 smoke/硬字幕编码已通过；Android 真机和 Windows 用户桌面仍待验收。
+- Flutter 端：文件转写、实时字幕、视频播放、字幕编辑、双语导出、第三方 API 翻译、设置页和模型管理已完成；项目文件数据层、首页保存/打开、最近项目、Android SAF 字节读取、自动保存、异常恢复、媒体缺失重新定位、SRT/VTT/JSON 字幕导入和 M12 多文件队列/批量翻译/安全导出/文本缓存/队列恢复已接入；M13 已加入字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、桌面与 Android 硬字幕视频编码、文件转写性能诊断、批量/实时性能汇总报告、持续性能历史和自动说话人分离，M14 已加入视频流式字幕、播放列表和后续字幕预缓存；M16 已加入共享任务调度、优先级让行、长视频背压、断点检查点、无进展看门狗、资源收尾和诊断报告；M17 已接入 Android/Windows 连续原生解码协议；当前 `flutter analyze` 与 `flutter test` 通过，Flutter 测试共 253 项。
+- 平台验收：macOS ASR 与自动说话人分离真实模型、Android API 35 模拟器识别/播放与硬字幕编码、Windows CI 完整模型 E2E/桌面 smoke/硬字幕编码已通过；M17 Windows Release run 已完成连续解码改动的 MSVC 编译、安装包、桌面 smoke、硬字幕 smoke、产物校验和安装启动检查；Android 真机和 Windows 用户桌面仍待验收。
 - 发布能力：`v1.0.4` 已发布 Android APK/AAB、Windows 未签名安装包和 macOS 无开发者证书 DMG/ZIP，并上传 `SHA256SUMS.txt` 与 `BUILD_INFO.txt`；最新发布 run 见当前审计记录。
 - macOS 本机安装历史：2026-08-21 曾安装并启动 `VoiceSmallASR 1.0.2 (build 4)`；构建脚本对嵌入 Framework 使用 ad-hoc 签名，不需要开发者证书，`codesign --verify --deep --strict` 通过。
 - 明确范围：个人使用，不做商店发布、公证和正式签名证书；真实第三方翻译 API 网络验收不作为自动化门禁。
@@ -16,12 +16,13 @@
 ## 当前审计（2026-08-27）
 
 - `v1.0.4` 发布提交为 `57ae764`（`ci: enforce release artifact identity`），已推送到 `origin/main`，远程 `v1.0.4` tag 展开后指向同一提交。
-- 本地 `flutter analyze`、全量 `flutter test`（252 项）和 macOS Debug 构建均通过；云端 Publish Release run [`32986322161`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32986322161) 的质量门禁、Android APK/AAB、macOS DMG/ZIP、Windows 安装包和 Android 模拟器冷启动验收均通过。
+- 本地 `flutter analyze`、全量 `flutter test`（253 项）、Android `:app:compileDebugKotlin` 和 macOS Debug 构建均通过；M17 Windows Release run [`32994030721`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32994030721) 已通过 MSVC 编译、安装包、桌面 smoke、硬字幕 smoke、产物校验和安装启动检查；云端 Publish Release run [`32986322161`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32986322161) 的 v1.0.4 质量门禁、三端包和 Android 模拟器冷启动验收已通过。
 - `v1.0.3` Release 的二进制资产由提交 `5165ca1` 构建，但远程同名 tag 仍指向更早提交 `db82e67`。这不影响当前个人使用安装包，但下一次发布必须使用新版本号并校验 tag、构建提交和 `BUILD_INFO.txt` 一致，避免源码快照与安装包不一致。
 - `v1.0.4` 已完成 M15 验收：Publish Release run [`32986322161`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32986322161) 的质量门禁、tag/构建提交一致性、Android/macOS/Windows 包内版本校验、三端构建、Android API 35 冷启动和 Release 上传均通过；`BUILD_INFO.txt` 的 Commit 为 `57ae7648df1125bbd0ffdfc24c12fd6cb066271b`，Release 资产包含 SHA-256 清单。
 - 已清理本地 `app/build`、`app/.dart_tool`、`app/macos/build` 及测试缓存；这些目录均为可再生产物，后续构建前会由 Flutter/Xcode 重新生成。
 - M10 的 Android 真机和 Windows 用户桌面仍未完成真实环境验收；它们不阻塞个人开发，但应作为兼容性数据来源持续记录。
 - M16 已完成：提交 [`f36fa52`](https://github.com/2653533859/VoiceSmallASR/commit/f36fa52) 将实时字幕、当前视频、文件转写和播放列表预缓存接入共享调度器，后台任务遇到高优先级任务会协作暂停；视频流式解码增加检查点恢复、取消/收尾超时和无进展错误，macOS 检查点续读复用同一原生解码会话；视频页在周期检查点之外，遇到抢占或失败也会保存最近进度；诊断报告保留队列等待、解码/识别耗时、峰值 RSS、已处理采样数和最后进度。
+- M17 已完成：提交 [`2575a37`](https://github.com/2653533859/VoiceSmallASR/commit/2575a37) 为 Android MediaExtractor/MediaCodec 和 Windows Media Foundation 增加 `openPcm16kStream`、`readPcm16kStream`、`closePcm16kStream` 连续会话，Dart 端在三端统一使用该协议；连续缓冲支持增量混声道与重采样，EOF、坏文件、无音轨、超时和异常均回传可展示错误，读取失败会释放会话。随后提交 [`a575456`](https://github.com/2653533859/VoiceSmallASR/commit/a575456) 修复 Windows 静态 worker 的 MSVC lambda 捕获错误。Android Kotlin 编译、Dart 单测、macOS Debug 构建以及 Windows Release 云端 run [`32994030721`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32994030721) 的 MSVC/桌面 smoke/安装启动均通过；真实长视频资源和 Android 真机仍列入 M20。
 
 ## 已完成的稳定化修复
 
@@ -216,18 +217,18 @@
 
 验收结果：代码提交 [`f36fa52`](https://github.com/2653533859/VoiceSmallASR/commit/f36fa52) 已通过 `flutter analyze`、全量 Flutter 测试 252 项和 macOS Debug 构建；已覆盖调度优先级、实时启动取消、缓存检查点读写、看门狗失败和视频页回归。真实 400 MB/1～2 小时视频及三条播放列表的长时压力数据尚未生成，继续列入 M20 真实设备验收。
 
-## M17 · Android/Windows 连续音频解码（P1）
+## M17 · Android/Windows 连续音频解码（P1，已完成）
 
 目标：让三端都复用单个原生解码会话，减少长视频反复初始化解码器造成的耗时和资源风险。
 
 任务：
 
-- [ ] Android 和 Windows 实现与 macOS 相同的 `open/read/close` 连续解码协议。
-- [ ] 统一三端的 EOF、取消、超时、损坏文件、无音轨和原生解码失败错误。
-- [ ] 为每个平台增加连续读取、取消释放、异常后再次打开和多音轨选择测试。
-- [ ] 在真实长视频上比较单块解码耗时、总耗时、句柄数量和峰值内存。
+- [x] Android 和 Windows 实现与 macOS 相同的 `open/read/close` 连续解码协议，Dart 端已按平台切换到统一会话入口。
+- [x] 统一三端的 EOF、取消收尾、超时、损坏文件、无音轨和原生解码失败回传；Android/Windows 读失败会清理会话，Dart `finally` 会继续发送 close。
+- [x] 增加 Dart 连续读取与检查点位置回归测试，完成 Android Kotlin 编译以及 Windows 云端 MSVC、桌面 smoke 和安装启动验证。
+- [ ] 在真实长视频上比较单块解码耗时、总耗时、句柄数量和峰值内存，连同 400 MB/1～2 小时视频及三条播放列表压力数据纳入 M20。
 
-验收标准：每个视频只建立一个解码器；连续读取过程中不重复打开媒体；取消或异常后不会残留原生会话；Android、Windows、macOS 的分块协议行为一致。
+验收结果：代码提交 [`2575a37`](https://github.com/2653533859/VoiceSmallASR/commit/2575a37) 与 Windows 修复提交 [`a575456`](https://github.com/2653533859/VoiceSmallASR/commit/a575456) 已推送；本地 `flutter analyze`、全量 Flutter 测试 253 项、Android `:app:compileDebugKotlin` 和 macOS Debug 构建通过；Windows Release run [`32994030721`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32994030721) 的 MSVC 编译、安装包、桌面 smoke、硬字幕 smoke、产物校验和安装启动检查通过。真实长视频资源和 Android 真机仍列入 M20。
 
 ## M18 · 播放列表和字幕缓存管理（P2）
 
@@ -305,4 +306,4 @@ M19 页面拆分与交互收敛
 M20 真实设备兼容性验收
 ```
 
-在 M17 完成前，暂不建议继续扩展更多视频字幕功能或升级核心音视频依赖；个人使用范围内也不投入商店签名、公证和正式发布证书。
+在 M18 完成前，暂不建议继续扩展更多视频字幕功能或升级核心音视频依赖；个人使用范围内也不投入商店签名、公证和正式发布证书。
