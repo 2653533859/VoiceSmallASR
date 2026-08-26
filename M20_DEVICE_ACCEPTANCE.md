@@ -8,7 +8,7 @@
 
 | 平台 | 状态 | 说明 |
 | --- | --- | --- |
-| macOS Apple Silicon | 部分完成 | 长视频连续音轨解码、播放器打开/推进、两个播放列表条目切换，以及生命周期暂停时保存检查点、唤醒后继续的协调器回归已通过；真实睡眠唤醒和辅助功能语义树仍需手工验收 |
+| macOS Apple Silicon | 部分完成 | 长视频连续音轨解码、播放器打开/推进、三个播放列表条目切换，以及生命周期暂停时保存检查点、唤醒后继续的协调器回归已通过；真实睡眠唤醒和辅助功能语义树仍需手工验收 |
 | Android 真机 | 待设备 | 当前开发机没有可用 Android 真机；API 35 模拟器结果不能替代真机 |
 | Windows 用户桌面 | 待设备 | 当前开发机没有 Windows 用户桌面；CI 安装包 smoke 不能替代用户环境 |
 
@@ -17,7 +17,7 @@ M20 尚未完成，不能据此宣称三平台真实设备兼容性已经验收�
 ## macOS 自动化结果
 
 2026-08-27 在 macOS `26.5.2 (Build 25F84)` Apple Silicon 上执行了 1 小时、约 400 MiB 的
-H.264 + AAC 合成压力视频，并额外切换两个 8 秒 MP4 播放列表条目。媒体由 `ffmpeg` 的测试图像和正弦音频生成，
+H.264 + AAC 合成压力视频，并额外切换三个 8 秒 MP4 播放列表条目。媒体由 `ffmpeg` 的测试图像和正弦音频生成，
 用于解码/播放压力测试，不代表真实语音识别质量。
 
 报告摘要：
@@ -27,7 +27,7 @@ H.264 + AAC 合成压力视频，并额外切换两个 8 秒 MP4 播放列表条
 - 1 小时视频大小 `419,746,119` bytes，读取时长 `3600.083` 秒。
 - 连续音轨解码读取 `57,599,632` samples，耗时约 `2,208` ms。
 - 播放器打开耗时 `537` ms，并成功推进播放位置。
-- 两个播放列表条目均成功打开，读取时长均为 `8.021` 秒，打开耗时 `156` ms / `113` ms。
+- 三个播放列表条目均成功打开，读取时长均为 `8.021` 秒，打开耗时 `151` ms / `113` ms / `113` ms。
 - 连续解码后进程 RSS 约 `741` MB（约 `707` MiB）；播放器打开后约 `806` MB（约 `769` MiB）。测试已改为分块读取音轨，避免把整小时音频一次性放入 Dart `Float32List`。
 - 播放器 widget 语义回归通过：字幕显示模式、当前倍速、当前位置、可调播放进度均有稳定标签；播放进度的辅助功能增减操作按 10 秒步进。
 - 播放列表协调器回归通过：应用进入 `hidden`、`paused` 或 `detached` 时停止继续读取音频并保存当前检查点，恢复到 `resumed` 后重新排队；首个 30 秒检查点之前的短片段也会持久化，避免暂停时丢失进度。
@@ -40,7 +40,7 @@ H.264 + AAC 合成压力视频，并额外切换两个 8 秒 MP4 播放列表条
 ```bash
 cd app
 VSASR_DEVICE_TEST_VIDEO=/path/to/long-video.mp4 \
-VSASR_DEVICE_TEST_PLAYLIST='/path/to/one.mp4|/path/to/two.mp4' \
+VSASR_DEVICE_TEST_PLAYLIST='/path/to/one.mp4|/path/to/two.mp4|/path/to/three.mp4' \
 VSASR_DEVICE_TEST_REPORT=/tmp/vsasr-m20-macos-report.json \
 VSASR_DEVICE_LABEL=macOS-Apple-Silicon \
 flutter test integration_test/device_acceptance_test.dart -d macos
@@ -80,6 +80,6 @@ Android 版本、输入格式和是否出现持续积压。
 
 ## 判定与下一步
 
-本次 macOS 自动化结果证明分块解码、播放列表切换和生命周期暂停/恢复代码路径在当前开发机上可运行，但不移除 M20 的 Android 真机、Windows
+本次 macOS 自动化结果证明分块解码、三个播放列表条目切换和生命周期暂停/恢复代码路径在当前开发机上可运行，但不移除 M20 的 Android 真机、Windows
 用户桌面、macOS 睡眠唤醒和辅助功能待验收项。下一步应先获取两类真实设备，再按平台分别补齐报告；若发现问题，记录设备、输入格式、
 复现步骤、日志和报告路径。
