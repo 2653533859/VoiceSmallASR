@@ -24,6 +24,8 @@ import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/batch_page.dart';
 import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
+import 'package:vsasr_app/src/ui/home_export_coordinator.dart';
+import 'package:vsasr_app/src/ui/home_workflow_coordinator.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
@@ -122,295 +124,55 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  late final BatchTranscriptionController _batch;
-  late final PerformanceLogStore _performanceLogRepository;
+class _HomePageState extends State<HomePage> {
+  late final HomeWorkflowCoordinator _workflow;
+  final HomeExportCoordinator _exporter = HomeExportCoordinator();
   bool _translationDisclosureAccepted = false;
   bool _liveTranslationDisclosureAccepted = false;
-  List<String> _recentProjects = <String>[];
-  int _recentProjectsGeneration = 0;
-  Timer? _autosaveTimer;
-  Future<void>? _autosaveFuture;
-  int _autosaveRequestedRevision = 0;
-  int _autosavedRevision = 0;
-  bool _autosaveFailureNotified = false;
-  Timer? _batchQueueTimer;
-  Future<void>? _batchQueueFuture;
-  int _batchQueueRequestedRevision = 0;
-  int _batchQueueSavedRevision = 0;
-  bool _batchQueueFailureNotified = false;
-  bool _batchQueueRecoveryPromptShown = false;
-  final List<PerformanceLogEntry> _performanceHistory = <PerformanceLogEntry>[];
-  final Set<String> _performanceHistoryKeys = <String>{};
-  Future<void>? _performanceHistoryLoad;
-  Future<void> _performanceWriteChain = Future<void>.value();
-  bool _batchWasRunning = false;
-  bool _liveWasBusy = false;
-  bool _recoveryPromptShown = false;
-  bool _detached = false;
-  bool _sessionEnded = false;
 
   AppSettingsRepository get _settingsRepository =>
       widget.settings ?? AppSettingsRepository();
 
-  ProjectAutosaveStore get _autosaveRepository =>
-      widget.autosaveStore ?? const FileProjectAutosaveStore();
-
   BatchTranslationCache get _batchTranslationCache =>
       widget.batchTranslationCache ?? const BatchTranslationCache();
-
-  BatchQueueStore get _batchQueueRepository =>
-      widget.batchQueueStore ?? const BatchQueueStore();
 
   @override
   void initState() {
     super.initState();
-    _batch = BatchTranscriptionController(transcriber: widget.controller);
-    _performanceLogRepository =
-        widget.performanceLogStore ?? PerformanceLogStore();
-    WidgetsBinding.instance.addObserver(this);
-    widget.controller.addListener(_onControllerChanged);
-    _batch.addListener(_onBatchChanged);
-    final LiveController? live = widget.live;
-    if (live != null) {
-      _liveWasBusy = live.busy;
-      live.addListener(_onLiveChanged);
-    }
-    _performanceHistoryLoad = _loadPerformanceHistory();
+    _workflow = HomeWorkflowCoordinator(
+      controller: widget.controller,
+      live: widget.live,
+      settings: widget.settings,
+      autosave: widget.autosaveStore ?? const FileProjectAutosaveStore(),
+      batchQueue: widget.batchQueueStore ?? const BatchQueueStore(),
+      performanceLog: widget.performanceLogStore ?? PerformanceLogStore(),
+      onError: _showWorkflowError,
+    )..init();
     // build 之后再查模型，避免在 initState 里同步 notifyListeners。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshModel();
-      unawaited(_loadRecentProjects());
-      unawaited(_loadRecovery());
-    });
-  }
-
-  void _onControllerChanged() {
-    if (_detached) return;
-    final TranscribeController controller = widget.controller;
-    final PerformanceReport? report = controller.performanceReport;
-    if (report != null) {
-      _recordPerformance('file', report.toJson());
-    }
-    if (controller.result == null ||
-        controller.projectRevision <= _autosavedRevision) {
-      return;
-    }
-    _autosaveRequestedRevision = controller.projectRevision;
-    _autosaveFailureNotified = false;
-    _autosaveTimer?.cancel();
-    _autosaveTimer = Timer(const Duration(milliseconds: 400), () {
-      _autosaveTimer = null;
-      unawaited(_flushAutosave());
-    });
-  }
-
-  Future<void> _flushAutosave() async {
-    if (_detached || _autosaveFuture != null) return;
-    final TranscribeController controller = widget.controller;
-    final int revision = _autosaveRequestedRevision;
-    if (revision <= _autosavedRevision || controller.result == null) return;
-    final VsasrProject project;
-    try {
-      project = controller.projectSnapshot;
-    } on Object {
-      return;
-    }
-    final Future<void> operation = _autosaveRepository.save(project);
-    _autosaveFuture = operation;
-    try {
-      await operation;
-      _autosavedRevision = revision;
-    } on Object catch (error) {
-      if (mounted && !_autosaveFailureNotified) {
-        _autosaveFailureNotified = true;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('自动保存失败，仍可手动保存项目：$error')));
-      }
-    } finally {
-      if (identical(_autosaveFuture, operation)) _autosaveFuture = null;
-      if (!_detached &&
-          controller.projectRevision > _autosavedRevision &&
-          controller.result != null) {
-        _onControllerChanged();
-      }
-    }
-  }
-
-  void _onBatchChanged() {
-    if (_detached) return;
-    final bool wasRunning = _batchWasRunning;
-    _batchWasRunning = _batch.running;
-    if (wasRunning && !_batch.running) {
-      final BatchPerformanceReport? report = _batch.performanceReport;
-      if (report != null) _recordPerformance('batch', report.toJson());
-    }
-    _batchQueueRequestedRevision++;
-    _batchQueueFailureNotified = false;
-    _batchQueueTimer?.cancel();
-    _batchQueueTimer = Timer(const Duration(milliseconds: 400), () {
-      _batchQueueTimer = null;
-      unawaited(_flushBatchQueue());
-    });
-  }
-
-  void _onLiveChanged() {
-    if (_detached) return;
-    final LiveController? live = widget.live;
-    if (live == null) return;
-    final bool wasBusy = _liveWasBusy;
-    _liveWasBusy = live.busy;
-    if (wasBusy && !live.busy) {
-      final LivePerformanceReport? report = live.performanceReport;
-      if (report != null) _recordPerformance('live', report.toJson());
-    }
-  }
-
-  Future<void> _loadPerformanceHistory() async {
-    try {
-      final List<PerformanceLogEntry> entries = await _performanceLogRepository
-          .load();
-      if (_detached) return;
-      _performanceHistory
-        ..clear()
-        ..addAll(entries.reversed);
-      _performanceHistoryKeys
-        ..clear()
-        ..addAll(entries.map((PerformanceLogEntry entry) => entry.key));
-      if (mounted) setState(() {});
-    } on Object {
-      // 性能历史是辅助信息，损坏或不可写时不影响主流程。
-    }
-  }
-
-  void _recordPerformance(String kind, Map<String, Object?> report) {
-    final Object? rawGeneratedAt = report['generated_at'];
-    if (rawGeneratedAt is! String) return;
-    final DateTime? generatedAt = DateTime.tryParse(rawGeneratedAt);
-    if (generatedAt == null) return;
-    unawaited(
-      _persistPerformance(
-        PerformanceLogEntry(
-          kind: kind,
-          generatedAt: generatedAt,
-          report: report,
+      unawaited(_workflow.loadRecentProjects());
+      unawaited(
+        _workflow.loadRecovery(
+          onProjectRecovery: _showProjectRecoveryPrompt,
+          onBatchRecovery: _showBatchRecoveryPrompt,
         ),
-      ),
-    );
-  }
-
-  Future<void> _persistPerformance(PerformanceLogEntry entry) async {
-    final Future<void>? loading = _performanceHistoryLoad;
-    if (loading != null) await loading;
-    if (_detached || !_performanceHistoryKeys.add(entry.key)) return;
-
-    final Future<void> previous = _performanceWriteChain;
-    final Future<void> operation = previous.then<void>((_) async {
-      if (_detached) return;
-      await _performanceLogRepository.append(entry);
-      if (!mounted) return;
-      setState(() {
-        _performanceHistory.removeWhere(
-          (PerformanceLogEntry item) => item.key == entry.key,
-        );
-        _performanceHistory.insert(0, entry);
-      });
+      );
     });
-    _performanceWriteChain = operation.catchError((Object _) {});
-    try {
-      await operation;
-    } on Object {
-      _performanceHistoryKeys.remove(entry.key);
-    }
   }
 
-  Future<void> _flushBatchQueue({bool force = false}) async {
-    if (!force && _detached) return;
-    final Future<void>? running = _batchQueueFuture;
-    if (running != null) {
-      try {
-        await running;
-      } on Object {
-        // 另一个写入失败时，本次也按辅助持久化失败处理。
-      }
-      if (!force || _batchQueueRequestedRevision <= _batchQueueSavedRevision) {
-        return;
-      }
-    }
-    final int revision = _batchQueueRequestedRevision;
-    if (revision <= _batchQueueSavedRevision) return;
-    final BatchQueueSnapshot snapshot = BatchQueueSnapshot(items: _batch.items);
-    final Future<void> operation = _batchQueueRepository.save(snapshot);
-    _batchQueueFuture = operation;
-    try {
-      await operation;
-      _batchQueueSavedRevision = revision;
-    } on Object catch (error) {
-      if (mounted && !_batchQueueFailureNotified) {
-        _batchQueueFailureNotified = true;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('批量任务自动保存失败：$error')));
-      }
-    } finally {
-      if (identical(_batchQueueFuture, operation)) _batchQueueFuture = null;
-      if (!_detached &&
-          _batchQueueRequestedRevision > _batchQueueSavedRevision) {
-        _batchQueueTimer?.cancel();
-        _batchQueueTimer = Timer(const Duration(milliseconds: 400), () {
-          _batchQueueTimer = null;
-          unawaited(_flushBatchQueue());
-        });
-      }
-    }
+  void _showWorkflowError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _loadRecovery() async {
-    bool unclean = false;
-    try {
-      unclean = await _autosaveRepository.wasPreviousSessionUnclean();
-      await _autosaveRepository.beginSession();
-      if (_detached) {
-        await _autosaveRepository.endSession();
-        return;
-      }
-      _sessionEnded = false;
-      if (!unclean) return;
-      final VsasrProject? project = await _autosaveRepository.load();
-      if (mounted && project != null && !_detached) {
-        await _showRecoveryPrompt(project);
-      }
-    } on Object {
-      // 恢复快照是辅助数据，读取失败不能阻塞主界面启动。
-    }
-    if (unclean && mounted && !_detached) {
-      await _loadBatchQueueRecovery();
-    }
-  }
-
-  Future<void> _loadBatchQueueRecovery() async {
-    if (_batchQueueRecoveryPromptShown) return;
-    final BatchQueueSnapshot? snapshot;
-    try {
-      snapshot = await _batchQueueRepository.load();
-    } on Object {
-      return;
-    }
-    if (!mounted ||
-        _detached ||
-        snapshot == null ||
-        !snapshot.hasRecoverableWork) {
-      return;
-    }
-    _batchQueueRecoveryPromptShown = true;
-    final int pendingCount = snapshot.items
-        .where(
-          (BatchItem item) =>
-              item.status != BatchItemStatus.completed &&
-              item.status != BatchItemStatus.translated &&
-              item.status != BatchItemStatus.cancelled,
-        )
-        .length;
-    final bool? recover = await showDialog<bool>(
+  Future<bool?> _showBatchRecoveryPrompt(
+    BatchQueueSnapshot snapshot,
+    int pendingCount,
+  ) {
+    if (!mounted) return Future<bool?>.value();
+    return showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) => AlertDialog(
@@ -428,32 +190,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ],
       ),
     );
-    if (!mounted) return;
-    if (recover == true) {
-      try {
-        _batch.restore(snapshot.items);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已恢复 ${snapshot.items.length} 个批量任务')),
-        );
-      } on Object catch (error) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('恢复批量任务失败：$error')));
-      }
-      return;
-    }
-    if (recover == false) {
-      _batch.clear();
-      try {
-        await _batchQueueRepository.clear();
-      } on Object {
-        // 用户已明确放弃；清理失败不阻塞主界面继续使用。
-      }
-    }
   }
 
-  Future<void> _showRecoveryPrompt(VsasrProject project) async {
-    if (_recoveryPromptShown) return;
-    _recoveryPromptShown = true;
+  Future<bool?> _showProjectRecoveryPrompt(VsasrProject project) async {
+    if (!mounted) return null;
     final String mediaName = project.mediaPath == null
         ? '未关联媒体文件'
         : p.basename(project.mediaPath!);
@@ -475,141 +215,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ],
       ),
     );
-    if (!mounted) return;
-    if (recover == false) {
-      try {
-        await _autosaveRepository.clear();
-      } on Object {
-        // 用户已明确放弃；清理失败不影响主界面继续使用。
-      }
-      return;
-    }
-    if (recover != true) return;
+    if (!mounted || recover != true) return recover;
     try {
       await widget.controller.loadProject(project);
       await _checkProjectMedia();
-      if (!mounted) return;
+      if (!mounted) return null;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已恢复上次自动保存的项目')));
+      return true;
     } on Object catch (error) {
-      if (!mounted) return;
+      if (!mounted) return null;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('恢复项目失败：$error')));
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached) {
-      _detached = true;
-      _autosaveTimer?.cancel();
-      unawaited(_endSessionOnExit());
-      return;
-    }
-    if (state == AppLifecycleState.resumed && _detached) {
-      _detached = false;
-      unawaited(_beginSession());
-    }
-  }
-
-  Future<void> _beginSession() async {
-    try {
-      await _autosaveRepository.beginSession();
-      _sessionEnded = false;
-    } on Object {
-      // 会话锁只是恢复提示的辅助信息，写入失败不阻塞主流程。
-    }
-  }
-
-  Future<void> _endSessionOnExit() async {
-    if (_sessionEnded) return;
-    _sessionEnded = true;
-    _batchQueueTimer?.cancel();
-    try {
-      await _autosaveFuture;
-    } on Object {
-      // 当前写入失败也不应阻止结束会话。
-    }
-    try {
-      await _flushBatchQueue(force: true);
-    } on Object {
-      // 队列快照是辅助数据，写入失败不应阻止结束会话。
-    }
-    try {
-      await _autosaveRepository.endSession();
-    } on Object {
-      // 进程退出时无法保证平台文件操作完成；快照仍保留作下次兜底。
-    }
-  }
-
-  Future<void> _loadRecentProjects() async {
-    final int generation = _recentProjectsGeneration;
-    try {
-      final List<String> projects = await _settingsRepository
-          .loadRecentProjects();
-      if (!mounted) return;
-      if (generation != _recentProjectsGeneration) return;
-      setState(() => _recentProjects = projects);
-    } on Object {
-      // 最近项目只是辅助入口，偏好存储不可用时不影响主流程。
-    }
-  }
-
-  Future<void> _rememberRecentProject(String path) async {
-    final String? normalizedPath = _normalizeRecentProjectPath(path);
-    if (normalizedPath == null) return;
-    final int generation = ++_recentProjectsGeneration;
-    try {
-      final List<String> projects = await _settingsRepository
-          .rememberRecentProject(normalizedPath);
-      if (!mounted) return;
-      if (generation != _recentProjectsGeneration) return;
-      setState(() => _recentProjects = projects);
-    } on Object {
-      // 保存/打开已成功时，最近项目写入失败不应覆盖主结果。
-    }
-  }
-
-  /// 项目文件的默认读取器使用 dart:io；外部 URI 会先复制到应用支持目录。
-  String? _normalizeRecentProjectPath(String path) {
-    final String value = path.trim();
-    if (value.isEmpty) return null;
-    if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(value)) return value;
-    final Uri? uri = Uri.tryParse(value);
-    if (uri == null || uri.scheme.isEmpty) return value;
-    if (uri.scheme == 'file') {
-      try {
-        return uri.toFilePath();
-      } on Object {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  Future<String?> _projectPathForRecent({
-    required VsasrProject project,
-    required String? externalPath,
-    required String identity,
-    bool refreshCache = false,
-  }) async {
-    if (Platform.isAndroid &&
-        externalPath != null &&
-        _recentProjects.contains(externalPath) &&
-        !refreshCache) {
-      return externalPath;
-    }
-    if (!Platform.isAndroid && externalPath != null) {
-      final String? normalized = _normalizeRecentProjectPath(externalPath);
-      if (normalized != null) return normalized;
-    }
-    try {
-      return await const ProjectFileStore().cacheForRecentProject(
-        project,
-        identity: identity,
-      );
-    } on Object {
-      // 最近项目只是辅助入口，缓存失败不应阻断项目打开或保存。
       return null;
     }
   }
@@ -646,7 +263,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => BatchPage(
-          controller: _batch,
+          controller: _workflow.batch,
           pickFiles: _pickBatchFiles,
           onTranslate: _translateBatch,
           onExport: _exportBatch,
@@ -780,13 +397,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await widget.controller.loadProject(project);
       await _checkProjectMedia();
       final VsasrProject currentProject = widget.controller.projectSnapshot;
-      final String? recentPath = await _projectPathForRecent(
+      final String? recentPath = await _workflow.projectPathForRecent(
         project: currentProject,
         externalPath: selected.path,
         identity: selected.path ?? selected.name,
         refreshCache: currentProject.mediaPath != project.mediaPath,
       );
-      if (recentPath != null) await _rememberRecentProject(recentPath);
+      if (recentPath != null) {
+        await _workflow.rememberRecentProject(recentPath);
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('已打开项目：${selected.name}')));
@@ -799,7 +418,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<bool> _mediaFileExists(String? path) async {
     if (path == null) return false;
-    final String? normalized = _normalizeRecentProjectPath(path);
+    final String? normalized = _workflow.normalizeRecentProjectPath(path);
     if (normalized == null) return false;
     return widget.mediaFileExists?.call(normalized) ??
         File(normalized).exists();
@@ -829,7 +448,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted || relocate != true) return;
     final String? path = await _pickFile();
     if (!mounted || path == null) return;
-    final String? normalized = _normalizeRecentProjectPath(path);
+    final String? normalized = _workflow.normalizeRecentProjectPath(path);
     if (normalized == null || !await _mediaFileExists(normalized)) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -855,12 +474,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         dialogTitle: '保存 VoiceSmallASR 项目',
       );
       if (saved != null) {
-        final String? recentPath = await _projectPathForRecent(
+        final String? recentPath = await _workflow.projectPathForRecent(
           project: project,
           externalPath: saved,
           identity: saved,
         );
-        if (recentPath != null) await _rememberRecentProject(recentPath);
+        if (recentPath != null) {
+          await _workflow.rememberRecentProject(recentPath);
+        }
       }
       if (saved != null && mounted) {
         ScaffoldMessenger.of(context)
@@ -958,7 +579,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _showBatchPerformanceReport() async {
-    final BatchPerformanceReport? report = _batch.performanceReport;
+    final BatchPerformanceReport? report = _workflow.batch.performanceReport;
     if (report == null || !mounted) return;
     final String? action = await showDialog<String>(
       context: context,
@@ -1048,15 +669,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         content: SizedBox(
           width: double.maxFinite,
           height: 360,
-          child: _performanceHistory.isEmpty
+          child: _workflow.performanceHistory.isEmpty
               ? const Center(child: Text('暂无性能历史记录'))
               : ListView.separated(
-                  itemCount: _performanceHistory.length,
+                  itemCount: _workflow.performanceHistory.length,
                   separatorBuilder: (BuildContext context, int index) =>
                       const Divider(height: 1),
                   itemBuilder: (BuildContext context, int index) {
                     final PerformanceLogEntry entry =
-                        _performanceHistory[index];
+                        _workflow.performanceHistory[index];
                     return ListTile(
                       title: Text(entry.label),
                       subtitle: Text(entry.generatedAt.toLocal().toString()),
@@ -1068,7 +689,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         actions: <Widget>[
           TextButton(
             key: const Key('clearPerformanceHistory'),
-            onPressed: _performanceHistory.isEmpty
+            onPressed: _workflow.performanceHistory.isEmpty
                 ? null
                 : () => Navigator.of(context).pop('clear'),
             child: const Text('清空历史'),
@@ -1082,13 +703,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
     if (selected == 'clear') {
       try {
-        await _performanceWriteChain;
-        await _performanceLogRepository.clear();
+        await _workflow.clearPerformanceHistory();
         if (!mounted) return;
-        setState(() {
-          _performanceHistory.clear();
-          _performanceHistoryKeys.clear();
-        });
       } on Object catch (error) {
         if (!mounted) return;
         ScaffoldMessenger.of(context)
@@ -1120,87 +736,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _exportBatch(String format) async {
-    final String normalizedFormat = format.trim().toLowerCase();
-    if (!kSubtitleFormats.contains(normalizedFormat)) {
-      throw ArgumentError.value(format, 'format', '不支持的批量导出格式');
-    }
-    final List<BatchItem> exportable = _batch.items
-        .where(
-          (BatchItem item) =>
-              (item.status == BatchItemStatus.completed ||
-                  item.status == BatchItemStatus.translated) &&
-              item.result != null,
-        )
-        .toList(growable: false);
-    if (exportable.isEmpty) return;
-
-    final Set<String> usedBaseNames = <String>{};
-    int exported = 0;
-    int failed = 0;
-    bool cancelled = false;
-    Object? lastError;
-    for (int index = 0; index < exportable.length; index++) {
-      final BatchItem item = exportable[index];
-      final TranscriptionResult result = item.result!;
-      final String baseName = _batchExportBaseName(
-        item.path,
-        usedBaseNames,
-        fallbackIndex: index + 1,
-      );
-      final String fileName = '$baseName.$normalizedFormat';
-      try {
-        final String? saved = await _saveFile(
-          fileName,
-          renderSubtitles(result, normalizedFormat),
-          dialogTitle: '批量导出（${index + 1}/${exportable.length}）',
-        );
-        if (saved == null) {
-          cancelled = true;
-          break;
-        }
-        exported++;
-      } on Object catch (error) {
-        failed++;
-        lastError = error;
-      }
-    }
+    final HomeBatchExportSummary summary = await _exporter.exportBatch(
+      items: _workflow.batch.items,
+      format: format,
+      saveFile: _saveFile,
+    );
     if (!mounted) return;
     final String message;
-    if (cancelled) {
-      message = '已导出 $exported/${exportable.length} 个文件，已取消剩余导出';
-    } else if (failed > 0) {
-      message = '批量导出完成：成功 $exported 个，失败 $failed 个：$lastError';
+    if (summary.cancelled) {
+      message =
+          '已导出 ${summary.exportedCount}/${summary.totalCount} 个文件，已取消剩余导出';
+    } else if (summary.failedCount > 0) {
+      message =
+          '批量导出完成：成功 ${summary.exportedCount} 个，失败 ${summary.failedCount} 个：${summary.lastError}';
     } else {
-      message = '已批量导出 $exported 个文件';
+      message = '已批量导出 ${summary.exportedCount} 个文件';
     }
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  String _batchExportBaseName(
-    String path,
-    Set<String> used, {
-    required int fallbackIndex,
-  }) {
-    String base = p.basenameWithoutExtension(path).trim();
-    base = base
-        .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')
-        .replaceAll(RegExp(r'[ .]+$'), '')
-        .trim();
-    if (base.isEmpty) base = 'subtitle-$fallbackIndex';
-    if (RegExp(
-      r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$',
-      caseSensitive: false,
-    ).hasMatch(base)) {
-      base = '_$base';
-    }
-    String candidate = base;
-    int suffix = 2;
-    while (!used.add(candidate.toLowerCase())) {
-      candidate = '$base-$suffix';
-      suffix++;
-    }
-    return candidate;
   }
 
   Future<void> _exportLive() {
@@ -1334,7 +887,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _translateBatch() async {
-    if (_batch.running || !_batch.hasTranslatableItems) return;
+    if (_workflow.batch.running || !_workflow.batch.hasTranslatableItems) {
+      return;
+    }
     final AppSettingsRepository repository = _settingsRepository;
     final TranslationApiSettings settings = await repository
         .loadTranslationApiSettings();
@@ -1354,13 +909,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         int applied = 0;
         for (final MapEntry<int, TranscriptionResult> entry in cached.entries) {
           try {
-            _batch.applyCachedTranslation(entry.key, entry.value);
+            _workflow.batch.applyCachedTranslation(entry.key, entry.value);
             applied++;
           } on Object {
             // 页面状态可能在异步确认期间发生变化，单个缓存失效按未命中处理。
           }
         }
-        if (!_batch.hasTranslatableItems) {
+        if (!_workflow.batch.hasTranslatableItems) {
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text('已复用 $applied 个本地翻译缓存')));
           return;
@@ -1396,7 +951,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       throw StateError('请先在设置中配置可用的第三方翻译服务');
     }
     try {
-      await _batch.translateAll(
+      await _workflow.batch.translateAll(
         provider,
         targetLanguage: settings.targetLanguage,
         onItemTranslated: (BatchItem item) async {
@@ -1425,8 +980,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     required String providerScope,
   }) async {
     final Map<int, TranscriptionResult> cached = <int, TranscriptionResult>{};
-    for (int index = 0; index < _batch.items.length; index++) {
-      final BatchItem item = _batch.items[index];
+    for (int index = 0; index < _workflow.batch.items.length; index++) {
+      final BatchItem item = _workflow.batch.items[index];
       if ((item.status != BatchItemStatus.completed &&
               item.status != BatchItemStatus.translationFailed) ||
           item.result == null) {
@@ -1491,13 +1046,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // 两个控制器都要监听：语言下拉在录音时必须禁用（切语言会重启 isolate）。
       listenable: Listenable.merge(<Listenable>[
         widget.controller,
-        _batch,
+        _workflow,
         ?live,
         ?widget.video,
       ]),
       builder: (BuildContext context, Widget? _) {
         final TranscribeController c = widget.controller;
-        final bool batchBusy = _batch.running || _batch.paused;
+        final bool batchBusy = _workflow.batchBusy;
         final Widget body;
         if (!c.modelReady) {
           body = _ModelSetupView(controller: c);
@@ -1506,7 +1061,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             controller: c,
             onOpen: _openFile,
             onOpenProject: _openProject,
-            recentProjects: _recentProjects,
+            recentProjects: _workflow.recentProjects,
             onOpenRecentProject: _openRecentProject,
             onSaveProject: _saveProject,
             onExport: _exportFile,
@@ -1517,7 +1072,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onBatch: _openBatch,
             onDiagnostics: _showPerformanceReport,
             onHistory: _showPerformanceHistory,
-            historyAvailable: _performanceHistory.isNotEmpty,
+            historyAvailable: _workflow.hasPerformanceHistory,
             batchBusy: batchBusy,
           );
         } else {
@@ -1526,7 +1081,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               controller: c,
               onOpen: _openFile,
               onOpenProject: _openProject,
-              recentProjects: _recentProjects,
+              recentProjects: _workflow.recentProjects,
               onOpenRecentProject: _openRecentProject,
               onSaveProject: _saveProject,
               onExport: _exportFile,
@@ -1537,7 +1092,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               onBatch: _openBatch,
               onDiagnostics: _showPerformanceReport,
               onHistory: _showPerformanceHistory,
-              historyAvailable: _performanceHistory.isNotEmpty,
+              historyAvailable: _workflow.hasPerformanceHistory,
               batchBusy: batchBusy,
             ),
             live: live == null
@@ -1547,7 +1102,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     onExport: _exportLive,
                     onDiagnostics: _showLivePerformanceReport,
                     onHistory: _showPerformanceHistory,
-                    historyAvailable: _performanceHistory.isNotEmpty,
+                    historyAvailable: _workflow.hasPerformanceHistory,
                     onTranslationChanged: (bool enabled) {
                       unawaited(_setLiveTranslation(enabled));
                     },
@@ -1586,15 +1141,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    _detached = true;
-    _autosaveTimer?.cancel();
-    _batchQueueTimer?.cancel();
-    _batch.removeListener(_onBatchChanged);
-    _batch.dispose();
-    widget.controller.removeListener(_onControllerChanged);
-    widget.live?.removeListener(_onLiveChanged);
-    WidgetsBinding.instance.removeObserver(this);
-    unawaited(_endSessionOnExit());
+    _workflow.dispose();
     super.dispose();
   }
 }
