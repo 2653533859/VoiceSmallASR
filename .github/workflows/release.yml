@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "要创建或更新的 Release tag，例如 v1.0.2"
+        description: "要发布的、已指向当前提交的 Release tag，例如 v1.0.4"
         required: true
         type: string
 
@@ -42,9 +42,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           release_version="${RELEASE_TAG#v}"
           app_version="$(sed -n 's/^version: \([0-9][0-9.]*\).*/\1/p' app/pubspec.yaml | head -n 1)"
           test "$release_version" = "$app_version"
+
+      - name: Validate release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          test "$tag_commit" = "$GITHUB_SHA"
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            build_info="$(gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern BUILD_INFO.txt \
+              --output -)"
+            release_commit="$(printf '%s\n' "$build_info" | sed -n 's/^Commit: //p' | head -n 1)"
+            test -n "$release_commit"
+            test "$release_commit" = "$GITHUB_SHA"
+          fi
 
       - name: Run Python checks
         run: |
@@ -109,6 +130,8 @@ jobs:
           set -euo pipefail
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK is not configured}}"
           build_tools_dir="$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          apk_version="$("$build_tools_dir/aapt" dump badging "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
+          test "$apk_version" = "${RELEASE_TAG#v}"
           "$build_tools_dir/apksigner" verify --verbose "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk"
           for asset in \
             "dist/android/VoiceSmallASR-${RELEASE_TAG}-android.apk" \
@@ -168,6 +191,9 @@ jobs:
             "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip"
           cp dist/macos/VoiceSmallASR-unsigned.dmg \
             "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.dmg"
+          app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            dist/macos/VoiceSmallASR.app/Contents/Info.plist)"
+          test "$app_version" = "${RELEASE_TAG#v}"
           ./scripts/verify_model_exclusion.sh dist/macos/VoiceSmallASR.app
           if unzip -l "dist/macos/VoiceSmallASR-${RELEASE_TAG}-macos-unsigned.zip" | grep -Eiq '\.(onnx|tar|bz2)$|tokens\.txt'; then
             echo "macOS ZIP contains model files" >&2
@@ -224,6 +250,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "缺少 Windows 可执行文件：$exe" }
           if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "缺少 Windows 安装包：$installer" }
           if ((Get-Item -LiteralPath $installer).Length -le 0) { throw "Windows 安装包为空：$installer" }
+          $fileVersion = (Get-Item -LiteralPath $exe).VersionInfo
+          $windowsVersion = "$($fileVersion.FileMajorPart).$($fileVersion.FileMinorPart).$($fileVersion.FileBuildPart)"
+          $expectedVersion = $env:RELEASE_TAG -replace '^v', ''
+          if ($windowsVersion -ne $expectedVersion) { throw "Windows 应用版本不匹配：$windowsVersion != $expectedVersion" }
           $modelFiles = Get-ChildItem -LiteralPath $releaseDir -Recurse -File | Where-Object { $_.Name -match '(?i)(\.onnx$|^tokens\.txt$|\.tar\.bz2$)' }
           if ($modelFiles) {
             throw "Windows 应用目录包含不应打包的模型文件：$($modelFiles.FullName -join ', ')"
