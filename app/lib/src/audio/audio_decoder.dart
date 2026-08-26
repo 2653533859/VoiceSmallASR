@@ -193,15 +193,15 @@ class PlatformAudioDecoder
       return;
     }
 
-    if (Platform.isMacOS) {
-      yield* _decodeMacOSStream(path, chunkDuration, startAt);
+    if (Platform.isMacOS || Platform.isAndroid || Platform.isWindows) {
+      yield* _decodeNativeStream(path, chunkDuration, startAt);
       return;
     }
 
     yield* _decodeLegacyNativeChunks(path, chunkDuration, startAt);
   }
 
-  Stream<DecodedAudioChunk> _decodeMacOSStream(
+  Stream<DecodedAudioChunk> _decodeNativeStream(
     String path,
     Duration chunkDuration,
     Duration startAt,

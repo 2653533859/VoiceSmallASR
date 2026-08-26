@@ -23,13 +23,20 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 
+#include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <exception>
+#include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -53,6 +60,10 @@ constexpr DWORD kFirstAudioStream =
 constexpr wchar_t kMarshalWindowClass[] = L"VsasrAudioDecoderMarshal";
 constexpr UINT kMsgDecodeDone = WM_APP + 0x51;
 
+enum class StreamOperation { kNone, kOpen, kRead, kClose };
+
+class StreamingDecoder;
+
 // 一次解码请求的往返数据。error 为空表示成功。
 struct DecodeJob {
   std::unique_ptr<MethodResultValue> result;
@@ -63,6 +74,9 @@ struct DecodeJob {
   int64_t duration_ms = -1;
   bool chunked = false;
   bool eof = false;
+  StreamOperation stream_operation = StreamOperation::kNone;
+  std::string session_id;
+  int max_samples = 0;
 };
 
 // 解码器实际输出的格式。is_float 为假表示 16 位整型 PCM。
@@ -106,8 +120,9 @@ std::vector<float> ResampleLinear(const std::vector<float>& samples,
 }
 
 // 按帧读出各声道并算术平均（与 Python 端 `mean(axis=1)`、`wav.dart` 一致）。
+template <typename SampleContainer>
 void AppendMono(const BYTE* data, DWORD length, const OutputInfo& info,
-                std::vector<float>* out) {
+                SampleContainer* out) {
   const size_t channels = info.channels;
   const size_t bytes_per_sample = info.is_float ? 4 : 2;
   const size_t frame_bytes = bytes_per_sample * channels;
@@ -185,6 +200,160 @@ bool QueryOutput(IMFSourceReader* reader, OutputInfo* info) {
   }
   return true;
 }
+
+std::vector<uint8_t> ToBytes(const std::vector<float>& samples);
+
+// 连续读取会话。对象及其 IMFSourceReader 始终由同一个后台线程持有，
+// 避免每个 10 秒块都重新打开容器、创建 Media Foundation reader 和解码器。
+class StreamingDecoder {
+ public:
+  StreamingDecoder(const std::string& path, int64_t start_ms) {
+    const std::wstring wide_path = WidenUtf8(path);
+    if (::GetFileAttributesW(wide_path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+      throw std::runtime_error("音频文件不存在");
+    }
+    if (FAILED(MFCreateSourceReaderFromURL(
+            wide_path.c_str(), nullptr, reader_.GetAddressOf()))) {
+      throw std::runtime_error("系统无法解析该文件（缺少对应的解码器）");
+    }
+    reader_->SetStreamSelection(kAllStreams, FALSE);
+    if (FAILED(reader_->SetStreamSelection(kFirstAudioStream, TRUE))) {
+      throw std::runtime_error("文件里没有音轨");
+    }
+    if (!ConfigureOutput(reader_.Get(), true, true) &&
+        !ConfigureOutput(reader_.Get(), true, false) &&
+        !ConfigureOutput(reader_.Get(), false, true) &&
+        !ConfigureOutput(reader_.Get(), false, false)) {
+      throw std::runtime_error("系统无法把该音轨解成 PCM");
+    }
+    if (!QueryOutput(reader_.Get(), &info_)) {
+      throw std::runtime_error("取不到解码输出格式");
+    }
+    if (start_ms < 0) throw std::runtime_error("分块解码时间范围无效");
+    start_time_ = start_ms * 10000;
+    PROPVARIANT position;
+    ::PropVariantInit(&position);
+    position.vt = VT_I8;
+    position.hVal.QuadPart = start_time_;
+    const HRESULT seek_result =
+        reader_->SetCurrentPosition(GUID_NULL, position);
+    ::PropVariantClear(&position);
+    if (FAILED(seek_result)) {
+      throw std::runtime_error("无法跳转到指定音轨位置");
+    }
+  }
+
+  struct ReadResult {
+    std::vector<uint8_t> pcm;
+    bool eof = false;
+  };
+
+  ReadResult Read(int max_samples) {
+    if (max_samples <= 0) {
+      throw std::runtime_error("读取采样数必须大于 0");
+    }
+    std::vector<float> output;
+    while (output.size() < static_cast<size_t>(max_samples)) {
+      Produce(&output, max_samples);
+      if (output.size() >= static_cast<size_t>(max_samples) || source_eof_) {
+        break;
+      }
+      ReadSource();
+    }
+    // EOF 时最后一批原始采样可能刚好不足一个完整的非 EOF 插值窗口。
+    Produce(&output, max_samples);
+    const bool eof = source_eof_ && output.empty();
+    return ReadResult{ToBytes(output), eof};
+  }
+
+ private:
+  void ReadSource() {
+    for (;;) {
+      DWORD flags = 0;
+      LONGLONG timestamp = 0;
+      ComPtr<IMFSample> sample;
+      if (FAILED(reader_->ReadSample(kFirstAudioStream, 0, nullptr, &flags,
+                                     &timestamp, sample.GetAddressOf()))) {
+        throw std::runtime_error("读取解码结果失败");
+      }
+      if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) {
+        if (!QueryOutput(reader_.Get(), &info_)) {
+          throw std::runtime_error("解码输出格式中途变成了不支持的形式");
+        }
+      }
+      if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+        source_eof_ = true;
+        return;
+      }
+      if (!sample) continue;
+      if (timestamp < start_time_) continue;
+
+      ComPtr<IMFMediaBuffer> buffer;
+      if (FAILED(sample->ConvertToContiguousBuffer(buffer.GetAddressOf()))) {
+        throw std::runtime_error("读取解码结果失败");
+      }
+      BYTE* data = nullptr;
+      DWORD length = 0;
+      if (FAILED(buffer->Lock(&data, nullptr, &length))) {
+        throw std::runtime_error("读取解码结果失败");
+      }
+      AppendMono(data, length, info_, &pending_);
+      buffer->Unlock();
+      return;
+    }
+  }
+
+  void Produce(std::vector<float>* output, int max_samples) {
+    const size_t limit = static_cast<size_t>(max_samples);
+    if (pending_.empty() || output->size() >= limit) return;
+    if (info_.sample_rate == kTargetSampleRate) {
+      const size_t count =
+          std::min(pending_.size(), limit - output->size());
+      output->insert(output->end(), pending_.begin(), pending_.begin() + count);
+      for (size_t i = 0; i < count; ++i) pending_.pop_front();
+      source_base_ += count;
+      output_samples_ += count;
+      return;
+    }
+
+    const double source_rate = static_cast<double>(info_.sample_rate);
+    const double target_rate = static_cast<double>(kTargetSampleRate);
+    const size_t source_end = source_base_ + pending_.size();
+    const size_t total_output = static_cast<size_t>(
+        std::floor(static_cast<double>(source_end) * target_rate / source_rate));
+    while (output->size() < limit && output_samples_ < total_output) {
+      const double position = output_samples_ * source_rate / target_rate;
+      const size_t left = static_cast<size_t>(std::floor(position));
+      if (left < source_base_ || left >= source_end) break;
+      if (!source_eof_ && left + 1 >= source_end) break;
+      const size_t left_offset = left - source_base_;
+      const size_t right_offset =
+          left + 1 < source_end ? left_offset + 1 : left_offset;
+      const double fraction = position - static_cast<double>(left);
+      output->push_back(static_cast<float>(
+          pending_[left_offset] * (1.0 - fraction) +
+          pending_[right_offset] * fraction));
+      output_samples_++;
+
+      const size_t next_left = static_cast<size_t>(std::floor(
+          output_samples_ * source_rate / target_rate));
+      if (next_left > source_base_) {
+        const size_t remove =
+            std::min(next_left - source_base_, pending_.size());
+        for (size_t i = 0; i < remove; ++i) pending_.pop_front();
+        source_base_ += remove;
+      }
+    }
+  }
+
+  ComPtr<IMFSourceReader> reader_;
+  OutputInfo info_;
+  std::deque<float> pending_;
+  size_t source_base_ = 0;
+  size_t output_samples_ = 0;
+  LONGLONG start_time_ = 0;
+  bool source_eof_ = false;
+};
 
 // float 采样 → 小端字节流。Windows 一律小端，按内存布局直拷即可。
 std::vector<uint8_t> ToBytes(const std::vector<float>& samples) {
@@ -327,7 +496,18 @@ void ExecuteJob(DecodeJob* job) {
 // 只能在平台线程上调用。
 void Reply(std::unique_ptr<DecodeJob> job) {
   if (job->error.empty()) {
-    if (job->chunked) {
+    if (job->stream_operation == StreamOperation::kOpen) {
+      job->result->Success(flutter::EncodableValue(job->session_id));
+    } else if (job->stream_operation == StreamOperation::kRead) {
+      flutter::EncodableMap response;
+      response[flutter::EncodableValue("pcm")] =
+          flutter::EncodableValue(std::move(job->pcm));
+      response[flutter::EncodableValue("eof")] =
+          flutter::EncodableValue(job->eof);
+      job->result->Success(flutter::EncodableValue(std::move(response)));
+    } else if (job->stream_operation == StreamOperation::kClose) {
+      job->result->Success(flutter::EncodableValue());
+    } else if (job->chunked) {
       flutter::EncodableMap response;
       response[flutter::EncodableValue("pcm")] =
           flutter::EncodableValue(std::move(job->pcm));
@@ -342,6 +522,102 @@ void Reply(std::unique_ptr<DecodeJob> job) {
                        flutter::EncodableValue(job->path));
   }
 }
+
+// 连续会话的所有 Media Foundation 调用都在同一条线程上执行。这样不仅避免
+// 每块重新打开媒体，也满足 Source Reader/COM 对线程上下文的要求。
+class StreamingWorker {
+ public:
+  explicit StreamingWorker(HWND window) : window_(window) {
+    std::thread([this]() { Run(); }).detach();
+  }
+
+  void Enqueue(std::unique_ptr<DecodeJob> job) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      jobs_.push_back(std::move(job));
+    }
+    condition_.notify_one();
+  }
+
+ private:
+  void Run() {
+    ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool mf_ready = SUCCEEDED(MFStartup(MF_VERSION));
+    for (;;) {
+      std::unique_ptr<DecodeJob> job;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [this]() { return !jobs_.empty(); });
+        job = std::move(jobs_.front());
+        jobs_.pop_front();
+      }
+      try {
+        if (!mf_ready) {
+          job->error = "Media Foundation 初始化失败";
+        } else {
+          Process(job.get());
+        }
+      } catch (const std::bad_alloc&) {
+        job->error = "解码音频时内存不足";
+      } catch (const std::exception& error) {
+        job->error = error.what();
+      } catch (...) {
+        job->error = "音频解码线程发生未知异常";
+      }
+      if (!job->error.empty() &&
+          job->stream_operation == StreamOperation::kRead) {
+        // 读失败后不要把可能处于不完整状态的 Source Reader 留在会话表中；
+        // Dart 侧随后仍会发送 close，但这里先释放，避免异常会话长期占用句柄。
+        sessions_.erase(job->session_id);
+      }
+      DecodeJob* pending = job.release();
+      if (window_ != nullptr &&
+          ::PostMessageW(window_, kMsgDecodeDone, 0,
+                         reinterpret_cast<LPARAM>(pending))) {
+        continue;
+      }
+      // 应用退出时窗口可能已销毁，仍释放 MethodResult，避免会话请求永久悬挂。
+      Reply(std::unique_ptr<DecodeJob>(pending));
+    }
+  }
+
+  void Process(DecodeJob* job) {
+    switch (job->stream_operation) {
+      case StreamOperation::kOpen: {
+        auto decoder =
+            std::make_unique<StreamingDecoder>(job->path, job->start_ms);
+        const std::string id = "stream-" + std::to_string(++next_id_);
+        sessions_.emplace(id, std::move(decoder));
+        job->session_id = id;
+        return;
+      }
+      case StreamOperation::kRead: {
+        const auto entry = sessions_.find(job->session_id);
+        if (entry == sessions_.end()) {
+          throw std::runtime_error("原生音频解码会话不存在");
+        }
+        const StreamingDecoder::ReadResult decoded =
+            entry->second->Read(job->max_samples);
+        job->pcm = decoded.pcm;
+        job->eof = decoded.eof;
+        if (decoded.eof) sessions_.erase(entry);
+        return;
+      }
+      case StreamOperation::kClose:
+        sessions_.erase(job->session_id);
+        return;
+      case StreamOperation::kNone:
+        throw std::runtime_error("无效的连续解码操作");
+    }
+  }
+
+  HWND window_;
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::deque<std::unique_ptr<DecodeJob>> jobs_;
+  std::map<std::string, std::unique_ptr<StreamingDecoder>> sessions_;
+  uint64_t next_id_ = 0;
+};
 
 LRESULT CALLBACK MarshalWndProc(HWND window, UINT message, WPARAM wparam,
                                 LPARAM lparam) {
@@ -410,18 +686,67 @@ int64_t IntegerArgument(
   return fallback;
 }
 
+std::string StringArgument(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    const char* name) {
+  const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+  if (arguments == nullptr) return std::string();
+  const auto entry = arguments->find(flutter::EncodableValue(name));
+  if (entry == arguments->end()) return std::string();
+  const auto* value = std::get_if<std::string>(&entry->second);
+  return value == nullptr ? std::string() : *value;
+}
+
 }  // namespace
 
 void RegisterAudioDecoderChannel(flutter::BinaryMessenger* messenger) {
   const HWND window = EnsureMarshalWindow();
+  // 连续解码线程按设计随进程存在，保证其拥有的 COM/MF 会话不会跨线程迁移。
+  static StreamingWorker* streaming_worker = new StreamingWorker(window);
   // 通道对象要活到进程结束，函数局部 static 正好。
   static auto channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, kChannelName,
           &flutter::StandardMethodCodec::GetInstance());
   channel->SetMethodCallHandler(
-      [window](const flutter::MethodCall<flutter::EncodableValue>& call,
+      [window, streaming_worker](const flutter::MethodCall<flutter::EncodableValue>& call,
                std::unique_ptr<MethodResultValue> result) {
+        const bool streaming =
+            call.method_name() == "openPcm16kStream" ||
+            call.method_name() == "readPcm16kStream" ||
+            call.method_name() == "closePcm16kStream";
+        if (streaming) {
+          auto job = std::make_unique<DecodeJob>();
+          job->result = std::move(result);
+          if (call.method_name() == "openPcm16kStream") {
+            job->stream_operation = StreamOperation::kOpen;
+            job->path = PathArgument(call);
+            job->start_ms = IntegerArgument(call, "startMs", -1);
+            if (job->path.empty() || job->start_ms < 0) {
+              job->result->Error("BAD_ARGS", "连续解码参数无效");
+              return;
+            }
+          } else if (call.method_name() == "readPcm16kStream") {
+            job->stream_operation = StreamOperation::kRead;
+            job->session_id = StringArgument(call, "sessionId");
+            const int64_t max_samples = IntegerArgument(call, "maxSamples", -1);
+            if (job->session_id.empty() || max_samples <= 0 ||
+                max_samples > std::numeric_limits<int>::max()) {
+              job->result->Error("BAD_ARGS", "连续解码读取参数无效");
+              return;
+            }
+            job->max_samples = static_cast<int>(max_samples);
+          } else {
+            job->stream_operation = StreamOperation::kClose;
+            job->session_id = StringArgument(call, "sessionId");
+            if (job->session_id.empty()) {
+              job->result->Error("BAD_ARGS", "连续解码会话参数无效");
+              return;
+            }
+          }
+          streaming_worker->Enqueue(std::move(job));
+          return;
+        }
         if (call.method_name() != "decodeToPcm16k" &&
             call.method_name() != "decodePcm16kChunk") {
           result->NotImplemented();

@@ -119,7 +119,7 @@ void main() {
       <double>[1, 2],
     );
     expect(chunks.last.isLast, isTrue);
-    if (Platform.isMacOS) {
+    if (Platform.isMacOS || Platform.isAndroid || Platform.isWindows) {
       expect(calls.map((MethodCall call) => call.method), <String>[
         'openPcm16kStream',
         'readPcm16kStream',
@@ -135,6 +135,32 @@ void main() {
         <int>[0, 3000],
       );
     }
+  });
+
+  test('连续解码会把检查点位置传给原生会话', () async {
+    if (!(Platform.isMacOS || Platform.isAndroid || Platform.isWindows)) {
+      return;
+    }
+    _mock((MethodCall call) async {
+      if (call.method == 'openPcm16kStream') return 'session-checkpoint';
+      if (call.method == 'closePcm16kStream') return null;
+      return <String, Object>{
+        'pcm': Float32List.fromList(<double>[0.25]),
+        'eof': true,
+      };
+    }, calls);
+    final File file = writeFile('checkpoint.mp4', <int>[0, 0, 0, 0]);
+
+    final List<DecodedAudioChunk> chunks = await const PlatformAudioDecoder()
+        .decodeFileChunksFrom(
+          file.path,
+          startAt: const Duration(seconds: 12),
+          chunkDuration: const Duration(seconds: 3),
+        )
+        .toList();
+
+    expect(chunks.single.samples.single, closeTo(0.25, 1e-6));
+    expect((calls.first.arguments as Map<Object?, Object?>)['startMs'], 12000);
   });
 
   test('原生按字节回传时也能解出 float32', () async {
