@@ -13,6 +13,54 @@ import 'package:vsasr_app/src/subtitles/subtitles.dart';
 const String kVideoSubtitleCacheDirectoryName = 'video_subtitles';
 const String kVideoSubtitleCacheSchema = 'voicesmallasr.video_subtitle_cache';
 const int kVideoSubtitleCacheVersion = 2;
+const int kDefaultVideoSubtitleCacheMaxBytes = 2 * 1024 * 1024 * 1024;
+
+class VideoSubtitleCacheEntry {
+  const VideoSubtitleCacheEntry({
+    required this.mediaPath,
+    required this.jsonPath,
+    required this.srtPath,
+    required this.checkpointPath,
+    required this.bytes,
+    required this.updatedAt,
+    required this.isValid,
+    required this.isComplete,
+    required this.mediaExists,
+    required this.mediaMatches,
+    required this.configurationMatches,
+  });
+
+  final String mediaPath;
+  final String jsonPath;
+  final String srtPath;
+  final String checkpointPath;
+  final int bytes;
+  final DateTime updatedAt;
+  final bool isValid;
+  final bool isComplete;
+  final bool mediaExists;
+  final bool mediaMatches;
+  final bool configurationMatches;
+}
+
+class VideoSubtitleCacheSummary {
+  const VideoSubtitleCacheSummary({required this.entries, required this.bytes});
+
+  final List<VideoSubtitleCacheEntry> entries;
+  final int bytes;
+}
+
+class VideoSubtitleCacheCleanupReport {
+  const VideoSubtitleCacheCleanupReport({
+    required this.removedEntries,
+    required this.removedBytes,
+    required this.skippedEntries,
+  });
+
+  final int removedEntries;
+  final int removedBytes;
+  final int skippedEntries;
+}
 
 class VideoSubtitleCheckpoint {
   const VideoSubtitleCheckpoint({
@@ -68,6 +116,11 @@ class VideoSubtitleCache {
         decoded['result'],
       );
       ensureValidSubtitleTimeline(result.segments, duration: result.duration);
+      try {
+        await cacheFile.setLastModified(DateTime.now());
+      } on Object {
+        // 最近使用时间只是 LRU 提示，写入失败不应使有效缓存变成未命中。
+      }
       return result;
     } on Object {
       return null;
@@ -113,6 +166,11 @@ class VideoSubtitleCache {
           ? DateTime.tryParse(rawUpdatedAt)
           : null;
       if (updatedAt == null) return null;
+      try {
+        await checkpointFile.setLastModified(DateTime.now());
+      } on Object {
+        // 检查点的访问时间只是清理排序提示。
+      }
       return VideoSubtitleCheckpoint(
         result: result,
         processedSamples: rawSamples,
@@ -188,6 +246,348 @@ class VideoSubtitleCache {
     );
     if (await checkpointFile.exists()) await checkpointFile.delete();
     return srtFile.path;
+  }
+
+  /// 列出缓存文件并校验元数据；损坏或原视频已删除的条目也会返回，供用户清理。
+  Future<VideoSubtitleCacheSummary> inspect({
+    String? configurationScope,
+  }) async {
+    final Directory directory = Directory(await directoryPath(create: false));
+    if (!await directory.exists()) {
+      return const VideoSubtitleCacheSummary(
+        entries: <VideoSubtitleCacheEntry>[],
+        bytes: 0,
+      );
+    }
+    final Set<String> jsonPaths = <String>{};
+    await for (final FileSystemEntity entity in directory.list()) {
+      if (entity is! File) continue;
+      if (entity.path.endsWith('.json')) {
+        jsonPaths.add(entity.path);
+      } else if (entity.path.endsWith('.json.checkpoint')) {
+        jsonPaths.add(
+          entity.path.substring(0, entity.path.length - '.checkpoint'.length),
+        );
+      }
+    }
+    final List<VideoSubtitleCacheEntry> entries = <VideoSubtitleCacheEntry>[];
+    for (final String jsonPath in jsonPaths) {
+      entries.add(
+        await _inspectFile(
+          File(jsonPath),
+          configurationScope: configurationScope,
+        ),
+      );
+    }
+    entries.sort(
+      (VideoSubtitleCacheEntry left, VideoSubtitleCacheEntry right) =>
+          right.updatedAt.compareTo(left.updatedAt),
+    );
+    return VideoSubtitleCacheSummary(
+      entries: List<VideoSubtitleCacheEntry>.unmodifiable(entries),
+      bytes: entries.fold<int>(
+        0,
+        (int sum, VideoSubtitleCacheEntry entry) => sum + entry.bytes,
+      ),
+    );
+  }
+
+  /// 删除单个媒体的完整缓存。受保护的媒体（当前播放或正在检查点写入）会跳过。
+  Future<VideoSubtitleCacheCleanupReport> deleteMedia(
+    String mediaPath, {
+    Set<String> protectedMediaPaths = const <String>{},
+  }) async {
+    final String normalized = p.normalize(mediaPath);
+    if (protectedMediaPaths.map(p.normalize).contains(normalized)) {
+      return const VideoSubtitleCacheCleanupReport(
+        removedEntries: 0,
+        removedBytes: 0,
+        skippedEntries: 1,
+      );
+    }
+    final VideoSubtitleCacheSummary summary = await inspect();
+    final VideoSubtitleCacheEntry? entry = _findEntry(
+      summary.entries,
+      normalized,
+    );
+    if (entry == null) {
+      return const VideoSubtitleCacheCleanupReport(
+        removedEntries: 0,
+        removedBytes: 0,
+        skippedEntries: 0,
+      );
+    }
+    final int bytes = entry.bytes;
+    await _deleteEntryFiles(entry);
+    return VideoSubtitleCacheCleanupReport(
+      removedEntries: 1,
+      removedBytes: bytes,
+      skippedEntries: 0,
+    );
+  }
+
+  /// 删除所有非保护缓存；同时清理过期的原子写临时文件。
+  Future<VideoSubtitleCacheCleanupReport> clearAll({
+    Set<String> protectedMediaPaths = const <String>{},
+  }) async {
+    final VideoSubtitleCacheSummary summary = await inspect();
+    int removedEntries = 0;
+    int removedBytes = 0;
+    int skippedEntries = 0;
+    final Set<String> protected = protectedMediaPaths.map(p.normalize).toSet();
+    for (final VideoSubtitleCacheEntry entry in summary.entries) {
+      if (await _isProtectedEntry(entry, protected)) {
+        skippedEntries++;
+        continue;
+      }
+      await _deleteEntryFiles(entry);
+      removedEntries++;
+      removedBytes += entry.bytes;
+    }
+    await cleanupStaleTemporaryFiles(protectedMediaPaths: protectedMediaPaths);
+    await _cleanupOrphanFiles(
+      summary.entries,
+      protectedMediaPaths: protectedMediaPaths,
+    );
+    return VideoSubtitleCacheCleanupReport(
+      removedEntries: removedEntries,
+      removedBytes: removedBytes,
+      skippedEntries: skippedEntries,
+    );
+  }
+
+  /// 只清理超过保留期限的临时文件；近期临时文件可能仍在原子写入中。
+  Future<int> cleanupStaleTemporaryFiles({
+    Duration maxAge = const Duration(days: 7),
+    Set<String> protectedMediaPaths = const <String>{},
+  }) async {
+    final Directory directory = Directory(await directoryPath(create: false));
+    if (!await directory.exists()) return 0;
+    final DateTime cutoff = DateTime.now().subtract(maxAge);
+    final Set<String> protected = protectedMediaPaths.map(p.normalize).toSet();
+    int removed = 0;
+    await for (final FileSystemEntity entity in directory.list()) {
+      if (entity is! File || !entity.path.endsWith('.tmp')) continue;
+      final FileStat stat = await entity.stat();
+      if (stat.modified.isAfter(cutoff)) continue;
+      bool isProtected = false;
+      for (final String mediaPath in protected) {
+        final File jsonFile = await _jsonFile(
+          mediaPath,
+          createDirectory: false,
+        );
+        if (entity.path.startsWith('${jsonFile.path}.')) {
+          isProtected = true;
+          break;
+        }
+      }
+      if (!isProtected) {
+        await entity.delete();
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  /// 按最近更新时间保留缓存，保护当前播放/写入中的媒体不被驱逐。
+  Future<VideoSubtitleCacheCleanupReport> trimToMaxBytes(
+    int maxBytes, {
+    Set<String> protectedMediaPaths = const <String>{},
+  }) async {
+    if (maxBytes < 0) throw ArgumentError.value(maxBytes, 'maxBytes');
+    final VideoSubtitleCacheSummary summary = await inspect();
+    int remaining = summary.bytes;
+    int removedEntries = 0;
+    int removedBytes = 0;
+    int skippedEntries = 0;
+    final Set<String> protected = protectedMediaPaths.map(p.normalize).toSet();
+    final List<VideoSubtitleCacheEntry> oldest =
+        <VideoSubtitleCacheEntry>[...summary.entries]..sort(
+          (VideoSubtitleCacheEntry left, VideoSubtitleCacheEntry right) =>
+              left.updatedAt.compareTo(right.updatedAt),
+        );
+    for (final VideoSubtitleCacheEntry entry in oldest) {
+      if (remaining <= maxBytes) break;
+      if (await _isProtectedEntry(entry, protected)) {
+        skippedEntries++;
+        continue;
+      }
+      await _deleteEntryFiles(entry);
+      remaining -= entry.bytes;
+      removedEntries++;
+      removedBytes += entry.bytes;
+    }
+    return VideoSubtitleCacheCleanupReport(
+      removedEntries: removedEntries,
+      removedBytes: removedBytes,
+      skippedEntries: skippedEntries,
+    );
+  }
+
+  Future<VideoSubtitleCacheEntry> _inspectFile(
+    File jsonFile, {
+    String? configurationScope,
+  }) async {
+    String mediaPath = jsonFile.path;
+    String entryConfigurationScope = '';
+    DateTime updatedAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    bool isValid = false;
+    bool isComplete = false;
+    bool mediaMatches = false;
+    try {
+      final File metadataFile = await jsonFile.exists()
+          ? jsonFile
+          : File('${jsonFile.path}.checkpoint');
+      final Object? decoded = jsonDecode(await metadataFile.readAsString());
+      if (decoded is Map<String, dynamic>) {
+        final Object? rawPath = decoded['media_path'];
+        if (rawPath is String && rawPath.trim().isNotEmpty) {
+          mediaPath = p.normalize(rawPath);
+        }
+        final Object? rawScope = decoded['configuration_scope'];
+        if (rawScope is String) entryConfigurationScope = rawScope;
+        final Object? rawUpdatedAt = decoded['updated_at'];
+        if (rawUpdatedAt is String) {
+          updatedAt = DateTime.tryParse(rawUpdatedAt) ?? updatedAt;
+        }
+        isComplete = decoded['complete'] != false;
+        if (decoded['schema'] == kVideoSubtitleCacheSchema &&
+            decoded['version'] == kVideoSubtitleCacheVersion &&
+            decoded['result'] != null) {
+          final TranscriptionResult result = TranscriptionResult.fromJson(
+            decoded['result'],
+          );
+          ensureValidSubtitleTimeline(
+            result.segments,
+            duration: result.duration,
+          );
+          isValid = true;
+        }
+      }
+    } on Object {
+      // 保留损坏条目的文件信息，用户可以从缓存管理器中清除它。
+    }
+    final String srtPath = p.setExtension(jsonFile.path, '.srt');
+    final String checkpointPath = '${jsonFile.path}.checkpoint';
+    final File accessFile = await jsonFile.exists()
+        ? jsonFile
+        : File(checkpointPath);
+    final DateTime fileUpdatedAt = await accessFile.exists()
+        ? (await accessFile.stat()).modified
+        : updatedAt;
+    if (fileUpdatedAt.isAfter(updatedAt)) updatedAt = fileUpdatedAt;
+    final File media = File(mediaPath);
+    final bool mediaExists = await media.exists();
+    if (mediaExists) {
+      try {
+        final FileStat stat = await media.stat();
+        final Object? decoded = await _readMetadataFile(jsonFile);
+        if (decoded is Map<String, dynamic>) {
+          mediaMatches =
+              decoded['media_size'] == stat.size &&
+              decoded['media_modified_ms'] ==
+                  stat.modified.millisecondsSinceEpoch;
+        }
+      } on Object {
+        mediaMatches = false;
+      }
+    }
+    return VideoSubtitleCacheEntry(
+      mediaPath: mediaPath,
+      jsonPath: jsonFile.path,
+      srtPath: srtPath,
+      checkpointPath: checkpointPath,
+      bytes:
+          await _length(jsonFile) +
+          await _length(File(srtPath)) +
+          await _length(File(checkpointPath)),
+      updatedAt: updatedAt,
+      isValid: isValid,
+      isComplete: isComplete,
+      mediaExists: mediaExists,
+      mediaMatches: mediaMatches,
+      configurationMatches:
+          configurationScope == null ||
+          configurationScope == entryConfigurationScope,
+    );
+  }
+
+  Future<Object?> _readMetadataFile(File jsonFile) async {
+    final File metadataFile = await jsonFile.exists()
+        ? jsonFile
+        : File('${jsonFile.path}.checkpoint');
+    return jsonDecode(await metadataFile.readAsString());
+  }
+
+  VideoSubtitleCacheEntry? _findEntry(
+    List<VideoSubtitleCacheEntry> entries,
+    String mediaPath,
+  ) {
+    for (final VideoSubtitleCacheEntry entry in entries) {
+      if (p.normalize(entry.mediaPath) == mediaPath) return entry;
+    }
+    return null;
+  }
+
+  Future<bool> _isProtectedEntry(
+    VideoSubtitleCacheEntry entry,
+    Set<String> protectedMediaPaths,
+  ) async {
+    if (protectedMediaPaths.contains(p.normalize(entry.mediaPath))) {
+      return true;
+    }
+    for (final String mediaPath in protectedMediaPaths) {
+      final File jsonFile = await _jsonFile(mediaPath, createDirectory: false);
+      if (jsonFile.path == entry.jsonPath) return true;
+    }
+    return false;
+  }
+
+  Future<void> _deleteEntryFiles(VideoSubtitleCacheEntry entry) async {
+    for (final String path in <String>[
+      entry.jsonPath,
+      entry.srtPath,
+      entry.checkpointPath,
+    ]) {
+      final File file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<int> _length(File file) async {
+    if (!await file.exists()) return 0;
+    return (await file.stat()).size;
+  }
+
+  Future<void> _cleanupOrphanFiles(
+    List<VideoSubtitleCacheEntry> entries, {
+    required Set<String> protectedMediaPaths,
+  }) async {
+    final Directory directory = Directory(await directoryPath(create: false));
+    if (!await directory.exists()) return;
+    final Set<String> known = <String>{
+      for (final VideoSubtitleCacheEntry entry in entries) ...<String>[
+        entry.jsonPath,
+        entry.srtPath,
+        entry.checkpointPath,
+      ],
+    };
+    for (final String mediaPath in protectedMediaPaths) {
+      final File jsonFile = await _jsonFile(mediaPath, createDirectory: false);
+      known.addAll(<String>[
+        jsonFile.path,
+        p.setExtension(jsonFile.path, '.srt'),
+        '${jsonFile.path}.checkpoint',
+      ]);
+    }
+    await for (final FileSystemEntity entity in directory.list()) {
+      if (entity is! File ||
+          (!entity.path.endsWith('.srt') &&
+              !entity.path.endsWith('.json.checkpoint'))) {
+        continue;
+      }
+      if (!known.contains(entity.path)) await entity.delete();
+    }
   }
 
   Future<File> _jsonFile(

@@ -41,7 +41,9 @@
 - 计划审计已同步修正 `DEVELOPMENT_PLAN.md` §5 的 Windows 解码状态表；个人使用范围内当前未完成项是 Android 真机性能和 Windows 用户桌面运行，第三方 API 真实网络验收已主动跳过。
 - 项目定位为个人使用：Android debug-signed APK、macOS 无开发者证书且内嵌代码使用 ad-hoc 签名的 `.app`/`.dmg` 和 Windows 未签名安装包均属于可接受交付物；Play Store、App Store、公证发布所需的正式证书不在计划范围。
 - 三端 GitHub Release 已完成：`.github/workflows/release.yml` 在 run `31995874234` 云端构建并发布 `v1.0.1`，随后由 run [`32082049856`](https://github.com/2653533859/VoiceSmallASR/actions/runs/32082049856) 构建并更新 `v1.0.2`，包含 Android APK/AAB、Windows 未签名安装包、macOS 无开发者证书 DMG/APP 压缩包、`SHA256SUMS.txt` 和 `BUILD_INFO.txt`；本次资产对应提交 `5d64f49`，发布页为 https://github.com/2653533859/VoiceSmallASR/releases/tag/v1.0.2。
-- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收以及 Android/Windows 统一 device acceptance 入口和执行手册，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成，M14 视频实时字幕/播放列表已完成，M15 发布一致性已完成，M16 长视频稳定性已完成，M17 Android/Windows 连续原生解码已完成；下一步是 M18 缓存管理、M19 页面拆分和 M20 真实设备长时验收。
+- 当前后续计划见 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：M8 发布质量基线和 `v1.0.2` 云端全流程 Release 已完成，M9 无签名翻译体验已完成，M10 已补齐 Windows CI 的桌面/硬字幕自动验收以及 Android/Windows 统一 device acceptance 入口和执行手册，但 Android 真机和 Windows 用户桌面验收仍待条件具备，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复和媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、字幕样式、视频配套字幕导出、桌面/Android 硬字幕编码、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工和自动说话人分离已完成，M14 视频实时字幕/播放列表已完成，M15 发布一致性已完成，M16 长视频稳定性已完成，M17 Android/Windows 连续原生解码已完成，M18 播放列表与字幕缓存管理已完成；下一步是 M19 页面拆分和 M20 真实设备长时验收。
+
+- M18 播放列表与字幕缓存管理已完成：播放列表以版本化 JSON 持久化并支持拖拽排序、单项取消、失败重试和移除；字幕缓存管理器显示默认位置、条目数和占用空间，支持单条删除、清理其他缓存、检查点-only 展示、配置/媒体变化标记和损坏条目回收。缓存按访问时间执行 2 GiB 上限淘汰，清理会保护当前字幕、检查点和正在写入的临时文件，7 天以上临时文件可回收；`flutter analyze`、全量 Flutter 测试 259 项和 macOS Debug 构建通过。下一步为 M19 页面拆分，M20 仍保留真实长视频、Android 真机和 Windows 用户桌面验收。
 
 ## 已验证结果
 

@@ -98,4 +98,98 @@ void main() {
       isNull,
     );
   });
+
+  test('只有检查点时也会被统计和清理', () async {
+    const TranscriptionResult partial = TranscriptionResult(
+      segments: <Segment>[Segment(text: '前半句', start: 0, end: 1, index: 0)],
+      duration: 30,
+    );
+    await cache.writeCheckpoint(
+      video.path,
+      partial,
+      processedSamples: 30 * 16000,
+    );
+
+    final VideoSubtitleCacheSummary summary = await cache.inspect();
+    expect(summary.entries, hasLength(1));
+    expect(summary.entries.single.isComplete, isFalse);
+    expect(summary.bytes, greaterThan(0));
+
+    await cache.clearAll();
+    expect((await cache.inspect()).entries, isEmpty);
+    expect(await cache.readCheckpoint(video.path), isNull);
+  });
+
+  test('可以统计、删除缓存，并保护当前媒体', () async {
+    const TranscriptionResult result = TranscriptionResult(
+      segments: <Segment>[Segment(text: '字幕', start: 0, end: 1, index: 0)],
+      duration: 1,
+    );
+    final File secondVideo = File(p.join(root.path, 'second.mp4'))
+      ..writeAsStringSync('second');
+    await cache.write(video.path, result);
+    await cache.write(secondVideo.path, result);
+
+    final VideoSubtitleCacheSummary summary = await cache.inspect();
+    expect(summary.entries, hasLength(2));
+    expect(summary.bytes, greaterThan(0));
+
+    final VideoSubtitleCacheCleanupReport protected = await cache.deleteMedia(
+      video.path,
+      protectedMediaPaths: <String>{video.path},
+    );
+    expect(protected.skippedEntries, 1);
+    expect(await cache.read(video.path), isNotNull);
+
+    final VideoSubtitleCacheCleanupReport deleted = await cache.deleteMedia(
+      secondVideo.path,
+    );
+    expect(deleted.removedEntries, 1);
+    expect(await cache.read(secondVideo.path), isNull);
+  });
+
+  test('缓存清单会标出视频或配置已变化', () async {
+    const TranscriptionResult result = TranscriptionResult(
+      segments: <Segment>[Segment(text: '字幕', start: 0, end: 1, index: 0)],
+      duration: 1,
+    );
+    await cache.write(video.path, result, configurationScope: 'scope-a');
+    await Future<void>.delayed(const Duration(milliseconds: 3));
+    video.writeAsStringSync('changed');
+
+    final VideoSubtitleCacheEntry entry = (await cache.inspect(
+      configurationScope: 'scope-b',
+    )).entries.single;
+    expect(entry.isValid, isTrue);
+    expect(entry.mediaMatches, isFalse);
+    expect(entry.configurationMatches, isFalse);
+  });
+
+  test('超过容量时优先删除最旧且非保护的缓存', () async {
+    const TranscriptionResult result = TranscriptionResult(
+      segments: <Segment>[Segment(text: '字幕', start: 0, end: 1, index: 0)],
+      duration: 1,
+    );
+    final File secondVideo = File(p.join(root.path, 'second.mp4'))
+      ..writeAsStringSync('second');
+    await cache.write(video.path, result);
+    await Future<void>.delayed(const Duration(milliseconds: 3));
+    await cache.write(secondVideo.path, result);
+    final VideoSubtitleCacheSummary before = await cache.inspect();
+    final int keepBytes = before.entries
+        .firstWhere(
+          (VideoSubtitleCacheEntry entry) =>
+              entry.mediaPath == secondVideo.path,
+        )
+        .bytes;
+
+    final VideoSubtitleCacheCleanupReport report = await cache.trimToMaxBytes(
+      keepBytes,
+      protectedMediaPaths: <String>{secondVideo.path},
+    );
+
+    expect(report.removedEntries, 1);
+    expect(await cache.read(video.path), isNull);
+    expect(await cache.read(secondVideo.path), isNotNull);
+  });
 }
