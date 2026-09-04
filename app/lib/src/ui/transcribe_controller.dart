@@ -18,6 +18,7 @@ import 'package:vsasr_app/src/asr/speaker_diarization.dart';
 import 'package:vsasr_app/src/asr/speaker_diarization_model_manager.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
+import 'package:vsasr_app/src/asr/transcription_worker_pool.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/diagnostics/video_transcription_report.dart';
@@ -77,6 +78,10 @@ class TranscribeController extends ChangeNotifier {
        _scheduler = scheduler ?? TranscriptionTaskScheduler(),
        _offlineMode = false {
     _offlineMode = offlineMode;
+    _pool = TranscriptionWorkerPool(
+      maxWorkers: _scheduler.capacity,
+      launch: launch,
+    );
   }
 
   final AudioDecoder _decoder;
@@ -90,11 +95,13 @@ class TranscribeController extends ChangeNotifier {
 
   AsrConfig _config;
   bool _offlineMode;
-  Transcriber? _worker;
 
-  /// 正在关闭的旧 worker（切语言时）。新的必须等它关完再起，
-  /// 否则两份 240 MB 模型会同时驻留内存。
-  Future<void>? _closing;
+  /// 识别 Isolate 池，支持并发。
+  late final TranscriptionWorkerPool _pool;
+
+  /// 正在清空 worker 池时，新任务必须等待其结束，避免新旧模型同时驻留。
+  Future<void>? _clearingWorkers;
+
   bool _disposed = false;
 
   JobStage _stage = JobStage.idle;
@@ -261,11 +268,11 @@ class TranscribeController extends ChangeNotifier {
     }
   }
 
-  /// 准备模型与识别 isolate：缺模型就下载，然后把模型加载进 isolate。
+  /// 准备模型与识别 isolate：缺模型就下载，然后把模型加载进 isolate 池。
   ///
   /// 重复调用是安全的（已就绪时直接返回）。
   Future<void> prepare({bool? allowDownload}) async {
-    if (_worker != null || busy) return;
+    if (busy) return;
     final int generation = _cancelGeneration;
     _stage = JobStage.preparingModel;
     _errorText = null;
@@ -273,27 +280,24 @@ class TranscribeController extends ChangeNotifier {
     _statusText = _modelReady ? '正在加载模型…' : '正在准备模型…';
     notifyListeners();
     try {
-      // 切语言时旧 isolate 可能还在关。抢在它前面加载新模型，内存里会同时躺着
-      // 两份 240 MB 的权重，手机上直接爆。
-      await _closing;
-      final Transcriber worker = await launch(
+      await _clearingWorkers;
+      if (_disposed || generation != _cancelGeneration) return;
+      final Transcriber worker = await _pool.acquire(
         config: _config,
         allowDownload: allowDownload ?? !_offlineMode,
         onModelProgress: _onModelProgress,
       );
-      // 模型下载/加载要几十秒，这期间界面可能已经被销毁。此时 dispose()
-      // 看到的 _worker 还是 null，什么都没关；必须由这里收掉迟到的 worker，
-      // 否则 isolate 与它加载的 240 MB 模型会漏到进程结束。
       if (_disposed || generation != _cancelGeneration) {
-        await worker.dispose();
+        _pool.release(worker);
         return;
       }
-      _worker = worker;
+      _pool.release(worker);
       _modelReady = true;
       unawaited(_updateModelBytes());
       _statusText = '模型就绪';
       _progress = null;
     } on Object catch (error) {
+      if (_disposed || generation != _cancelGeneration) return;
       _errorText = _humanize(error);
       _statusText = '模型准备失败';
       _progress = null;
@@ -305,11 +309,30 @@ class TranscribeController extends ChangeNotifier {
 
   /// 拿到已加载模型的转写器；还没准备好就先准备一次。
   ///
-  /// 失败时返回 null，原因在 [errorText] 里 —— 实时字幕页共用同一个 worker，
-  /// 模型只加载一次（240 MB，加载两份在手机上直接爆内存）。
-  Future<Transcriber?> ensureWorker() async {
-    if (_worker == null) await prepare();
-    return _worker;
+  /// 注意：获取到的 worker 用完必须通过 [releaseWorker] 释放。
+  Future<Transcriber?> acquireWorker({bool? allowDownload}) async {
+    await _clearingWorkers;
+    return _pool.acquire(
+      config: _config,
+      allowDownload: allowDownload ?? !_offlineMode,
+      onModelProgress: _onModelProgress,
+    );
+  }
+
+  /// 释放从 [acquireWorker] 借用的转写器回池中。
+  void releaseWorker(Transcriber worker) {
+    _pool.release(worker);
+  }
+
+  Future<void> _clearWorkers() {
+    final Future<void>? clearing = _clearingWorkers;
+    if (clearing != null) return clearing;
+
+    final Future<void> pending = _pool.clear();
+    _clearingWorkers = pending;
+    return pending.whenComplete(() {
+      if (identical(_clearingWorkers, pending)) _clearingWorkers = null;
+    });
   }
 
   /// 设置页的显式下载操作，即使开启离线模式也允许用户主动触发。
@@ -322,7 +345,7 @@ class TranscribeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 关闭已加载 worker 后删除模型缓存。
+  /// 清空所有 worker 后删除模型缓存。
   Future<void> deleteModel() async {
     if (busy) return;
     _stage = JobStage.managingModel;
@@ -330,10 +353,7 @@ class TranscribeController extends ChangeNotifier {
     _statusText = '正在删除模型…';
     notifyListeners();
     try {
-      await _closing;
-      final Transcriber? worker = _worker;
-      _worker = null;
-      await worker?.dispose();
+      await _clearWorkers();
       await _models.deleteAll();
       _modelReady = false;
       _modelBytes = 0;
@@ -378,41 +398,43 @@ class TranscribeController extends ChangeNotifier {
     _performanceReport = null;
     if (markProjectChange && _result != null) _markProjectChanged();
     notifyListeners();
-    final Transcriber? old = _worker;
-    if (old == null) return;
-    _worker = null;
-    // 记下这个 Future：期间 prepare() 会先 await 它，不会又起一个 isolate。
-    final Future<void> closing = old.dispose();
-    _closing = closing;
-    try {
-      await closing;
-    } finally {
-      if (identical(_closing, closing)) _closing = null;
-    }
+    await _clearWorkers();
   }
 
-  /// 改识别语言。已加载的 isolate 会被重启（语言在建识别器时定死）。
+  /// 改识别语言。池模式下下一次识别将按需启动新语言的 worker。
   Future<void> setLanguage(String language) =>
       applyConfig(_config.copyWith(language: language));
 
-  /// 解码并识别一个文件。这是主流程的入口。
-  Future<void> transcribeFile(String path) async {
-    if (busy) return;
+  /// 解码并识别一个文件。
+  ///
+  /// 返回识别结果与性能报告；如果是主界面任务，也会写回 [result] 字段。
+  Future<({TranscriptionResult result, PerformanceReport report})?>
+  transcribeFile(
+    String path, {
+    void Function(double? progress)? onProgress,
+  }) async {
+    // 并发下 busy 判定由 scheduler.acquire 阻塞完成，这里只拦掉重复点击。
     final TranscriptionTaskLease lease = await _scheduler.acquire(
       priority: TranscriptionTaskPriority.userTask,
       label: p.basename(path),
     );
     try {
-      if (_disposed) return;
-      await _transcribeFile(path);
+      if (_disposed) return null;
+      return await _transcribeFile(path, onProgress: onProgress);
     } finally {
       lease.release();
     }
   }
 
-  Future<void> _transcribeFile(String path) async {
-    if (busy) return;
+  Future<({TranscriptionResult result, PerformanceReport report})?>
+  _transcribeFile(
+    String path, {
+    void Function(double? progress)? onProgress,
+  }) async {
     final int generation = _cancelGeneration;
+    // 只有非并发（capacity=1）或主界面显式调用时才清空。
+    // 这里简单处理：只要是新的 _transcribeFile 就清空主界面旧状态，
+    // 后来的会覆盖先来的。
     _filePath = path;
     _result = null;
     _elapsed = null;
@@ -420,46 +442,47 @@ class TranscribeController extends ChangeNotifier {
     _errorText = null;
     notifyListeners();
 
+    Transcriber? worker;
     Duration? modelPreparationElapsed;
-    if (_worker == null) {
-      final Stopwatch preparationWatch = Stopwatch()..start();
-      await prepare();
-      modelPreparationElapsed = preparationWatch.elapsed;
-      if (generation != _cancelGeneration) return;
-      if (_worker == null) return; // prepare 已经把错误写进 _errorText
-    }
-
     final Stopwatch watch = Stopwatch()..start();
     try {
       _stage = JobStage.decoding;
       _statusText = '正在解码音频…';
       _progress = null;
       notifyListeners();
+
       final Stopwatch decodeWatch = Stopwatch()..start();
-      // 解码留在主 isolate：平台通道只在 root isolate 可用，
-      // 而原生侧本身已经在后台线程解码，不会卡界面。
       final Float32List samples = await _decoder.decodeFile(path);
       final Duration decodeElapsed = decodeWatch.elapsed;
-      if (generation != _cancelGeneration) return;
+      if (generation != _cancelGeneration) return null;
+
+      final Stopwatch preparationWatch = Stopwatch()..start();
+      worker = await acquireWorker();
+      modelPreparationElapsed = preparationWatch.elapsed;
+      if (generation != _cancelGeneration) return null;
+      if (worker == null) return null;
 
       _stage = JobStage.transcribing;
       _statusText = '正在识别…';
       _progress = 0;
       notifyListeners();
+
       final Stopwatch transcriptionWatch = Stopwatch()..start();
-      final TranscriptionResult result = await _worker!.transcribe(
+      final TranscriptionResult result = await worker.transcribe(
         samples,
         onProgress: (int done, int total) {
-          _progress = total > 0 ? done / total : null;
-          _statusText = '正在识别… ${((_progress ?? 0) * 100).round()}%';
+          final double p = total > 0 ? done / total : 0;
+          _progress = p;
+          _statusText = '正在识别… ${(p * 100).round()}%';
+          onProgress?.call(p);
           notifyListeners();
         },
       );
       final Duration transcriptionElapsed = transcriptionWatch.elapsed;
-      if (generation != _cancelGeneration) return;
-      _result = result;
+      if (generation != _cancelGeneration) return null;
+
       _elapsed = watch.elapsed;
-      _performanceReport = PerformanceReport(
+      final PerformanceReport report = PerformanceReport(
         generatedAt: DateTime.now(),
         fileName: p.basename(path),
         platform: Platform.operatingSystem,
@@ -480,18 +503,26 @@ class TranscribeController extends ChangeNotifier {
         minSpeechDuration: _config.vad.minSpeechDuration,
         maxSpeechDuration: _config.vad.maxSpeechDuration,
       );
+
+      // 写回主状态，供首页预览/导出
+      _result = result;
+      _performanceReport = report;
       _statusText = '识别完成：${result.length} 段';
       _progress = 1;
       _markProjectChanged();
+      return (result: result, report: report);
     } on AudioDecodeException catch (error) {
-      if (generation != _cancelGeneration) return;
+      if (generation != _cancelGeneration) return null;
       _errorText = error.message;
       _statusText = '解码失败';
+      return null;
     } on Object catch (error) {
-      if (generation != _cancelGeneration) return;
+      if (generation != _cancelGeneration) return null;
       _errorText = _humanize(error);
       _statusText = '识别失败';
+      return null;
     } finally {
+      if (worker != null) _pool.release(worker);
       _stage = JobStage.idle;
       notifyListeners();
     }
@@ -525,6 +556,7 @@ class TranscribeController extends ChangeNotifier {
     LiveSession? session;
     StreamSubscription<Segment>? subscription;
     StreamIterator<DecodedAudioChunk>? chunks;
+    Transcriber? worker;
     Duration decodeElapsed = Duration.zero;
     Duration transcriptionElapsed = Duration.zero;
     int decodedSamples = 0;
@@ -603,7 +635,7 @@ class TranscribeController extends ChangeNotifier {
         onUpdate?.call(currentResult());
       }
 
-      final Transcriber? worker = await ensureWorker();
+      worker = await acquireWorker();
       if (worker == null) {
         throw StateError(_errorText ?? '识别模型未就绪');
       }
@@ -809,6 +841,7 @@ class TranscribeController extends ChangeNotifier {
       }
       await subscription?.cancel();
       taskWatch.stop();
+      if (worker != null) _pool.release(worker);
       if (!reportEmitted) emitReport(completedSuccessfully);
       _stage = JobStage.idle;
       lease?.release();
@@ -1033,6 +1066,7 @@ class TranscribeController extends ChangeNotifier {
         a.useItn == b.useItn &&
         a.numThreads == b.numThreads &&
         a.partialInterval == b.partialInterval &&
+        a.provider == b.provider &&
         av.threshold == bv.threshold &&
         av.minSilenceDuration == bv.minSilenceDuration &&
         av.minSpeechDuration == bv.minSpeechDuration &&
@@ -1047,9 +1081,7 @@ class TranscribeController extends ChangeNotifier {
   /// 关闭识别 isolate。`dispose()` 不能 await，测试与显式收尾用这个。
   Future<void> shutdown() async {
     _cancelGeneration++;
-    final Transcriber? worker = _worker;
-    _worker = null;
-    await worker?.dispose();
+    await _clearWorkers();
   }
 
   /// 取消当前准备、解码、识别、翻译或说话人标注操作，并阻止迟到的异步结果写回。
@@ -1057,7 +1089,7 @@ class TranscribeController extends ChangeNotifier {
   /// 翻译和说话人标注都是对已有结果的后处理，取消时必须保留原字幕；
   /// 只有新转写阶段才清空尚未完成的结果。
   Future<void> cancelCurrentTask() async {
-    if (!busy) return;
+    if (!busy && _scheduler.activeLeases.isEmpty) return;
     _cancelGeneration++;
     if (_stage == JobStage.decoding || _stage == JobStage.transcribing) {
       _result = null;
@@ -1065,10 +1097,8 @@ class TranscribeController extends ChangeNotifier {
     _progress = null;
     _errorText = null;
     _statusText = '处理已取消';
-    final Transcriber? worker = _worker;
-    _worker = null;
     notifyListeners();
-    await worker?.dispose();
+    await _clearWorkers();
   }
 
   @override

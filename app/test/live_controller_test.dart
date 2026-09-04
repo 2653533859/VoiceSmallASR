@@ -358,7 +358,9 @@ void main() {
   });
 
   test('等待调度器时 shutdown 不会延迟启动麦克风', () async {
-    final TranscriptionTaskScheduler scheduler = TranscriptionTaskScheduler();
+    final TranscriptionTaskScheduler scheduler = TranscriptionTaskScheduler(
+      capacity: 1,
+    );
     addTearDown(scheduler.dispose);
     final TranscriptionTaskLease background = await scheduler.acquire(
       priority: TranscriptionTaskPriority.backgroundCache,

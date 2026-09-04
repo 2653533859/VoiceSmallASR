@@ -156,9 +156,7 @@ typedef BatchTranslationResultCallback = FutureOr<void> Function(
 ///
 /// 先顺序识别文件，再用同一个 provider 顺序翻译已完成的结果。
 class BatchTranscriptionController extends ChangeNotifier {
-  BatchTranscriptionController({required this.transcriber}) {
-    transcriber.addListener(_onTranscriberChanged);
-  }
+  BatchTranscriptionController({required this.transcriber});
 
   final TranscribeController transcriber;
   final List<BatchItem> _items = <BatchItem>[];
@@ -478,7 +476,6 @@ class BatchTranscriptionController extends ChangeNotifier {
 
   Future<void> _runQueue() async {
     try {
-      // 先准备模型，使取消发生在模型准备阶段时也能在这里安全收尾。
       final Stopwatch preparationWatch = Stopwatch()..start();
       await transcriber.prepare();
       _modelPreparationElapsed ??= preparationWatch.elapsed;
@@ -487,67 +484,14 @@ class BatchTranscriptionController extends ChangeNotifier {
         _markWaiting(BatchItemStatus.cancelled);
         return;
       }
-      while (true) {
-        if (_cancelRequested) {
-          _markWaiting(BatchItemStatus.cancelled);
-          return;
-        }
-        if (_pauseRequested) {
-          _markWaiting(BatchItemStatus.paused);
-          _paused = _items.any(
-            (BatchItem item) => item.status == BatchItemStatus.paused,
-          );
-          return;
-        }
-        final int? next = _nextQueuedIndex();
-        if (next == null) return;
-        _currentIndex = next;
-        final BatchItem item = _items[next];
-        _items[next] = item.copyWith(
-          status: BatchItemStatus.processing,
-          progress: 0,
-          attempts: item.attempts + 1,
-          clearResult: true,
-          clearError: true,
-        );
-        _notify();
 
-        await transcriber.transcribeFile(item.path);
-        if (_cancelRequested) {
-          _items[next] = _items[next].copyWith(
-            status: BatchItemStatus.cancelled,
-            clearProgress: true,
-            clearResult: true,
-            clearError: true,
-          );
-          _markWaiting(BatchItemStatus.cancelled);
-          _notify();
-          return;
-        }
-        final TranscriptionResult? result = transcriber.result;
-        final String? error = transcriber.errorText;
-        if (result == null ||
-            error != null ||
-            transcriber.filePath != item.path) {
-          _performanceReports.remove(item.path);
-          _items[next] = _items[next].copyWith(
-            status: BatchItemStatus.failed,
-            clearProgress: true,
-            errorText: error ?? '未得到有效识别结果',
-            clearResult: true,
-          );
-        } else {
-          final PerformanceReport? report = transcriber.performanceReport;
-          if (report != null) _performanceReports[item.path] = report;
-          _items[next] = _items[next].copyWith(
-            status: BatchItemStatus.completed,
-            progress: 1,
-            result: result,
-            clearError: true,
-          );
-        }
-        _notify();
-      }
+      // 根据调度器容量开启多个并发处理循环
+      final int concurrency = transcriber.scheduler.capacity;
+      final List<Future<void>> workers = List<Future<void>>.generate(
+        concurrency,
+        (_) => _workerLoop(),
+      );
+      await Future.wait(workers);
     } finally {
       _currentIndex = null;
       _running = false;
@@ -556,6 +500,96 @@ class BatchTranscriptionController extends ChangeNotifier {
       _cancelRequested = false;
       _notify();
     }
+  }
+
+  Future<void> _workerLoop() async {
+    while (true) {
+      if (_cancelRequested) {
+        _markWaiting(BatchItemStatus.cancelled);
+        return;
+      }
+      if (_pauseRequested) {
+        _markWaiting(BatchItemStatus.paused);
+        _paused = _items.any(
+          (BatchItem item) => item.status == BatchItemStatus.paused,
+        );
+        return;
+      }
+
+      final int? next = _claimNextQueuedIndex();
+      if (next == null) return;
+
+      // 这里的 _currentIndex 仅用于 UI 上的“当前处理条目”高亮，
+      // 并发下可能会跳变，但批量列表里的进度是各自独立的。
+      _currentIndex = next;
+      final BatchItem item = _items[next];
+      _notify();
+
+      try {
+        final ({TranscriptionResult result, PerformanceReport report})?
+        taskResult = await transcriber.transcribeFile(
+          item.path,
+          onProgress: (double? p) {
+            if (_cancelRequested) return;
+            _items[next] = _items[next].copyWith(progress: p);
+            _notify();
+          },
+        );
+
+        if (_cancelRequested) {
+          _items[next] = _items[next].copyWith(
+            status: BatchItemStatus.cancelled,
+            clearProgress: true,
+            clearResult: true,
+            clearError: true,
+          );
+          _notify();
+          return;
+        }
+
+        if (taskResult == null) {
+          _items[next] = _items[next].copyWith(
+            status: BatchItemStatus.failed,
+            clearProgress: true,
+            errorText: transcriber.errorText ?? '未得到有效识别结果',
+            clearResult: true,
+          );
+        } else {
+          _performanceReports[item.path] = taskResult.report;
+          _items[next] = _items[next].copyWith(
+            status: BatchItemStatus.completed,
+            progress: 1,
+            result: taskResult.result,
+            clearError: true,
+          );
+        }
+      } on Object catch (error) {
+        _items[next] = _items[next].copyWith(
+          status: BatchItemStatus.failed,
+          clearProgress: true,
+          errorText: _humanize(error),
+          clearResult: true,
+        );
+      }
+      _notify();
+    }
+  }
+
+  int? _claimNextQueuedIndex() {
+    for (int i = 0; i < _items.length; i++) {
+      if (_items[i].status == BatchItemStatus.queued) {
+        // 立即标记为 processing 避免并发冲突
+        _items[i] = _items[i].copyWith(
+          status: BatchItemStatus.processing,
+          progress: 0,
+          attempts: _items[i].attempts + 1,
+          clearResult: true,
+          clearError: true,
+        );
+        return i;
+      }
+    }
+    return null;
   }
 
   Future<void> _runTranslationQueue(
@@ -659,13 +693,6 @@ class BatchTranscriptionController extends ChangeNotifier {
     }
   }
 
-  int? _nextQueuedIndex() {
-    for (int i = 0; i < _items.length; i++) {
-      if (_items[i].status == BatchItemStatus.queued) return i;
-    }
-    return null;
-  }
-
   int? _nextTranslatableIndex(Set<int> attempted) {
     for (int i = 0; i < _items.length; i++) {
       if (attempted.contains(i)) continue;
@@ -691,19 +718,6 @@ class BatchTranscriptionController extends ChangeNotifier {
         );
       }
     }
-  }
-
-  void _onTranscriberChanged() {
-    final int? index = _currentIndex;
-    if (!_running ||
-        index == null ||
-        _items[index].status != BatchItemStatus.processing) {
-      return;
-    }
-    final double? progress = transcriber.progress;
-    if (progress == null || progress == _items[index].progress) return;
-    _items[index] = _items[index].copyWith(progress: progress);
-    _notify();
   }
 
   void _notify() {
@@ -767,7 +781,6 @@ class BatchTranscriptionController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    transcriber.removeListener(_onTranscriberChanged);
     if (_running || _paused) {
       _cancelRequested = true;
       unawaited(transcriber.cancelCurrentTask());

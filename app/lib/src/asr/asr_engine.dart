@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as so;
@@ -63,6 +64,8 @@ class AsrEngine implements Transcriber, SegmentDecoder {
       progress: progress,
     );
 
+    final String effectiveProvider = _resolveProvider(cfg.provider);
+
     final so.OfflineRecognizer recognizer = so.OfflineRecognizer(
       so.OfflineRecognizerConfig(
         model: so.OfflineModelConfig(
@@ -73,12 +76,28 @@ class AsrEngine implements Transcriber, SegmentDecoder {
           ),
           tokens: paths.tokens,
           numThreads: cfg.numThreads,
-          provider: 'cpu',
+          provider: effectiveProvider,
           debug: false,
         ),
       ),
     );
     return AsrEngine._(recognizer, paths, cfg);
+  }
+
+  static String _resolveProvider(String requested) {
+    if (requested != 'auto') return requested;
+
+    if (Platform.isAndroid) {
+      // Android 8.1+ (API 27) 支持 NNAPI。
+      // 注意：某些低端机的 NNAPI 实现可能比 CPU 还慢，
+      // 但对于 SenseVoice 这种模型，通常 NPU 加速效果显著。
+      return 'nnapi';
+    } else if (Platform.isMacOS) {
+      // Apple Silicon 设备上 CoreML 效果极佳。
+      return 'coreml';
+    }
+
+    return 'cpu';
   }
 
   /// 解码单段音频。[offset] 是该段在整条音频里的起始秒数。

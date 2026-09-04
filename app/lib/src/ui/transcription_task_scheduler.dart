@@ -6,6 +6,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -56,16 +57,36 @@ class TranscriptionTaskLease {
 }
 
 class TranscriptionTaskScheduler extends ChangeNotifier {
+  TranscriptionTaskScheduler({int? capacity})
+    : capacity = capacity ?? _defaultCapacity();
+
+  static int _defaultCapacity() {
+    // 手机端内存有限 (每个模型 ~240MB)，建议并发 2；桌面端可更高。
+    if (Platform.isAndroid || Platform.isIOS) return 2;
+    return 4;
+  }
+
+  final int capacity;
   final List<_PendingTask> _pending = <_PendingTask>[];
-  TranscriptionTaskLease? _active;
+  final List<TranscriptionTaskLease> _activeLeases = <TranscriptionTaskLease>[];
   int _sequence = 0;
   bool _disposed = false;
 
-  TranscriptionTaskLease? get active => _active;
+  List<TranscriptionTaskLease> get activeLeases =>
+      List<TranscriptionTaskLease>.unmodifiable(_activeLeases);
 
-  String? get activeLabel => _active?.label;
+  TranscriptionTaskLease? get active =>
+      _activeLeases.isEmpty ? null : _activeLeases.first;
 
-  TranscriptionTaskPriority? get activePriority => _active?.priority;
+  String? get activeLabel => _activeLeases.isEmpty
+      ? null
+      : _activeLeases.map((TranscriptionTaskLease l) => l.label).join(', ');
+
+  TranscriptionTaskPriority? get activePriority => _activeLeases.isEmpty
+      ? null
+      : _activeLeases
+            .map((TranscriptionTaskLease l) => l.priority)
+            .reduce((a, b) => a.rank < b.rank ? a : b);
 
   List<String> get queuedLabels => List<String>.unmodifiable(
     _pending.map((_PendingTask task) => task.label),
@@ -94,33 +115,55 @@ class TranscriptionTaskScheduler extends ChangeNotifier {
           ? priorityOrder
           : a.sequence.compareTo(b.sequence);
     });
-    final TranscriptionTaskLease? active = _active;
-    if (active != null && priority.rank < active.priority.rank) {
-      active._requestPause(label);
-    }
+
+    _checkPreemption();
     _drain();
     notifyListeners();
     return completer.future;
   }
 
+  void _checkPreemption() {
+    if (_pending.isEmpty) return;
+
+    final _PendingTask next = _pending.first;
+    // 如果槽位已满，尝试抢占优先级最低（rank 最大）且低于 next 优先级的活跃任务。
+    if (_activeLeases.length >= capacity) {
+      TranscriptionTaskLease? lowestActive;
+      for (final TranscriptionTaskLease lease in _activeLeases) {
+        if (!lease.pauseRequested && next.priority.rank < lease.priority.rank) {
+          if (lowestActive == null ||
+              lease.priority.rank > lowestActive.priority.rank) {
+            lowestActive = lease;
+          }
+        }
+      }
+      lowestActive?._requestPause(next.label);
+    }
+  }
+
   void _drain() {
-    if (_active != null || _pending.isEmpty || _disposed) return;
-    final _PendingTask next = _pending.removeAt(0);
-    final TranscriptionTaskLease lease = TranscriptionTaskLease._(
-      this,
-      next.priority,
-      next.label,
-    );
-    _active = lease;
-    next.completer.complete(lease);
+    if (_pending.isEmpty || _disposed || _activeLeases.length >= capacity) {
+      return;
+    }
+    while (_pending.isNotEmpty && _activeLeases.length < capacity) {
+      final _PendingTask next = _pending.removeAt(0);
+      final TranscriptionTaskLease lease = TranscriptionTaskLease._(
+        this,
+        next.priority,
+        next.label,
+      );
+      _activeLeases.add(lease);
+      next.completer.complete(lease);
+    }
     notifyListeners();
   }
 
   void _release(TranscriptionTaskLease lease) {
-    if (!identical(_active, lease)) return;
-    _active = null;
-    _drain();
-    notifyListeners();
+    if (_activeLeases.remove(lease)) {
+      _checkPreemption();
+      _drain();
+      notifyListeners();
+    }
   }
 
   @override
@@ -131,7 +174,7 @@ class TranscriptionTaskScheduler extends ChangeNotifier {
     for (final _PendingTask task in pending) {
       task.completer.completeError(StateError('识别任务调度器已关闭'));
     }
-    _active = null;
+    _activeLeases.clear();
     super.dispose();
   }
 }

@@ -551,12 +551,10 @@ void main() {
     expect(c.videoTranscriptionReport?.chunkCount, 1);
   });
 
-  // 回归：dispose() 只关「当下的」worker。模型加载要几十秒，界面在这期间
-  // 被销毁时 _worker 还是 null，于是 isolate 与 240 MB 模型一起漏掉；
-  // 而 prepare 的收尾还会 notifyListeners，抛 "used after being disposed"。
-  test('模型还在加载时销毁控制器：迟到的转写器被收掉，且不抛 disposed 错误', () async {
+  test('模型尚未启动时销毁控制器：不会迟到启动 worker 或抛 disposed 错误', () async {
     final Completer<void> gate = Completer<void>();
     final FakeTranscriber arrived = FakeTranscriber();
+    var launched = false;
     final TranscribeController c = TranscribeController(
       models: models(),
       launch:
@@ -565,6 +563,7 @@ void main() {
             required bool allowDownload,
             required ModelProgress onModelProgress,
           }) async {
+            launched = true;
             await gate.future;
             return arrived;
           },
@@ -575,7 +574,8 @@ void main() {
     gate.complete(); // 模型这才加载完
     await preparing; // 不应抛 FlutterError
 
-    expect(arrived.disposed, isTrue);
+    expect(launched, isFalse);
+    expect(arrived.disposed, isFalse);
   });
 }
 

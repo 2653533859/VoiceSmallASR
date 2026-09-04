@@ -9,6 +9,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
 import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/ui/transcription_task_scheduler.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 
 import 'support/fake_asr.dart';
@@ -25,10 +26,14 @@ void main() {
     if (workspace.existsSync()) workspace.deleteSync(recursive: true);
   });
 
-  TranscribeController buildController(AudioDecoder decoder) {
+  TranscribeController buildController(
+    AudioDecoder decoder, {
+    TranscriptionTaskScheduler? scheduler,
+  }) {
     return TranscribeController(
       decoder: decoder,
       models: ModelManager(root: workspace.path),
+      scheduler: scheduler ?? TranscriptionTaskScheduler(capacity: 1),
       launch: ({
         required AsrConfig config,
         required bool allowDownload,
@@ -65,6 +70,54 @@ void main() {
     expect(
       batch.performanceReport?.toJsonString(),
       contains('transcription_elapsed_ms'),
+    );
+  });
+
+  test('调度器有多个槽位时，批量转写会并行处理多个文件', () async {
+    final _GatedDecoder decoder = _GatedDecoder();
+    final TranscriptionTaskScheduler scheduler = TranscriptionTaskScheduler(
+      capacity: 2,
+    );
+    final TranscribeController transcriber = buildController(
+      decoder,
+      scheduler: scheduler,
+    );
+    final BatchTranscriptionController batch = BatchTranscriptionController(
+      transcriber: transcriber,
+    );
+    addTearDown(() async {
+      batch.dispose();
+      await transcriber.shutdown();
+      scheduler.dispose();
+    });
+
+    batch.enqueue(<String>['/tmp/a.wav', '/tmp/b.wav', '/tmp/c.wav']);
+    final Future<void> running = batch.start();
+    await decoder.firstTwoStarted.future;
+
+    expect(
+      decoder.paths,
+      unorderedEquals(<String>['/tmp/a.wav', '/tmp/b.wav']),
+    );
+    expect(
+      batch.items.where(
+        (BatchItem item) => item.status == BatchItemStatus.processing,
+      ),
+      hasLength(2),
+    );
+    expect(batch.items[2].status, BatchItemStatus.queued);
+
+    decoder.release('/tmp/a.wav');
+    decoder.release('/tmp/b.wav');
+    await decoder.thirdStarted.future;
+    decoder.release('/tmp/c.wav');
+    await running;
+
+    expect(
+      batch.items.every(
+        (BatchItem item) => item.status == BatchItemStatus.completed,
+      ),
+      isTrue,
     );
   });
 
@@ -323,6 +376,33 @@ class _FailOnceDecoder extends _RecordingDecoder {
       throw AudioDecodeException('模拟解码失败', path: path);
     }
     return Float32List(kSampleRate);
+  }
+}
+
+class _GatedDecoder implements AudioDecoder {
+  final List<String> paths = <String>[];
+  final Completer<void> firstTwoStarted = Completer<void>();
+  final Completer<void> thirdStarted = Completer<void>();
+  final Map<String, Completer<void>> _gates = <String, Completer<void>>{};
+
+  @override
+  Future<Float32List> decodeFile(String path) async {
+    paths.add(path);
+    if (paths.length == 2 && !firstTwoStarted.isCompleted) {
+      firstTwoStarted.complete();
+    }
+    if (paths.length == 3 && !thirdStarted.isCompleted) {
+      thirdStarted.complete();
+    }
+    final Completer<void> gate = _gates.putIfAbsent(path, Completer<void>.new);
+    await gate.future;
+    return Float32List(kSampleRate);
+  }
+
+  void release(String path) {
+    final Completer<void>? gate = _gates[path];
+    if (gate == null) throw StateError('尚未开始解码 $path');
+    if (!gate.isCompleted) gate.complete();
   }
 }
 

@@ -47,7 +47,8 @@ class _VsasrAppState extends State<VsasrApp> {
   late final LiveController _live =
       widget.live ??
       LiveController(
-        provideWorker: _controller.ensureWorker,
+        provideWorker: _controller.acquireWorker,
+        releaseWorker: (worker) => _controller.releaseWorker(worker),
         languageOf: () => _controller.language,
         scheduler: _controller.scheduler,
         provideTranslationProvider:

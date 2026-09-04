@@ -4,7 +4,7 @@
 [`app/integration_test/device_acceptance_test.dart`](app/integration_test/device_acceptance_test.dart)，普通
 `flutter test` 不会自动执行这些设备测试。
 
-## 当前状态（2026-08-27）
+## 当前状态（2026-09-04）
 
 | 平台 | 状态 | 说明 |
 | --- | --- | --- |
@@ -13,6 +13,11 @@
 | Windows 用户桌面 | 待设备 | 当前开发机没有 Windows 用户桌面；CI 安装包 smoke 不能替代用户环境 |
 
 M20 尚未完成，不能据此宣称三平台真实设备兼容性已经验收通过。
+
+2026-09-04 已完成待验收的实现更新：文件/批量/实时转写改为按调度容量复用识别 worker 池，Android 硬字幕编码改为
+前台服务并复用字幕位图，ONNX provider 可选 `auto`、`cpu`、`nnapi` 或 `coreml`。这组改动已通过
+`flutter analyze` 和 269 项 Flutter 单测；当前开发机未安装 Java Runtime，尚未完成 Android Kotlin 编译。它们没有
+在真实设备验证，不能作为 M20 的性能、内存或兼容性结论。
 
 ## macOS 自动化结果
 
@@ -79,7 +84,8 @@ flutter test integration_test/device_acceptance_test.dart -d <android-device-id>
 ```
 
 需保存模型下载/校验、文件 RTF、麦克风 RTF、RSS、视频播放和硬字幕编码结果，并注明厂商、芯片、
-Android 版本、输入格式和是否出现持续积压。
+Android 版本、输入格式和是否出现持续积压。硬字幕编码还需确认前台通知在长任务期间可见且任务不会被系统回收；
+设备支持时分别记录 `nnapi` 与 `cpu` provider 的结果和错误信息。
 
 ### Windows 用户桌面
 
@@ -91,4 +97,4 @@ Android 版本、输入格式和是否出现持续积压。
 
 本次 macOS 自动化结果证明分块解码、三个播放列表条目切换和生命周期暂停/恢复代码路径在当前开发机上可运行，但不移除 M20 的 Android 真机、Windows
 用户桌面、macOS 睡眠唤醒和辅助功能待验收项。下一步应先获取两类真实设备，再按平台分别补齐报告；若发现问题，记录设备、输入格式、
-复现步骤、日志和报告路径。
+复现步骤、日志和报告路径。macOS 设备还应在支持时记录 `coreml` provider 的结果，并与 `cpu` 结果分开保存。

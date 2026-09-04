@@ -22,6 +22,9 @@ import 'package:vsasr_app/src/ui/transcription_task_scheduler.dart';
 /// 借用识别器。返回 null 表示模型没准备好（原因由提供方自己展示）。
 typedef WorkerProvider = Future<Transcriber?> Function();
 
+/// 释放借用的识别器。
+typedef WorkerReleaser = void Function(Transcriber worker);
+
 /// 当前识别语言，只用于导出结果里的 `language` 字段。
 typedef LanguageOf = String Function();
 
@@ -46,6 +49,7 @@ enum LiveStage {
 class LiveController extends ChangeNotifier {
   LiveController({
     required this.provideWorker,
+    this.releaseWorker,
     required this.languageOf,
     this.provideTranslationProvider,
     String translationTargetLanguage = 'zh-CN',
@@ -64,12 +68,14 @@ class LiveController extends ChangeNotifier {
   }
 
   final WorkerProvider provideWorker;
+  final WorkerReleaser? releaseWorker;
   final LanguageOf languageOf;
   final TranslationProviderResolver? provideTranslationProvider;
   final TranscriptionTaskScheduler? scheduler;
   late String _translationTargetLanguage;
   final AudioSource _mic;
 
+  Transcriber? _activeWorker;
   final List<Segment> _finals = <Segment>[];
   Segment? _partial;
   LiveSession? _session;
@@ -180,9 +186,11 @@ class LiveController extends ChangeNotifier {
       }
       final Transcriber? worker = await provideWorker();
       if (worker == null) throw StateError('模型未就绪，先在「文件转写」页把模型下载好');
+      _activeWorker = worker;
       if (_disposed ||
           generation != _startGeneration ||
           _stage != LiveStage.starting) {
+        _teardownWorker();
         _releaseTaskLease();
         return;
       }
@@ -192,6 +200,7 @@ class LiveController extends ChangeNotifier {
           generation != _startGeneration ||
           _stage != LiveStage.starting) {
         await session.finish();
+        _teardownWorker();
         _releaseTaskLease();
         return;
       }
@@ -417,6 +426,15 @@ class LiveController extends ChangeNotifier {
     _session = null;
     await _segments?.cancel();
     _segments = null;
+    _teardownWorker();
+  }
+
+  void _teardownWorker() {
+    final Transcriber? worker = _activeWorker;
+    _activeWorker = null;
+    if (worker != null) {
+      releaseWorker?.call(worker);
+    }
   }
 
   void _releaseTaskLease() {

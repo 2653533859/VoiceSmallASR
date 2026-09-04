@@ -148,6 +148,7 @@ Flutter 端在 `getApplicationSupportDirectory()/models`。
 | `subtitles.py` | `app/lib/src/subtitles/subtitles.dart`（多双语字幕） |
 | `streaming.py` | `app/lib/src/asr/streaming_transcriber.dart` |
 | —（Python 端不需要） | `app/lib/src/asr/transcription_worker.dart`：后台识别 isolate |
+| —（Python 端不需要） | `app/lib/src/asr/transcription_worker_pool.dart`：识别 isolate 池 |
 | `cli.py`（人机界面） | `app/lib/src/ui/`：`transcribe_controller.dart` / `live_controller.dart` 两个状态机 + `home_page.dart` |
 
 **界面层只跟两个控制器打交道**：`TranscribeController` 管文件转写（模型准备 → 解码 → 识别 → 导出），
@@ -156,9 +157,11 @@ Flutter 端在 `getApplicationSupportDirectory()/models`。
 控制器只渲染字幕文本（`renderResult`），落盘交给界面层的 `SaveFile` —— 三端保存对话框差异太大
 （Android SAF、macOS sandbox），不该混进状态机。
 
-**两个页签共用同一个识别 worker**：模型 240 MB，加载两份在手机上直接爆，
-所以 `LiveController` 不自己起 isolate，而是通过 `TranscribeController.ensureWorker()` 借。
-同一时刻只允许一路实时会话（`startLive()` 会拒绝第二路）。
+**识别 worker 由共享池管理**：`TranscribeController` 通过
+`TranscriptionWorkerPool.acquireWorker()` / `releaseWorker()` 向文件、批量和实时字幕借用 worker；池大小与
+`TranscriptionTaskScheduler.capacity` 保持一致，移动端默认 2、桌面默认 4。实时任务仍由调度器优先，且同一时刻
+只允许一路实时会话（`startLive()` 会拒绝第二路）。模型约 240 MB，提升容量前必须先完成真实设备内存验收；切换配置、
+取消任务或删除模型时会先清空池，避免新旧模型同时驻留。
 
 **识别一律走 `TranscriptionWorker`（后台 isolate），不要在 UI isolate 上直接调 `AsrEngine`。**
 sherpa-onnx 的解码是同步 FFI 调用，`await` 让不出去。分工：主 isolate 解码音频

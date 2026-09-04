@@ -59,6 +59,7 @@ object HardSubtitleEncoderChannel {
             }
             worker.execute {
                 try {
+                    TranscriptionService.start(context, "正在压制视频字幕...")
                     AndroidHardSubtitleEncoder(context).encode(
                         inputPath,
                         outputPath,
@@ -74,6 +75,8 @@ object HardSubtitleEncoderChannel {
                             null,
                         )
                     }
+                } finally {
+                    TranscriptionService.stop(context)
                 }
             }
         }
@@ -288,11 +291,14 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
                             decoder.releaseOutputBuffer(outputIndex, true)
                             val cueIndex = cueIndexAt(cues, timestampUs / 1_000_000.0)
                             if (cueIndex != lastCueIndex) {
-                                renderer.setOverlay(
-                                    cues.getOrNull(cueIndex)?.let {
-                                        buildOverlay(it, style, width, height)
-                                    },
-                                )
+                                val cue = cues.getOrNull(cueIndex)
+                                if (cue != null) {
+                                    val overlay = renderer.acquireOverlay()
+                                    drawOverlayToBitmap(cue, style, width, height, overlay)
+                                    renderer.pushOverlay()
+                                } else {
+                                    renderer.clearOverlay()
+                                }
                                 lastCueIndex = cueIndex
                             }
                             renderer.drawFrame(timestampUs)
@@ -522,18 +528,19 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
     private fun cueIndexAt(cues: List<SubtitleCue>, seconds: Double): Int =
         cues.indexOfFirst { seconds >= it.start && seconds < it.end }
 
-    private fun buildOverlay(
+    private fun drawOverlayToBitmap(
         cue: SubtitleCue,
         style: SubtitleRenderStyle,
         width: Int,
         height: Int,
-    ): Bitmap? {
+        bitmap: Bitmap,
+    ) {
         val lines = buildList {
             cue.speaker?.trim()?.takeIf { it.isNotEmpty() }?.let { add("【$it】") }
             cue.text.trim().takeIf { it.isNotEmpty() }?.let(::add)
             cue.translation?.trim()?.takeIf { it.isNotEmpty() }?.let(::add)
         }
-        if (lines.isEmpty()) return null
+        if (lines.isEmpty()) return
 
         val scale = max(0.5f, min(width / 1920f, height / 1080f))
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -547,7 +554,7 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
         }
         val maxTextWidth = width * 0.86f
         val wrappedLines = lines.flatMap { wrapText(it, textPaint, maxTextWidth) }
-        if (wrappedLines.isEmpty()) return null
+        if (wrappedLines.isEmpty()) return
         val metrics = textPaint.fontMetrics
         val lineHeight = (metrics.bottom - metrics.top) * 1.05f
         val padding = textPaint.textSize * 0.65f
@@ -561,7 +568,8 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
             SubtitleRenderStyle.Position.CENTER -> (height - blockHeight) / 2f
             SubtitleRenderStyle.Position.BOTTOM -> height * 0.93f - blockHeight
         }.coerceIn(0f, max(0f, height - blockHeight))
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+        bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
         val canvas = Canvas(bitmap)
         val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = style.backgroundColor
@@ -582,7 +590,6 @@ private class AndroidHardSubtitleEncoder(private val context: Context) {
             canvas.drawText(line, width / 2f, baseline, textPaint)
             baseline += lineHeight
         }
-        return bitmap
     }
 
     private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
@@ -851,6 +858,9 @@ private class GlVideoRenderer(
     )
     private val transform = FloatArray(16)
     private var hasOverlay = false
+    private val overlayBitmap: Bitmap by lazy {
+        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    }
 
     init {
         val egl = createEgl(encoderSurface)
@@ -871,14 +881,19 @@ private class GlVideoRenderer(
         overlayProgram = createProgram(OVERLAY_VERTEX_SHADER, OVERLAY_FRAGMENT_SHADER)
     }
 
-    fun setOverlay(bitmap: Bitmap?) {
+    fun acquireOverlay(): Bitmap {
+        return overlayBitmap
+    }
+
+    fun pushOverlay() {
         makeCurrent()
-        hasOverlay = bitmap != null
-        if (bitmap != null) {
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexture)
-            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-            bitmap.recycle()
-        }
+        hasOverlay = true
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTexture)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, overlayBitmap, 0)
+    }
+
+    fun clearOverlay() {
+        hasOverlay = false
     }
 
     fun drawFrame(presentationTimeUs: Long) {
@@ -927,6 +942,7 @@ private class GlVideoRenderer(
             GLES20.glDeleteTextures(2, intArrayOf(oesTexture, overlayTexture), 0)
             GLES20.glDeleteProgram(oesProgram)
             GLES20.glDeleteProgram(overlayProgram)
+            if (!overlayBitmap.isRecycled) overlayBitmap.recycle()
             EGL14.eglMakeCurrent(
                 display,
                 EGL14.EGL_NO_SURFACE,

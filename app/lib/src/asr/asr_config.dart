@@ -115,6 +115,7 @@ class AsrConfig {
     this.numThreads = 2,
     this.partialInterval = 0.6,
     this.vad = const VadConfig(),
+    this.provider = 'auto',
   }) {
     if (!kLanguages.contains(language)) {
       throw ArgumentError.value(language, 'language', '必须是 $kLanguages 之一');
@@ -139,6 +140,10 @@ class AsrConfig {
   /// 流式局部结果的最小间隔（秒）。设为 0 关闭局部结果，只输出定稿句子。
   final double partialInterval;
 
+  /// 推理运行时的后端提供者。
+  /// 可选值：`auto` (根据平台自动选择), `cpu`, `nnapi` (Android), `coreml` (macOS).
+  final String provider;
+
   final VadConfig vad;
 
   factory AsrConfig.fromJson(Object? value) {
@@ -162,6 +167,11 @@ class AsrConfig {
         'config.partial_interval',
         fallback: 0.6,
       ),
+      provider: _configString(
+        value['provider'],
+        'config.provider',
+        fallback: 'auto',
+      ),
       vad: VadConfig.fromJson(value['vad'] ?? const <String, Object?>{}),
     );
   }
@@ -171,6 +181,7 @@ class AsrConfig {
     'use_itn': useItn,
     'num_threads': numThreads,
     'partial_interval': partialInterval,
+    'provider': provider,
     'vad': <String, dynamic>{
       'threshold': vad.threshold,
       'min_silence_duration': vad.minSilenceDuration,
@@ -189,6 +200,7 @@ class AsrConfig {
     int? numThreads,
     double? partialInterval,
     VadConfig? vad,
+    String? provider,
   }) {
     return AsrConfig(
       language: language ?? this.language,
@@ -196,6 +208,7 @@ class AsrConfig {
       numThreads: numThreads ?? this.numThreads,
       partialInterval: partialInterval ?? this.partialInterval,
       vad: vad ?? this.vad,
+      provider: provider ?? this.provider,
     );
   }
 }

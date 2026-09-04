@@ -13,7 +13,7 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 | 引擎层（`lib/src/asr/`） | ✅ 已移植，与 Python 端一一对应（含 VAD 驱动的流式识别） |
 | 音频解码（`lib/src/audio/`） | ✅ Dart 侧完成；macOS、Android API 35 模拟器和 Windows CI 已端到端验证，Android 真机与 Windows 用户桌面仍待实测 |
 | 麦克风采集（`lib/src/audio/microphone.dart`） | ✅ `record` 取 16 kHz 单声道 PCM16 → float32 |
-| 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道 |
+| 后台识别 isolate（`lib/src/asr/transcription_worker.dart`） | ✅ 整段转写 + 实时会话两条通道；由 worker 池按调度容量复用 |
 | 字幕导入/导出（`lib/src/subtitles/`） | ✅ SRT/VTT/JSON 导入，SRT/VTT/JSON/TXT 导出，含双语字幕 |
 | 翻译层（`lib/src/translation/`） | ✅ 第三方 OpenAI-compatible provider、模型列表获取与选择、批量/重试/进度、批量文件翻译复用 provider、双语导出、目标语言持久化、术语表、服务商预设、API 连接测试、文件/实时/视频字幕翻译已完成；真实网络验收按个人使用范围主动跳过 |
 | 界面（`lib/src/ui/`） | ✅ 文件转写、实时字幕、视频播放、字幕联动、外部字幕加载、批量转写/翻译/导出、字幕校对和项目管理已完成；视频页新增播放列表、播放时流式转写、非中文字幕逐段翻译、字幕/翻译开关以及后续视频字幕预缓存 |
@@ -26,7 +26,7 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 
 flutter pub get
 flutter analyze     # 验收标准：No issues found
-flutter test        # 240 项，不依赖模型与设备
+flutter test        # 269 项，不依赖模型与设备
 
 # Android release 构建（需要 Android SDK/JDK；当前 release 使用 debug signing 做验证）
 flutter build apk --release
