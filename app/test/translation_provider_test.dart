@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
@@ -35,7 +37,11 @@ void main() {
     final _FakeProvider provider = _FakeProvider();
     const TranscriptionResult empty = TranscriptionResult();
 
-    final TranscriptionResult result = await translateResult(empty, provider, to: 'zh');
+    final TranscriptionResult result = await translateResult(
+      empty,
+      provider,
+      to: 'zh',
+    );
 
     expect(result, same(empty));
     expect(provider.calls, 0);
@@ -132,6 +138,79 @@ void main() {
     );
     expect(provider.calls, 0);
   });
+
+  test('限流会退避重试，配置错误不会重复发送请求', () async {
+    final _SequencedProvider retryable = _SequencedProvider(<Object>[
+      const TranslationException('请求过于频繁', statusCode: 429),
+      <String>['你好'],
+    ]);
+    expect(
+      await translateTexts(
+        retryable,
+        <String>['hello'],
+        to: 'zh',
+        policy: const TranslationRequestPolicy(
+          maxRetries: 1,
+          initialRetryDelay: Duration.zero,
+        ),
+      ),
+      <String>['你好'],
+    );
+    expect(retryable.calls, 2);
+
+    final _SequencedProvider invalidSettings = _SequencedProvider(<Object>[
+      const TranslationException('API Key 无效', statusCode: 401),
+    ]);
+    await expectLater(
+      translateTexts(
+        invalidSettings,
+        <String>['hello'],
+        to: 'zh',
+        policy: const TranslationRequestPolicy(
+          maxRetries: 2,
+          initialRetryDelay: Duration.zero,
+        ),
+      ),
+      throwsA(isA<TranslationException>()),
+    );
+    expect(invalidSettings.calls, 1);
+
+    final _SequencedProvider networkFailure = _SequencedProvider(<Object>[
+      const SocketException('temporary network failure'),
+      <String>['你好'],
+    ]);
+    expect(
+      await translateTexts(
+        networkFailure,
+        <String>['hello'],
+        to: 'zh',
+        policy: const TranslationRequestPolicy(
+          maxRetries: 1,
+          initialRetryDelay: Duration.zero,
+        ),
+      ),
+      <String>['你好'],
+    );
+    expect(networkFailure.calls, 2);
+  });
+
+  test('翻译返回后如任务已取消，不会把结果映射给字幕', () async {
+    bool cancelled = false;
+    final _SequencedProvider provider = _SequencedProvider(<Object>[
+      <String>['你好'],
+    ], onCall: () => cancelled = true);
+
+    await expectLater(
+      translateTexts(
+        provider,
+        <String>['hello'],
+        to: 'zh',
+        isCancelled: () => cancelled,
+      ),
+      throwsA(isA<TranslationCancelledException>()),
+    );
+    expect(provider.calls, 1);
+  });
 }
 
 class _FakeProvider implements TranslationProvider {
@@ -162,5 +241,26 @@ class _FakeProvider implements TranslationProvider {
     }
     final int count = resultCount ?? values.length;
     return values.take(count).map((String value) => '译文：$value').toList();
+  }
+}
+
+class _SequencedProvider implements TranslationProvider {
+  _SequencedProvider(this.responses, {this.onCall});
+
+  final List<Object> responses;
+  final void Function()? onCall;
+  int calls = 0;
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) async {
+    calls++;
+    onCall?.call();
+    final Object response = responses.removeAt(0);
+    if (response is List<String>) return response;
+    throw response;
   }
 }

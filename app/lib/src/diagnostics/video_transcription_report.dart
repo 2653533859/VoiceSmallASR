@@ -32,6 +32,8 @@ class VideoTranscriptionReport {
     required this.peakRssBytes,
     required this.lastProgressAt,
     required this.completed,
+    this.modelPreparationElapsed = Duration.zero,
+    this.firstFinalElapsed,
   });
 
   final String path;
@@ -46,6 +48,8 @@ class VideoTranscriptionReport {
   final int peakRssBytes;
   final DateTime lastProgressAt;
   final bool completed;
+  final Duration modelPreparationElapsed;
+  final Duration? firstFinalElapsed;
 
   double get decodedDurationSeconds => decodedSamples / 16000;
 
@@ -64,5 +68,8 @@ class VideoTranscriptionReport {
     'peak_rss_bytes': peakRssBytes,
     'last_progress_at': lastProgressAt.toUtc().toIso8601String(),
     'completed': completed,
+    'model_preparation_ms': modelPreparationElapsed.inMilliseconds,
+    if (firstFinalElapsed != null)
+      'first_final_ms': firstFinalElapsed!.inMilliseconds,
   };
 }

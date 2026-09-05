@@ -117,6 +117,7 @@ class TranscribeController extends ChangeNotifier {
   VideoTranscriptionReport? _videoTranscriptionReport;
   int _projectRevision = 0;
   int _cancelGeneration = 0;
+  int _activeFileTasks = 0;
 
   /// 当前阶段。
   JobStage get stage => _stage;
@@ -238,7 +239,7 @@ class TranscribeController extends ChangeNotifier {
   AsrConfig get config => _config;
 
   /// 有任务在跑时界面应禁用按钮。
-  bool get busy => _stage != JobStage.idle;
+  bool get busy => _stage != JobStage.idle || _activeFileTasks > 0;
 
   /// 界面已经销毁后仍会有异步任务收尾（下载几十秒、识别几分钟），
   /// 那时通知监听者会抛 "used after being disposed"，因此统一在这里拦掉。
@@ -323,6 +324,9 @@ class TranscribeController extends ChangeNotifier {
   void releaseWorker(Transcriber worker) {
     _pool.release(worker);
   }
+
+  /// 异常或无法结束的会话不能交给下一个任务复用。
+  Future<void> discardWorker(Transcriber worker) => _pool.discard(worker);
 
   Future<void> _clearWorkers() {
     final Future<void>? clearing = _clearingWorkers;
@@ -413,13 +417,32 @@ class TranscribeController extends ChangeNotifier {
     String path, {
     void Function(double? progress)? onProgress,
   }) async {
+    if (_disposed) return null;
+    _activeFileTasks++;
+    try {
+      return await _runFileTranscription(path, onProgress: onProgress);
+    } finally {
+      _activeFileTasks--;
+      notifyListeners();
+    }
+  }
+
+  Future<({TranscriptionResult result, PerformanceReport report})?>
+  _runFileTranscription(
+    String path, {
+    void Function(double? progress)? onProgress,
+  }) async {
+    final int generation = _cancelGeneration;
+    if (_decoder is ChunkedAudioDecoder) {
+      return _transcribeChunkedFile(path, onProgress: onProgress);
+    }
     // 并发下 busy 判定由 scheduler.acquire 阻塞完成，这里只拦掉重复点击。
     final TranscriptionTaskLease lease = await _scheduler.acquire(
       priority: TranscriptionTaskPriority.userTask,
       label: p.basename(path),
     );
     try {
-      if (_disposed) return null;
+      if (_disposed || generation != _cancelGeneration) return null;
       return await _transcribeFile(path, onProgress: onProgress);
     } finally {
       lease.release();
@@ -528,6 +551,88 @@ class TranscribeController extends ChangeNotifier {
     }
   }
 
+  Future<({TranscriptionResult result, PerformanceReport report})?>
+  _transcribeChunkedFile(
+    String path, {
+    void Function(double? progress)? onProgress,
+  }) async {
+    final int generation = _cancelGeneration;
+    final AsrConfig config = _config;
+    VideoTranscriptionReport? diagnostics;
+    _filePath = path;
+    _result = null;
+    _elapsed = null;
+    _performanceReport = null;
+    _errorText = null;
+    try {
+      final TranscriptionResult result = await _transcribeAudioStream(
+        path,
+        taskPriority: TranscriptionTaskPriority.userTask,
+        isFileTask: true,
+        onUpdate: (TranscriptionResult update) {
+          if (_disposed || generation != _cancelGeneration) return;
+          // 只保存定稿字幕。临时结果不进入项目或异常恢复快照。
+          final List<Segment> finals = update.segments
+              .where((Segment segment) => segment.isFinal)
+              .toList(growable: false);
+          if (_filePath == path) {
+            _result = update.copyWith(segments: finals);
+            notifyListeners();
+          }
+          onProgress?.call(null);
+        },
+        onDiagnostics: (VideoTranscriptionReport report) =>
+            diagnostics = report,
+      );
+      if (_disposed || generation != _cancelGeneration) return null;
+      final VideoTranscriptionReport measured = diagnostics!;
+      final PerformanceReport report = PerformanceReport(
+        generatedAt: DateTime.now(),
+        fileName: p.basename(path),
+        platform: Platform.operatingSystem,
+        language: config.language,
+        audioDuration: result.duration,
+        sampleCount: measured.processedSamples,
+        segmentCount: result.length,
+        elapsed: measured.decodeElapsed + measured.transcriptionElapsed,
+        decodeElapsed: measured.decodeElapsed,
+        transcriptionElapsed: measured.transcriptionElapsed,
+        modelPreparationElapsed: measured.modelPreparationElapsed,
+        peakRssBytes: measured.peakRssBytes,
+        firstFinalElapsed: measured.firstFinalElapsed,
+        chunkCount: measured.chunkCount,
+        modelBytes: _modelBytes > 0 ? _modelBytes : null,
+        numThreads: config.numThreads,
+        useItn: config.useItn,
+        partialInterval: config.partialInterval,
+        vadThreshold: config.vad.threshold,
+        minSilenceDuration: config.vad.minSilenceDuration,
+        minSpeechDuration: config.vad.minSpeechDuration,
+        maxSpeechDuration: config.vad.maxSpeechDuration,
+      );
+      if (_filePath == path) {
+        _result = result;
+        _elapsed = report.elapsed;
+        _performanceReport = report;
+        _statusText = '识别完成：${result.length} 段';
+        _progress = 1;
+        _markProjectChanged();
+        notifyListeners();
+      }
+      onProgress?.call(1);
+      return (result: result, report: report);
+    } on Object {
+      // 共用管线已记录具体错误及诊断；保留已定稿字幕供校对或导出。
+      if (!_disposed && generation == _cancelGeneration) {
+        if (_filePath == path && _result?.isEmpty == false) {
+          _markProjectChanged();
+        }
+        notifyListeners();
+      }
+      return null;
+    }
+  }
+
   /// 以流式会话转写视频音轨，逐段回报字幕，但不覆盖当前项目结果。
   ///
   /// 播放列表预处理复用同一个 worker，避免额外加载一份约 240 MB 的模型。
@@ -543,6 +648,31 @@ class TranscribeController extends ChangeNotifier {
     VideoTranscriptionDiagnosticsCallback? onDiagnostics,
   }) async {
     if (busy) throw StateError('当前正在处理另一个文件');
+    return _transcribeAudioStream(
+      path,
+      onUpdate: onUpdate,
+      isCancelled: isCancelled,
+      taskPriority: taskPriority,
+      initialResult: initialResult,
+      startAt: startAt,
+      progressTimeout: progressTimeout,
+      onDiagnostics: onDiagnostics,
+    );
+  }
+
+  Future<TranscriptionResult> _transcribeAudioStream(
+    String path, {
+    VideoTranscriptionUpdate? onUpdate,
+    bool Function()? isCancelled,
+    TranscriptionTaskPriority taskPriority =
+        TranscriptionTaskPriority.currentVideo,
+    TranscriptionResult? initialResult,
+    Duration startAt = Duration.zero,
+    Duration progressTimeout = const Duration(seconds: 30),
+    VideoTranscriptionDiagnosticsCallback? onDiagnostics,
+    bool isFileTask = false,
+  }) async {
+    final String taskLabel = isFileTask ? '文件转写' : '视频字幕转写';
     if (startAt < Duration.zero) {
       throw ArgumentError.value(startAt, 'startAt', '不能小于 0');
     }
@@ -559,6 +689,8 @@ class TranscribeController extends ChangeNotifier {
     Transcriber? worker;
     Duration decodeElapsed = Duration.zero;
     Duration transcriptionElapsed = Duration.zero;
+    Duration modelPreparationElapsed = Duration.zero;
+    Duration? firstFinalElapsed;
     int decodedSamples = 0;
     int processedSamples = 0;
     int chunkCount = 0;
@@ -567,6 +699,34 @@ class TranscribeController extends ChangeNotifier {
     bool reportEmitted = false;
     bool completedSuccessfully = false;
     final Stopwatch taskWatch = Stopwatch();
+    final Completer<Never> streamFailure = Completer<Never>();
+    unawaited(
+      streamFailure.future.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {},
+      ),
+    );
+
+    Future<T> withCancellation<T>(Future<T> operation) {
+      final Completer<T> cancelled = Completer<T>();
+      final Timer timer = Timer.periodic(const Duration(milliseconds: 100), (
+        _,
+      ) {
+        if (cancelled.isCompleted) return;
+        try {
+          if (_videoTaskCancelled(lease, generation, isCancelled)) {
+            cancelled.completeError(StateError('$taskLabel已取消'));
+          }
+        } on Object catch (error, stack) {
+          cancelled.completeError(error, stack);
+        }
+      });
+      return Future.any<T>(<Future<T>>[
+        operation,
+        cancelled.future,
+        streamFailure.future,
+      ]).whenComplete(timer.cancel);
+    }
 
     void sampleRss() {
       final int current = ProcessInfo.currentRss;
@@ -589,8 +749,10 @@ class TranscribeController extends ChangeNotifier {
         peakRssBytes: peakRssBytes,
         lastProgressAt: lastProgressAt,
         completed: completed,
+        modelPreparationElapsed: modelPreparationElapsed,
+        firstFinalElapsed: firstFinalElapsed,
       );
-      _videoTranscriptionReport = report;
+      if (!isFileTask) _videoTranscriptionReport = report;
       onDiagnostics?.call(report);
     }
 
@@ -635,7 +797,9 @@ class TranscribeController extends ChangeNotifier {
         onUpdate?.call(currentResult());
       }
 
+      final Stopwatch preparationWatch = Stopwatch()..start();
       worker = await acquireWorker();
+      modelPreparationElapsed = preparationWatch.elapsed;
       if (worker == null) {
         throw StateError(_errorText ?? '识别模型未就绪');
       }
@@ -645,18 +809,28 @@ class TranscribeController extends ChangeNotifier {
       _stage = JobStage.decoding;
       _errorText = null;
       _progress = null;
-      _statusText = '正在解码视频音轨…';
+      _statusText = isFileTask ? '正在解码音频…' : '正在解码视频音轨…';
       notifyListeners();
       _stage = JobStage.transcribing;
       _progress = 0;
-      _statusText = '正在实时转写视频字幕…';
+      _statusText = '正在$taskLabel…';
       notifyListeners();
-      session = await worker.startLive();
+      final LiveSession activeSession = await withCancellation<LiveSession>(
+        worker.startLive().timeout(progressTimeout),
+      );
+      session = activeSession;
       if (_videoTaskCancelled(lease, generation, isCancelled)) {
         throw StateError('视频字幕转写已取消');
       }
       final Completer<void> completed = Completer<void>();
-      subscription = session.segments.listen(
+      // 识别器可以在消费音频时提前报错；在最后等待收尾前也注册错误处理。
+      unawaited(
+        completed.future.then<void>(
+          (_) {},
+          onError: (Object _, StackTrace _) {},
+        ),
+      );
+      subscription = activeSession.segments.listen(
         (Segment segment) {
           if (_disposed || generation != _cancelGeneration) return;
           final Segment shifted = _offsetVideoSegment(
@@ -665,6 +839,7 @@ class TranscribeController extends ChangeNotifier {
             indexOffset,
           );
           if (shifted.isFinal) {
+            firstFinalElapsed ??= taskWatch.elapsed;
             finals.add(shifted);
             partial = null;
           } else {
@@ -675,13 +850,15 @@ class TranscribeController extends ChangeNotifier {
           emitUpdate();
         },
         onError: (Object error, StackTrace stack) {
+          if (!streamFailure.isCompleted) {
+            streamFailure.completeError(error, stack);
+          }
           if (!completed.isCompleted) completed.completeError(error, stack);
         },
         onDone: () {
           if (!completed.isCompleted) completed.complete();
         },
       );
-      final LiveSession activeSession = session;
       final StreamIterator<DecodedAudioChunk> audioChunks =
           StreamIterator<DecodedAudioChunk>(
             _videoAudioChunks(path, startAt: effectiveStartAt),
@@ -689,21 +866,6 @@ class TranscribeController extends ChangeNotifier {
       chunks = audioChunks;
 
       Future<bool> moveNextWithCancellation() {
-        final Completer<void> cancellation = Completer<void>();
-        final Timer timer = Timer.periodic(const Duration(milliseconds: 100), (
-          Timer _,
-        ) {
-          try {
-            if (_videoTaskCancelled(lease, generation, isCancelled) &&
-                !cancellation.isCompleted) {
-              cancellation.complete();
-            }
-          } on Object catch (error, stack) {
-            if (!cancellation.isCompleted) {
-              cancellation.completeError(error, stack);
-            }
-          }
-        });
         final Future<bool> next = audioChunks.moveNext().timeout(
           progressTimeout,
           onTimeout: () {
@@ -714,11 +876,7 @@ class TranscribeController extends ChangeNotifier {
             );
           },
         );
-        final Future<bool> cancelled = cancellation.future.then<bool>((_) {
-          throw StateError('视频字幕转写已取消');
-        });
-        return Future.any<bool>(<Future<bool>>[next, cancelled])
-            .whenComplete(timer.cancel);
+        return withCancellation(next);
       }
 
       while (true) {
@@ -738,12 +896,14 @@ class TranscribeController extends ChangeNotifier {
         chunkCount++;
         _progress = null;
         _statusText =
-            '正在实时转写视频字幕… 已解码 ${(startSeconds + decodedSamples / kSampleRate).round()} 秒，'
+            '正在$taskLabel… 已解码 ${(startSeconds + decodedSamples / kSampleRate).round()} 秒，'
             '已识别 ${(processedSamples / kSampleRate).round()} 秒';
         notifyListeners();
         final Stopwatch transcribeWatch = Stopwatch()..start();
         try {
-          await activeSession.accept(decoded.samples).timeout(progressTimeout);
+          await withCancellation(
+            activeSession.accept(decoded.samples).timeout(progressTimeout),
+          );
         } on TimeoutException {
           throw VideoTranscriptionStalledException(
             path: path,
@@ -761,19 +921,19 @@ class TranscribeController extends ChangeNotifier {
         sampleRss();
         _progress = null;
         _statusText =
-            '正在实时转写视频字幕… 已识别 ${(startSeconds + processedSamples / kSampleRate).round()} 秒';
+            '正在$taskLabel… 已识别 ${(startSeconds + processedSamples / kSampleRate).round()} 秒';
         notifyListeners();
         emitUpdate();
       }
       _statusText =
-          '正在完成视频字幕… 已识别 ${(startSeconds + processedSamples / kSampleRate).round()} 秒';
+          '正在完成$taskLabel… 已识别 ${(startSeconds + processedSamples / kSampleRate).round()} 秒';
       notifyListeners();
       if (_videoTaskCancelled(lease, generation, isCancelled)) {
         throw StateError('视频字幕转写已取消');
       }
       final Stopwatch finishWatch = Stopwatch()..start();
       try {
-        await activeSession.finish().timeout(progressTimeout);
+        await withCancellation(activeSession.finish().timeout(progressTimeout));
       } on TimeoutException {
         throw VideoTranscriptionStalledException(
           path: path,
@@ -803,7 +963,7 @@ class TranscribeController extends ChangeNotifier {
       );
       onUpdate?.call(result);
       _progress = 1;
-      _statusText = '视频字幕转写完成：${result.length} 段';
+      _statusText = '$taskLabel完成：${result.length} 段';
       completedSuccessfully = true;
       emitReport(true);
       return result;
@@ -839,13 +999,28 @@ class TranscribeController extends ChangeNotifier {
       } on Object {
         // 解码器异常时不再阻塞任务收尾。
       }
-      await subscription?.cancel();
+      try {
+        await subscription?.cancel().timeout(cleanupTimeout);
+      } on Object {
+        // 底层异常不能跳过 worker 和调度租约的释放。
+      }
       taskWatch.stop();
-      if (worker != null) _pool.release(worker);
-      if (!reportEmitted) emitReport(completedSuccessfully);
-      _stage = JobStage.idle;
-      lease?.release();
-      notifyListeners();
+      try {
+        if (worker != null) {
+          if (completedSuccessfully) {
+            _pool.release(worker);
+          } else {
+            await _pool.discard(worker).timeout(const Duration(seconds: 12));
+          }
+        }
+      } on Object {
+        // discard 先移出池，销毁异常不覆盖原错误或阻止释放租约。
+      } finally {
+        if (!reportEmitted) emitReport(completedSuccessfully);
+        _stage = JobStage.idle;
+        lease?.release();
+        notifyListeners();
+      }
     }
   }
 

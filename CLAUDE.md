@@ -11,11 +11,13 @@ SenseVoice-Small（int8 ONNX）+ silero-vad，纯 CPU，模型仅首次运行联
 
 | 端 | 位置 | 状态 |
 | --- | --- | --- |
-| Python 库 + CLI | `src/voice_small_asr/` | 已完成，107 项测试 |
-| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工说话人标签、自动说话人分离以及桌面/Android 硬字幕编码已完成**：文件转写、实时字幕、视频播放、字幕联动、外部字幕加载、批量转写/翻译/导出队列与字幕校对编辑（234 项 `flutter test` + Android API 35 模拟器端到端 7 项 + Windows runner 完整模型端到端 7 项）。macOS/Android 模拟器/Windows CI 真实 mp4 已验收，Android 真机性能和 Windows 用户桌面运行仍待验证；真实翻译验收为个人使用范围外的可选项 |
+| Python 库 + CLI | `src/voice_small_asr/` | 已完成，117 项测试 |
+| Flutter 三端客户端（Windows/macOS/Android） | `app/` | **M1、M2、M3、M5 已完成，M4 翻译基础、批量流程、双语导出、第三方 API provider 与应用内翻译工作流已完成，M6 设置页与模型管理首期已完成，M7 已完成 macOS 无签名包、Android APK/AAB 和 Windows Release/安装包构建验证，M8 发布质量基线代码已落地，M9 无签名翻译体验已完成，M11 项目保存、字幕导入、首页项目管理、Android SAF、自动保存、异常恢复与媒体重新定位已完成，M12 多文件队列、批量翻译、安全导出、文本缓存与队列恢复已完成，M13 字幕批量时间偏移、搜索替换、阅读速度检查、翻译术语表、服务商预设、播放器字幕样式、视频配套字幕导出、文件转写性能诊断、批量/实时性能汇总、持续性能历史、手工说话人标签、自动说话人分离以及桌面/Android 硬字幕编码已完成**：文件转写、实时字幕、视频播放、字幕联动、外部字幕加载、批量转写/翻译/导出队列与字幕校对编辑（336 项 `flutter test` + Android API 35 模拟器端到端 7 项 + Windows runner 完整模型端到端 7 项）。macOS/Android 模拟器/Windows CI 真实 mp4 已验收，Android 真机性能和 Windows 用户桌面运行仍待验证；真实翻译验收为个人使用范围外的可选项 |
 
 两端固定 sherpa-onnx **1.13.5**，因此识别结果应逐字一致 —— **Python 端是 Flutter 端的对照基准**。
-阶段计划（M0–M9）、待决策事项与踩坑记录在 `DEVELOPMENT_PLAN.md`，动 Flutter 端前先读。
+当前实现、验证与剩余工作以 `THREE_ROUND_IMPROVEMENTS.md` 和 `NEXT_DEVELOPMENT_PLAN.md` 为准；历史阶段及踩坑记录见 `DEVELOPMENT_PLAN.md`。
+
+2026-09-05：Studio 支持撤销/重做、搜索替换与阅读速度检查；文件/WAV 已接入分块管线；worker 启动/销毁计入容量，实时音频队列有界且旧会话回调按代际隔离。质量评测入口为 `scripts/evaluate_asr.py`，规范见 `data/benchmark/README.md`。真实长语音、人工语料与 Android/Windows 真机验收仍待完成。
 
 ## 常用命令
 
@@ -27,14 +29,14 @@ uv run vsasr download          # 下载模型（约 155 MB 压缩包 → 240 MB�
 
 uv run ruff check .            # 静态检查（本项目的"type-check"等价物，无 mypy）
 uv run ruff format .
-uv run pytest                  # 全量：107 项
+uv run pytest                  # 全量：117 项
 uv run pytest tests/test_subtitles.py::test_short_segment_is_not_split   # 单个测试
 uv run pytest -k cantonese     # 按名字筛
 ```
 
-**无模型时 `uv run pytest` 是 87 passed / 18 skipped**，这是正常状态：`tests/conftest.py` 的
-`model_paths` fixture 在 `models.is_ready()` 为假时 skip 掉整组集成测试。改动 `engine.py` /
-`vad.py` / `streaming.py` 后必须先 `vsasr download`，否则真正验证识别行为的 18 项根本没跑。
+**无模型时集成测试会跳过**，具体数量以 `uv run pytest -ra` 为准。`tests/conftest.py` 的
+`model_paths` fixture 在 `models.is_ready()` 为假时跳过真实模型测试。修改 `engine.py` /
+`vad.py` / `streaming.py` 后，需要在模型就绪的环境运行，不能以无模型测试替代识别验收。
 `tests/test_models.py` 用 `_FakeResponse` 替身打桩 `urllib.request.urlopen`，不发真实网络请求 —— 新增下载相关测试沿用这个模式。
 
 Flutter 端：
@@ -46,7 +48,7 @@ export PATH="$HOME/development/flutter/bin:$PATH"   # 本机 Flutter 3.47.0 装�
 
 cd app && flutter pub get
 flutter analyze                # 验收标准：No issues found
-flutter test                   # 240 项，不需要模型也不需要设备
+flutter test                   # 336 项，不需要模型也不需要设备
 flutter test --plain-name "yue.wav 解出的采样数与文件头自洽"   # 跑单个
 flutter build apk --release   # Android release APK；需要 Android SDK/JDK
 flutter build appbundle --release # Android release AAB；无签名变量时使用 debug signing 做构建验证

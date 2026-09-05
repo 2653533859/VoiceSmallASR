@@ -163,6 +163,8 @@ class VideoPlaybackControls extends StatelessWidget {
     required this.hasSubtitles,
     required this.subtitleDisplayMode,
     required this.onSubtitleDisplayModeChanged,
+    required this.translationEnabled,
+    required this.onTranslationEnabledChanged,
     this.onPrevious,
     this.onNext,
   });
@@ -171,6 +173,8 @@ class VideoPlaybackControls extends StatelessWidget {
   final bool hasSubtitles;
   final VideoSubtitleDisplayMode subtitleDisplayMode;
   final ValueChanged<VideoSubtitleDisplayMode> onSubtitleDisplayModeChanged;
+  final bool translationEnabled;
+  final ValueChanged<bool> onTranslationEnabledChanged;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
 
@@ -193,9 +197,10 @@ class VideoPlaybackControls extends StatelessWidget {
           <PopupMenuEntry<VideoSubtitleDisplayMode>>[
             for (final VideoSubtitleDisplayMode mode
                 in VideoSubtitleDisplayMode.values)
-              PopupMenuItem<VideoSubtitleDisplayMode>(
+              CheckedPopupMenuItem<VideoSubtitleDisplayMode>(
                 key: Key('videoSubtitleMode-${mode.name}'),
                 value: mode,
+                checked: mode == subtitleDisplayMode,
                 child: Text(mode.label),
               ),
           ],
@@ -335,6 +340,16 @@ class VideoPlaybackControls extends StatelessWidget {
       onPressed: () => unawaited(toggleFullscreen()),
       icon: const Icon(Icons.fullscreen),
     );
+    final Widget translationToggle = IconButton(
+      key: const Key('videoTranslationToggle'),
+      tooltip: translationEnabled ? '关闭自动翻译字幕' : '开启自动翻译字幕',
+      onPressed: controller.busy
+          ? null
+          : () => onTranslationEnabledChanged(!translationEnabled),
+      icon: Icon(
+        translationEnabled ? Icons.translate : Icons.translate_outlined,
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       child: LayoutBuilder(
@@ -354,9 +369,14 @@ class VideoPlaybackControls extends StatelessWidget {
                 ),
                 Align(
                   alignment: Alignment.centerRight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[subtitleMenu, rateMenu, fullscreen],
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    children: <Widget>[
+                      subtitleMenu,
+                      translationToggle,
+                      rateMenu,
+                      fullscreen,
+                    ],
                   ),
                 ),
               ],
@@ -369,6 +389,7 @@ class VideoPlaybackControls extends StatelessWidget {
               position,
               const SizedBox(width: 8),
               subtitleMenu,
+              translationToggle,
               rateMenu,
               timeline(),
               next,

@@ -405,6 +405,99 @@ void main() {
     await c.shutdown();
   });
 
+  test('普通文件使用分块会话并产出资源报告，不调用全量解码', () async {
+    final _StreamingFakeDecoder decoder = _StreamingFakeDecoder();
+    final FakeTranscriber worker = FakeTranscriber(
+      liveSegments: const <Segment>[
+        Segment(text: '流式文件字幕', start: 0, end: 1, index: 0),
+      ],
+    );
+    final TranscribeController c = TranscribeController(
+      decoder: decoder,
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => worker,
+    );
+    addTearDown(c.shutdown);
+    final output = await c.transcribeFile('/tmp/long.wav');
+    expect(output, isNotNull);
+    expect(decoder.decodeFileCalls, 0);
+    expect(worker.calls, 0);
+    expect(worker.live!.chunks, hasLength(2));
+    expect(c.result!.text, '流式文件字幕');
+    expect(c.result!.duration, 2);
+    expect(output!.report.chunkCount, 2);
+    expect(output.report.peakRssBytes, greaterThan(0));
+    expect(output.report.firstFinalElapsed, isNotNull);
+    expect(output.report.toJson()['chunk_count'], 2);
+    expect(c.busy, isFalse);
+    expect(c.scheduler.activeLeases, isEmpty);
+  });
+
+  test('普通文件逐块等待，取消阻止后续解码且释放调度容量', () async {
+    final _BackpressureDecoder decoder = _BackpressureDecoder();
+    final Completer<void> gate = Completer<void>();
+    final FakeLiveSession live = FakeLiveSession(
+      onAccept: (_, _) => gate.future,
+    );
+    final TranscribeController c = TranscribeController(
+      decoder: decoder,
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => _ProvidedLiveTranscriber(live),
+    );
+    addTearDown(c.shutdown);
+    final running = c.transcribeFile('/tmp/long.wav');
+    await pumpEventQueue();
+    expect(decoder.yieldedChunks, 1);
+    expect(c.busy, isTrue);
+    await c.cancelCurrentTask();
+    expect(await running.timeout(const Duration(seconds: 2)), isNull);
+    expect(decoder.yieldedChunks, 1);
+    expect(c.scheduler.activeLeases, isEmpty);
+    expect(c.result, isNull);
+    expect(c.busy, isFalse);
+    gate.complete();
+  });
+
+  test('首块字幕流错误立即停止解码并回收异常 worker', () async {
+    final _BackpressureDecoder decoder = _BackpressureDecoder();
+    final Completer<void> gate = Completer<void>();
+    final FakeLiveSession live = FakeLiveSession(
+      onAccept: (session, _) {
+        session.fail(StateError('识别流损坏'));
+        return gate.future;
+      },
+    );
+    final TranscribeController c = TranscribeController(
+      decoder: decoder,
+      models: models(),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => _ProvidedLiveTranscriber(live),
+    );
+    addTearDown(c.shutdown);
+    expect(
+      await c
+          .transcribeFile('/tmp/broken.wav')
+          .timeout(const Duration(seconds: 2)),
+      isNull,
+    );
+    expect(c.errorText, contains('识别流损坏'));
+    expect(decoder.yieldedChunks, 1);
+    expect(c.scheduler.activeLeases, isEmpty);
+    expect(c.busy, isFalse);
+    gate.complete();
+  });
+
   test('视频流式转写逐段回报字幕且不覆盖当前项目', () async {
     final _StreamingFakeDecoder decoder = _StreamingFakeDecoder();
     final FakeTranscriber worker = FakeTranscriber(

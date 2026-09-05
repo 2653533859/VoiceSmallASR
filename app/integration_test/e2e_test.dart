@@ -26,6 +26,7 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/transcription_worker.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 import 'package:vsasr_app/src/video/video_timeline.dart';
 
@@ -106,6 +107,27 @@ void main() {
     expect(segment.words, isNotEmpty, reason: 'token 级时间戳不该为空');
     expect(segment.start, greaterThanOrEqualTo(0));
     expect(segment.end, lessThanOrEqualTo(result.duration + 0.001));
+  });
+
+  test('文件分块生产管线保留粤语结果并生成资源诊断', () async {
+    expect(paths.exists, isTrue, reason: '本验收必须有真实模型');
+    final String path = p.join(wavs, 'yue.wav');
+    expect(File(path).existsSync(), isTrue, reason: '本验收必须有粤语音频');
+    final TranscribeController controller = TranscribeController(
+      config: AsrConfig(language: 'yue'),
+      offlineMode: true,
+    );
+    addTearDown(controller.shutdown);
+    final output = await controller.transcribeFile(path);
+    expect(output, isNotNull, reason: controller.errorText);
+    expect(output!.result.text, kYueBaseline);
+    expect(output.report.sampleCount, kYueSamples);
+    expect(output.report.chunkCount, greaterThan(0));
+    expect(output.report.firstFinalElapsed, isNotNull);
+    expect(output.report.peakRssBytes, greaterThan(0));
+    expect(controller.scheduler.activeLeases, isEmpty);
+    // ignore: avoid_print
+    print('文件分块生产管线报告：${output.report.toJsonString()}');
   });
 
   test('识别 m4a（原生解码 + 引擎）：粤语用字同样保留', () async {

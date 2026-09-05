@@ -163,6 +163,65 @@ void main() {
     expect((calls.first.arguments as Map<Object?, Object?>)['startMs'], 12000);
   });
 
+  test('WAV 分块续接保持重采样相位和尾块', () async {
+    _mock((MethodCall call) async => throw StateError('不应走原生'), calls);
+    final File file = writeFile(
+      'resume.wav',
+      buildWav(
+        frames: List<List<double>>.generate(
+          10001,
+          (int i) => <double>[(i % 37) / 40],
+        ),
+        sampleRate: 44100,
+      ),
+    );
+    const PlatformAudioDecoder decoder = PlatformAudioDecoder();
+    final Float32List expected = await decoder.decodeFile(file.path);
+    final List<DecodedAudioChunk> chunks = await decoder
+        .decodeFileChunksFrom(
+          file.path,
+          startAt: const Duration(microseconds: 11111),
+          chunkDuration: const Duration(milliseconds: 7),
+        )
+        .toList();
+    expect(
+      chunks.expand((DecodedAudioChunk c) => c.samples),
+      expected.skip(177),
+    );
+    expect(chunks.last.isLast, isTrue);
+    expect(
+      chunks.take(chunks.length - 1).every((DecodedAudioChunk c) => !c.isLast),
+      isTrue,
+    );
+    expect(calls, isEmpty);
+  });
+
+  test('压缩 WAV 分块走原生分块 fallback', () async {
+    _mock((MethodCall call) async {
+      if (call.method == 'openPcm16kStream') return 'compressed-wav';
+      if (call.method == 'closePcm16kStream') return null;
+      expect(call.method, isNot('decodeToPcm16k'));
+      return <String, Object>{
+        'pcm': Float32List.fromList(<double>[0.25]),
+        'eof': true,
+      };
+    }, calls);
+    final File file = writeFile(
+      'adpcm.wav',
+      buildWav(
+        frames: <List<double>>[
+          <double>[0.5],
+        ],
+        format: 2,
+      ),
+    );
+    final List<DecodedAudioChunk> chunks = await const PlatformAudioDecoder()
+        .decodeFileChunks(file.path)
+        .toList();
+    expect(chunks.single.samples.single, 0.25);
+    expect(chunks.single.isLast, isTrue);
+  });
+
   test('原生按字节回传时也能解出 float32', () async {
     final ByteData raw = ByteData(8)
       ..setFloat32(0, 0.5, Endian.little)

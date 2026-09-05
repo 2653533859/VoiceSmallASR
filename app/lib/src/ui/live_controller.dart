@@ -6,6 +6,7 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -50,8 +51,12 @@ class LiveController extends ChangeNotifier {
   LiveController({
     required this.provideWorker,
     this.releaseWorker,
+    this.discardWorker,
+    this.operationTimeout = const Duration(seconds: 10),
+    this.maxPendingAudio = const Duration(seconds: 5),
     required this.languageOf,
     this.provideTranslationProvider,
+    this.translationRequestPolicy = const TranslationRequestPolicy(),
     String translationTargetLanguage = 'zh-CN',
     AudioSource? mic,
     this.scheduler,
@@ -69,8 +74,12 @@ class LiveController extends ChangeNotifier {
 
   final WorkerProvider provideWorker;
   final WorkerReleaser? releaseWorker;
+  final Future<void> Function(Transcriber worker)? discardWorker;
+  final Duration operationTimeout;
+  final Duration maxPendingAudio;
   final LanguageOf languageOf;
   final TranslationProviderResolver? provideTranslationProvider;
+  final TranslationRequestPolicy translationRequestPolicy;
   final TranscriptionTaskScheduler? scheduler;
   late String _translationTargetLanguage;
   final AudioSource _mic;
@@ -80,7 +89,25 @@ class LiveController extends ChangeNotifier {
   Segment? _partial;
   LiveSession? _session;
   StreamSubscription<Segment>? _segments;
-  StreamSubscription<void>? _audio;
+  StreamSubscription<Float32List>? _audio;
+  final Queue<Float32List> _pendingAudio = Queue<Float32List>();
+  Future<void>? _audioPump;
+  int _audioGeneration = 0;
+  Future<void>? _tearingDown;
+  int _pendingSamples = 0;
+  int _peakPendingSamples = 0;
+  Duration _maxAcceptLatency = Duration.zero;
+  int _overloadCount = 0;
+  bool _workerUnhealthy = false;
+
+  /// 包括当前正在消费的块，按实际收到但尚未确认消费的采样点计量。
+  Duration get pendingAudioDuration =>
+      Duration(microseconds: (_pendingSamples * 1000000 / kSampleRate).round());
+  Duration get peakPendingAudioDuration => Duration(
+    microseconds: (_peakPendingSamples * 1000000 / kSampleRate).round(),
+  );
+  Duration get maxAcceptLatency => _maxAcceptLatency;
+  int get overloadCount => _overloadCount;
   Future<void>? _translationQueue;
   int _translationGeneration = 0;
   TranslationProvider? _translationProvider;
@@ -167,6 +194,11 @@ class LiveController extends ChangeNotifier {
     _resetTranslationProvider();
     _performanceReport = null;
     _audioSamples = 0;
+    _pendingSamples = 0;
+    _peakPendingSamples = 0;
+    _maxAcceptLatency = Duration.zero;
+    _overloadCount = 0;
+    _workerUnhealthy = false;
     _stage = LiveStage.starting;
     _errorText = null;
     notifyListeners();
@@ -195,11 +227,13 @@ class LiveController extends ChangeNotifier {
         return;
       }
 
-      final LiveSession session = await worker.startLive();
+      final LiveSession session = await worker.startLive().timeout(
+        operationTimeout,
+      );
       if (_disposed ||
           generation != _startGeneration ||
           _stage != LiveStage.starting) {
-        await session.finish();
+        await session.finish().timeout(operationTimeout);
         _teardownWorker();
         _releaseTaskLease();
         return;
@@ -216,16 +250,11 @@ class LiveController extends ChangeNotifier {
         _releaseTaskLease();
         return;
       }
-      _audio = audio
-          .asyncMap<void>((Float32List chunk) async {
-            _audioSamples += chunk.length;
-            final LiveSession? active = _session;
-            if (active != null) await active.accept(chunk);
-          })
-          .listen((_) {}, onError: _onStreamError);
+      _audio = audio.listen(_enqueueAudio, onError: _onStreamError);
       _performanceWatch = Stopwatch()..start();
       _stage = LiveStage.recording;
     } on Object catch (error) {
+      _workerUnhealthy = true;
       _errorText = _humanize(error);
       await _teardown();
       _translationGeneration++;
@@ -262,6 +291,9 @@ class LiveController extends ChangeNotifier {
         sampleCount: _audioSamples,
         segmentCount: _finals.length,
         elapsed: performanceWatch.elapsed,
+        peakPendingAudioDuration: peakPendingAudioDuration,
+        maxAcceptLatency: maxAcceptLatency,
+        overloadCount: overloadCount,
       );
     }
     // 使尚未开始的排队请求失效；当前正在进行的请求最多只需等待一次超时。
@@ -303,6 +335,8 @@ class LiveController extends ChangeNotifier {
     final Future<void> task = previous.then<void>((_) async {
       try {
         await _translateFinal(segment, _translationGeneration);
+      } on TranslationCancelledException {
+        // 用户关闭实时翻译或会话已结束，不把取消显示为翻译失败。
       } on Object catch (error) {
         if (!_disposed) {
           _failedTranslations.add(key);
@@ -349,6 +383,8 @@ class LiveController extends ChangeNotifier {
     _translationQueue = previous.then<void>((_) async {
       try {
         await _translateFinal(segment, generation);
+      } on TranslationCancelledException {
+        // 同上：重试期间关闭翻译不留下失败标记。
       } on Object catch (error) {
         if (_disposed) return;
         _failedTranslations.add(_segmentKey(segment));
@@ -377,14 +413,17 @@ class LiveController extends ChangeNotifier {
     final String source = segment.language.trim().isEmpty
         ? languageOf()
         : segment.language;
-    final List<String> translated = await provider.translate(
+    final List<String> translated = await translateTexts(
+      provider,
       <String>[segment.text],
       from: source,
       to: _translationTargetLanguage,
+      policy: translationRequestPolicy,
+      isCancelled: () =>
+          _disposed ||
+          !_translationEnabled ||
+          generation != _translationGeneration,
     );
-    if (translated.length != 1) {
-      throw StateError('翻译服务返回 ${translated.length} 条结果，需要 1 条，无法安全对应实时字幕');
-    }
     if (_disposed ||
         !_translationEnabled ||
         generation != _translationGeneration) {
@@ -408,25 +447,110 @@ class LiveController extends ChangeNotifier {
       '${segment.index}:${segment.start}:${segment.end}';
 
   void _onStreamError(Object error) {
+    _workerUnhealthy = true;
     _errorText = _humanize(error);
     // 录音链路断了就别装作还在录：停设备、收会话，让用户能重开一次。
     unawaited(stop());
   }
 
-  /// 停设备 → 收会话 → 退订。顺序不能反：先停采集才不会有块喂给已关的会话。
-  Future<void> _teardown() async {
-    try {
-      await _mic.stop();
-    } on Object {
-      // 设备本来就没开起来，忽略
+  void _enqueueAudio(Float32List chunk) {
+    if (_stage != LiveStage.recording) return;
+    _audioSamples += chunk.length;
+    if ((_pendingSamples + chunk.length) / kSampleRate >
+        maxPendingAudio.inMicroseconds / 1000000) {
+      _overloadCount++;
+      _errorText = '识别速度跟不上录音，音频积压超过上限，已停止录音。';
+      unawaited(stop());
+      return;
     }
-    await _audio?.cancel();
-    _audio = null;
-    await _session?.finish();
-    _session = null;
-    await _segments?.cancel();
-    _segments = null;
-    _teardownWorker();
+    _pendingAudio.add(chunk);
+    _pendingSamples += chunk.length;
+    if (_pendingSamples > _peakPendingSamples) {
+      _peakPendingSamples = _pendingSamples;
+    }
+    _audioPump ??= _drainAudio(_session!, _audioGeneration);
+    notifyListeners();
+  }
+
+  Future<void> _drainAudio(LiveSession session, int generation) async {
+    try {
+      while (generation == _audioGeneration &&
+          _pendingAudio.isNotEmpty &&
+          !_workerUnhealthy) {
+        final Float32List chunk = _pendingAudio.removeFirst();
+        final Stopwatch watch = Stopwatch()..start();
+        try {
+          await session.accept(chunk).timeout(operationTimeout);
+        } finally {
+          watch.stop();
+          if (generation == _audioGeneration &&
+              watch.elapsed > _maxAcceptLatency) {
+            _maxAcceptLatency = watch.elapsed;
+          }
+        }
+        if (generation != _audioGeneration) return;
+        _pendingSamples -= chunk.length;
+        notifyListeners();
+      }
+    } on Object catch (error) {
+      if (generation == _audioGeneration) _onStreamError(error);
+    } finally {
+      if (generation == _audioGeneration) _audioPump = null;
+    }
+  }
+
+  /// 每个外部异步步骤有独立上限；失败后仍继续退订、回收与释放租约。
+  Future<void> _teardown() =>
+      _tearingDown ??= _performTeardown().whenComplete(() {
+        _tearingDown = null;
+      });
+
+  Future<void> _performTeardown() async {
+    Future<void> attempt(Future<void> Function() action) async {
+      try {
+        await action().timeout(operationTimeout);
+      } on Object catch (error) {
+        _workerUnhealthy = true;
+        _errorText ??= _humanize(error);
+      }
+    }
+
+    try {
+      await attempt(_mic.stop);
+      final StreamSubscription<Float32List>? audio = _audio;
+      _audio = null;
+      if (audio != null) await attempt(audio.cancel);
+      final Future<void>? pump = _audioPump;
+      if (pump != null) await attempt(() => pump);
+      _audioGeneration++;
+      _audioPump = null;
+      final LiveSession? session = _session;
+      _session = null;
+      if (session != null) await attempt(session.finish);
+      final StreamSubscription<Segment>? segments = _segments;
+      _segments = null;
+      if (segments != null) await attempt(segments.cancel);
+    } finally {
+      _audioGeneration++;
+      _audioPump = null;
+      _pendingAudio.clear();
+      _pendingSamples = 0;
+      final Transcriber? worker = _activeWorker;
+      _activeWorker = null;
+      try {
+        if (worker != null) {
+          if (_workerUnhealthy) {
+            await attempt(
+              () => discardWorker?.call(worker) ?? worker.dispose(),
+            );
+          } else {
+            releaseWorker?.call(worker);
+          }
+        }
+      } finally {
+        _releaseTaskLease();
+      }
+    }
   }
 
   void _teardownWorker() {
@@ -456,6 +580,7 @@ class LiveController extends ChangeNotifier {
   Future<void> shutdown() async {
     _startGeneration++;
     final bool wasActive = _stage != LiveStage.idle;
+    if (_stage == LiveStage.starting) _workerUnhealthy = true;
     await _teardown();
     _releaseTaskLease();
     _translationGeneration++;
@@ -494,7 +619,13 @@ class LiveController extends ChangeNotifier {
   Future<void> _awaitTranslationQueue() async {
     final Future<void>? pending = _translationQueue;
     _translationQueue = null;
-    if (pending != null) await pending;
+    if (pending != null) {
+      try {
+        await pending.timeout(operationTimeout);
+      } on Object catch (error) {
+        _errorText ??= _humanize(error);
+      }
+    }
   }
 
   void _resetTranslationProvider() {

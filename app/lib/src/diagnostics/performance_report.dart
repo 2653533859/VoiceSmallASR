@@ -25,6 +25,9 @@ class PerformanceReport {
     required this.minSilenceDuration,
     required this.minSpeechDuration,
     required this.maxSpeechDuration,
+    this.peakRssBytes,
+    this.firstFinalElapsed,
+    this.chunkCount,
   });
 
   final DateTime generatedAt;
@@ -53,6 +56,11 @@ class PerformanceReport {
   final double minSpeechDuration;
   final double maxSpeechDuration;
 
+  /// 整个进程的采样峰值，包含同进程播放器和其他识别任务。
+  final int? peakRssBytes;
+  final Duration? firstFinalElapsed;
+  final int? chunkCount;
+
   double? get realTimeFactor {
     if (audioDuration <= 0) return null;
     return elapsed.inMicroseconds /
@@ -75,6 +83,10 @@ class PerformanceReport {
       'model_preparation_elapsed_ms': modelPreparationElapsed!.inMilliseconds,
     'real_time_factor': realTimeFactor,
     'model_bytes': modelBytes,
+    if (peakRssBytes != null) 'peak_rss_bytes': peakRssBytes,
+    if (firstFinalElapsed != null)
+      'first_final_ms': firstFinalElapsed!.inMilliseconds,
+    if (chunkCount != null) 'chunk_count': chunkCount,
     'config': <String, Object>{
       'num_threads': numThreads,
       'use_itn': useItn,
@@ -220,6 +232,9 @@ class LivePerformanceReport {
     required this.sampleCount,
     required this.segmentCount,
     required this.elapsed,
+    this.peakPendingAudioDuration = Duration.zero,
+    this.maxAcceptLatency = Duration.zero,
+    this.overloadCount = 0,
   });
 
   final DateTime generatedAt;
@@ -231,6 +246,9 @@ class LivePerformanceReport {
 
   /// 从实时会话开始到收尾完成的墙钟耗时。
   final Duration elapsed;
+  final Duration peakPendingAudioDuration;
+  final Duration maxAcceptLatency;
+  final int overloadCount;
 
   double? get realTimeFactor {
     if (audioDuration <= 0) return null;
@@ -248,6 +266,9 @@ class LivePerformanceReport {
     'segment_count': segmentCount,
     'elapsed_ms': elapsed.inMilliseconds,
     'real_time_factor': realTimeFactor,
+    'peak_pending_audio_ms': peakPendingAudioDuration.inMilliseconds,
+    'max_accept_latency_ms': maxAcceptLatency.inMilliseconds,
+    'overload_count': overloadCount,
   };
 
   String toJsonString() =>
@@ -266,6 +287,9 @@ class LivePerformanceReport {
       '采样点：$sampleCount',
       '字幕段数：$segmentCount',
       '会话耗时：${_formatMilliseconds(elapsed)}',
+      '最大待处理音频：${_formatMilliseconds(peakPendingAudioDuration)}',
+      '最慢音频块识别：${_formatMilliseconds(maxAcceptLatency)}',
+      '过载次数：$overloadCount',
       'RTF：$rtf',
     ].join('\n');
   }

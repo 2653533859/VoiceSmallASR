@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "corpus_id": "voicesmallasr-human-mini-v1-planned",
+  "items": [
+    {"id": "yue-clean-001", "audio": "audio/yue-clean-001.wav", "audio_sha256": null, "annotation_status": "planned", "reference_text": null, "tags": ["yue", "clean"]},
+    {"id": "yue-en-mixed-001", "audio": "audio/yue-en-mixed-001.wav", "audio_sha256": null, "annotation_status": "planned", "reference_text": null, "tags": ["yue", "en", "mixed"]},
+    {"id": "zh-en-mixed-001", "audio": "audio/zh-en-mixed-001.wav", "audio_sha256": null, "annotation_status": "planned", "reference_text": null, "tags": ["zh", "en", "mixed"]},
+    {"id": "yue-noise-001", "audio": "audio/yue-noise-001.wav", "audio_sha256": null, "annotation_status": "planned", "reference_text": null, "tags": ["yue", "noise"]},
+    {"id": "yue-long-pause-001", "audio": "audio/yue-long-pause-001.wav", "audio_sha256": null, "annotation_status": "planned", "reference_text": null, "tags": ["yue", "long_pause"]},
+    {"id": "ko-clean-001", "audio": "audio/ko-clean-001.wav", "audio_sha256": null, "annotation_status": "planned", "reference_text": null, "tags": ["ko", "clean"]},
+    {"id": "ko-noise-001", "audio": "audio/ko-noise-001.wav", "audio_sha256": null, "annotation_status": "planned", "reference_text": null, "tags": ["ko", "noise"]}
+  ]
+}

@@ -10,7 +10,11 @@ class TranscriptionWorkerPool {
   TranscriptionWorkerPool({
     this.maxWorkers = 1,
     this.launch = launchWorkerIsolate,
-  });
+  }) {
+    if (maxWorkers <= 0) {
+      throw ArgumentError.value(maxWorkers, 'maxWorkers', '必须大于 0');
+    }
+  }
 
   final int maxWorkers;
   final TranscriberLauncher launch;
@@ -18,6 +22,9 @@ class TranscriptionWorkerPool {
   final List<_PoolEntry> _entries = <_PoolEntry>[];
   bool _disposed = false;
   int _generation = 0;
+  int _launching = 0;
+  final Map<Transcriber, Future<void>> _retiring = Map.identity();
+  final Expando<Future<void>> _retirements = Expando<Future<void>>();
 
   /// 获取一个识别器。
   ///
@@ -47,19 +54,24 @@ class TranscriptionWorkerPool {
       }
 
       // 2. 没找到一致的，看能否扩容
-      if (_entries.length < maxWorkers) {
-        final Transcriber worker = await launch(
-          config: config,
-          allowDownload: allowDownload,
-          onModelProgress: onModelProgress,
-        );
-        if (_disposed || generation != _generation) {
-          await worker.dispose();
-          throw StateError('TranscriptionWorkerPool 已重置');
+      if (_entries.length + _launching + _retiring.length < maxWorkers) {
+        // 在第一个 await 前占位；clear 后的迟到启动仍占容量直到销毁。
+        _launching++;
+        try {
+          final Transcriber worker = await launch(
+            config: config,
+            allowDownload: allowDownload,
+            onModelProgress: onModelProgress,
+          );
+          if (_disposed || generation != _generation) {
+            await _retire(worker);
+            throw StateError('TranscriptionWorkerPool 已重置');
+          }
+          _entries.add(_PoolEntry(worker, config)..busy = true);
+          return worker;
+        } finally {
+          _launching--;
         }
-        final _PoolEntry entry = _PoolEntry(worker, config)..busy = true;
-        _entries.add(entry);
-        return worker;
       }
 
       // 3. 已达上限，回收一个配置不符的空闲 worker
@@ -72,8 +84,7 @@ class TranscriptionWorkerPool {
       }
 
       if (stale != null) {
-        _entries.remove(stale);
-        await stale.worker.dispose();
+        await discard(stale.worker);
         // 递归尝试，下次循环会走扩容逻辑
         continue;
       }
@@ -92,6 +103,32 @@ class TranscriptionWorkerPool {
     }
   }
 
+  /// 移出异常 worker；即使销毁失败也不能重新借出。
+  Future<void> discard(Transcriber worker) async {
+    _entries.removeWhere((_PoolEntry entry) => identical(entry.worker, worker));
+    await _retire(worker);
+  }
+
+  Future<void> _retire(Transcriber worker) {
+    final Future<void>? existing = _retirements[worker];
+    if (existing != null) return existing;
+    final Completer<void> completion = Completer<void>();
+    final Future<void> result = completion.future;
+    _retirements[worker] = result;
+    _retiring[worker] = result;
+    unawaited(() async {
+      try {
+        await worker.dispose();
+        completion.complete();
+      } on Object catch (error, stack) {
+        completion.completeError(error, stack);
+      } finally {
+        _retiring.remove(worker);
+      }
+    }());
+    return result;
+  }
+
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
@@ -108,7 +145,11 @@ class TranscriptionWorkerPool {
         .map((_PoolEntry e) => e.worker)
         .toList();
     _entries.clear();
-    await Future.wait(toDispose.map((Transcriber w) => w.dispose()));
+    final List<Future<void>> pending = <Future<void>>[
+      ..._retiring.values,
+      ...toDispose.map(_retire),
+    ];
+    await Future.wait(pending);
   }
 
   bool _sameConfig(AsrConfig a, AsrConfig b) {

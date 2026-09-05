@@ -1,8 +1,8 @@
 # VoiceSmallASR 后续开发计划
 
-> 更新日期：2026-08-23　　当前版本：1.0.3
+> 历史阶段记录：2026-08-23　　当时版本：1.0.3
 
-后续版本的稳定化、发布治理和产品功能计划见 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)。
+当前源码状态与验证见 [三轮改进交付与验收](THREE_ROUND_IMPROVEMENTS.md)，后续计划见 [NEXT_DEVELOPMENT_PLAN.md](NEXT_DEVELOPMENT_PLAN.md)。本文保留当时的阶段与测试结果，不作为当前测试数或发布版本说明。
 
 ## 1. 现状速览
 

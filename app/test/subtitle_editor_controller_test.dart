@@ -97,6 +97,21 @@ void main() {
     expect(editor.result.segments.first.translation, '你好');
   });
 
+  test('译文可单独修改或清除，并保留字幕其他字段', () {
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
+
+    editor.updateTranslation(0, '您好');
+    expect(editor.result.segments.first.translation, '您好');
+    expect(editor.result.segments.first.words, hasLength(1));
+
+    editor.updateTranslation(0, '  ');
+    expect(editor.result.segments.first.translation, isNull);
+    editor.undo();
+    expect(editor.result.segments.first.translation, '您好');
+  });
+
   test('批量时间偏移会同步移动 token、保留译文并支持撤销', () {
     final SubtitleEditorController editor = SubtitleEditorController(
       initial: sample(),

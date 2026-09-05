@@ -206,6 +206,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('videoSubtitleMode')), findsOneWidget);
+    expect(find.byKey(const Key('videoTranslationToggle')), findsOneWidget);
     expect(find.byKey(const Key('videoPlaybackRate')), findsOneWidget);
     semantics.dispose();
   });
@@ -268,11 +269,8 @@ void main() {
       () => Future<void>.delayed(const Duration(milliseconds: 100)),
     );
     await tester.pumpAndSettle();
-    await _tapMenuItem(
-      tester,
-      menuKey: const Key('videoBackgroundOptions'),
-      itemKey: const Key('videoTranslationToggle'),
-    );
+    await tester.tap(find.byKey(const Key('videoTranslationToggle')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('继续翻译'));
     await tester.pumpAndSettle();
     await tester.runAsync(
@@ -281,6 +279,22 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('未配置翻译 API Key'), findsOneWidget);
+  });
+
+  testWidgets('文本编辑器和弹窗焦点不会交给播放器方向键', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: TextField(autofocus: true))),
+    );
+    final BuildContext textContext = tester.element(find.byType(EditableText));
+    expect(shouldHandleVideoPlaybackShortcut(textContext), isFalse);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: AlertDialog(content: Text('dialog'))),
+      ),
+    );
+    final BuildContext dialogContext = tester.element(find.byType(AlertDialog));
+    expect(shouldHandleVideoPlaybackShortcut(dialogContext), isFalse);
   });
 }
 

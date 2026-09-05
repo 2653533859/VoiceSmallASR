@@ -164,33 +164,23 @@ class PlatformAudioDecoder
         .replaceFirst('.', '')
         .toLowerCase();
     if (kWavExtensions.contains(extension)) {
-      final Float32List samples = await decodeFile(path);
-      if (samples.isEmpty) return;
-      final int startSamples =
-          (startAt.inMicroseconds * 16000 ~/ Duration.microsecondsPerSecond)
-              .clamp(0, samples.length)
-              .toInt();
-      if (startSamples >= samples.length) return;
-      final int chunkSamples =
-          (chunkDuration.inMicroseconds *
-                  16000 ~/
-                  Duration.microsecondsPerSecond)
-              .clamp(1, samples.length)
-              .toInt();
-      for (
-        int offset = startSamples;
-        offset < samples.length;
-        offset += chunkSamples
-      ) {
-        final int end = (offset + chunkSamples)
-            .clamp(0, samples.length)
-            .toInt();
-        yield DecodedAudioChunk(
-          Float32List.sublistView(samples, offset, end),
-          isLast: end == samples.length,
-        );
+      try {
+        await for (final WavAudioChunk chunk in decodeWavFileChunks(
+          file,
+          startSample:
+              startAt.inMicroseconds * 16000 ~/ Duration.microsecondsPerSecond,
+          chunkSamples:
+              (chunkDuration.inMicroseconds *
+                      16000 ~/
+                      Duration.microsecondsPerSecond)
+                  .clamp(1, 0x7fffffffffffffff),
+        )) {
+          yield DecodedAudioChunk(chunk.samples, isLast: chunk.isLast);
+        }
+        return;
+      } on WavFormatException {
+        // 压缩 WAV 与其他原生格式一样使用分块会话，避免全量回退。
       }
-      return;
     }
 
     if (Platform.isMacOS || Platform.isAndroid || Platform.isWindows) {

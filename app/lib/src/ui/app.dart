@@ -9,6 +9,7 @@ import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
+import 'package:vsasr_app/src/ui/theme/studio_theme.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 顶层 Widget。[controller] / [live] 只在测试里显式传入。
@@ -49,6 +50,7 @@ class _VsasrAppState extends State<VsasrApp> {
       LiveController(
         provideWorker: _controller.acquireWorker,
         releaseWorker: (worker) => _controller.releaseWorker(worker),
+        discardWorker: _controller.discardWorker,
         languageOf: () => _controller.language,
         scheduler: _controller.scheduler,
         provideTranslationProvider:
@@ -87,17 +89,14 @@ class _VsasrAppState extends State<VsasrApp> {
     return MaterialApp(
       title: 'VoiceSmallASR',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F6FEB)),
-        useMaterial3: true,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-      ),
+      theme: StudioTheme.lightTheme,
       home: HomePage(
         controller: _controller,
         live: _live,
         video: _video,
         settings: widget.settings,
-        translationProviderResolver: widget.translationProviderResolver,
+        translationProviderResolver:
+            widget.translationProviderResolver ?? _loadTranslationProvider,
       ),
     );
   }

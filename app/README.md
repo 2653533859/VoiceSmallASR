@@ -8,6 +8,8 @@ Python 端是本端的对照基准。整体规划、阶段划分与踩坑记录�
 
 ## 当前进度
 
+2026-09-05 工作树新增 Studio 撤销/重做、搜索替换、阅读速度检查，普通文件/WAV 增量转写与资源诊断、实时过载及有界收尾。当前交付与剩余真实设备验收见 [三轮改进记录](../THREE_ROUND_IMPROVEMENTS.md)。
+
 | 层 | 状态 |
 | --- | --- |
 | 引擎层（`lib/src/asr/`） | ✅ 已移植，与 Python 端一一对应（含 VAD 驱动的流式识别） |
@@ -26,7 +28,7 @@ export FLUTTER_STORAGE_BASE_URL=https://mirrors.cloud.tencent.com/flutter
 
 flutter pub get
 flutter analyze     # 验收标准：No issues found
-flutter test        # 269 项，不依赖模型与设备
+flutter test        # 336 项，不依赖模型与设备（2026-09-05）
 
 # Android release 构建（需要 Android SDK/JDK；当前 release 使用 debug signing 做验证）
 flutter build apk --release

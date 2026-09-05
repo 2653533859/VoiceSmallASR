@@ -31,6 +31,8 @@ import 'package:vsasr_app/src/ui/video_page.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_disclosure.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
+import 'package:vsasr_app/src/ui/studio/studio_workspace.dart';
+import 'package:vsasr_app/src/ui/theme/studio_theme.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 /// 选择要转写的文件，返回绝对路径；用户取消时返回 null。
@@ -129,6 +131,10 @@ class _HomePageState extends State<HomePage> {
   final HomeExportCoordinator _exporter = HomeExportCoordinator();
   bool _translationDisclosureAccepted = false;
   bool _liveTranslationDisclosureAccepted = false;
+  late final VideoPlaybackController _video =
+      widget.video ??
+      VideoPlaybackController(backend: const _StubVideoPlayerBackend());
+  late final bool _ownsVideo = widget.video == null;
 
   AppSettingsRepository get _settingsRepository =>
       widget.settings ?? AppSettingsRepository();
@@ -831,6 +837,28 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// 为 Studio 单句翻译按需创建 provider。
+  ///
+  /// 顶层应用通常会注入共享 resolver；直接挂载 [HomePage] 的测试和嵌入场景则
+  /// 沿用文件翻译相同的设置与 provider 工厂。
+  Future<TranslationProvider?> _resolveStudioTranslationProvider() async {
+    final Future<TranslationProvider?> Function()? resolver =
+        widget.translationProviderResolver;
+    if (resolver != null) return resolver();
+    final AppSettingsRepository repository = _settingsRepository;
+    final String? apiKey = await repository.translationSecrets.readApiKey();
+    if (apiKey == null) return null;
+    final TranslationApiSettings settings = await repository
+        .loadTranslationApiSettings();
+    return widget.translationProviderFactory?.call(apiKey) ??
+        ApiTranslationProvider(
+          apiKey: apiKey,
+          endpoint: settings.endpoint,
+          model: settings.model,
+          glossary: settings.glossary,
+        );
+  }
+
   Future<void> _diarize() async {
     final TranscriptionResult? result = widget.controller.result;
     if (result == null || widget.controller.busy) return;
@@ -1048,53 +1076,41 @@ class _HomePageState extends State<HomePage> {
         widget.controller,
         _workflow,
         ?live,
-        ?widget.video,
+        _video,
       ]),
       builder: (BuildContext context, Widget? _) {
         final TranscribeController c = widget.controller;
         final bool batchBusy = _workflow.batchBusy;
+        final Widget studio = StudioWorkspace(
+          controller: c,
+          videoController: _video,
+          onOpen: _openFile,
+          onOpenProject: _openProject,
+          recentProjects: _workflow.recentProjects,
+          onOpenRecentProject: _openRecentProject,
+          onSaveProject: _saveProject,
+          onExport: _exportFile,
+          onEdit: _openEditor,
+          onTranslate: _translate,
+          onDiarize: _diarize,
+          onImport: _importSubtitle,
+          onBatch: _openBatch,
+          onDiagnostics: _showPerformanceReport,
+          onHistory: _showPerformanceHistory,
+          historyAvailable: _workflow.hasPerformanceHistory,
+          batchBusy: batchBusy,
+          settings: widget.settings,
+          translationProviderResolver: _resolveStudioTranslationProvider,
+        );
+
         final Widget body;
         if (!c.modelReady) {
           body = _ModelSetupView(controller: c);
         } else if (live == null && widget.video == null) {
-          body = _TranscribeView(
-            controller: c,
-            onOpen: _openFile,
-            onOpenProject: _openProject,
-            recentProjects: _workflow.recentProjects,
-            onOpenRecentProject: _openRecentProject,
-            onSaveProject: _saveProject,
-            onExport: _exportFile,
-            onEdit: _openEditor,
-            onTranslate: _translate,
-            onDiarize: _diarize,
-            onImport: _importSubtitle,
-            onBatch: _openBatch,
-            onDiagnostics: _showPerformanceReport,
-            onHistory: _showPerformanceHistory,
-            historyAvailable: _workflow.hasPerformanceHistory,
-            batchBusy: batchBusy,
-          );
+          body = studio;
         } else {
           body = _Tabs(
-            transcribe: _TranscribeView(
-              controller: c,
-              onOpen: _openFile,
-              onOpenProject: _openProject,
-              recentProjects: _workflow.recentProjects,
-              onOpenRecentProject: _openRecentProject,
-              onSaveProject: _saveProject,
-              onExport: _exportFile,
-              onEdit: _openEditor,
-              onTranslate: _translate,
-              onDiarize: _diarize,
-              onImport: _importSubtitle,
-              onBatch: _openBatch,
-              onDiagnostics: _showPerformanceReport,
-              onHistory: _showPerformanceHistory,
-              historyAvailable: _workflow.hasPerformanceHistory,
-              batchBusy: batchBusy,
-            ),
+            transcribe: studio,
             live: live == null
                 ? null
                 : _LiveView(
@@ -1119,16 +1135,55 @@ class _HomePageState extends State<HomePage> {
           );
         }
         return Scaffold(
+          backgroundColor: StudioColors.background,
           appBar: AppBar(
-            title: const Text('VoiceSmallASR'),
+            toolbarHeight: 46,
+            titleSpacing: 16,
+            backgroundColor: StudioColors.surface,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            shape: const Border(
+              bottom: BorderSide(color: StudioColors.border, width: 1),
+            ),
+            title: Row(
+              children: <Widget>[
+                Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    color: StudioColors.primarySubtle,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(
+                    Icons.graphic_eq_rounded,
+                    size: 18,
+                    color: StudioColors.primary,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text(
+                  'VoiceSmallASR Studio',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: StudioColors.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ],
+            ),
             actions: <Widget>[
               _LanguagePicker(controller: c, enabled: !(live?.busy ?? false)),
+              const SizedBox(width: 8),
               IconButton(
                 tooltip: '设置',
                 onPressed: c.busy || (live?.busy ?? false)
                     ? null
                     : _openSettings,
-                icon: const Icon(Icons.settings_outlined),
+                icon: const Icon(Icons.settings_outlined, size: 18),
+                style: IconButton.styleFrom(
+                  foregroundColor: StudioColors.textSecondary,
+                  padding: const EdgeInsets.all(8),
+                ),
               ),
               const SizedBox(width: 12),
             ],
@@ -1141,12 +1196,45 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    if (_ownsVideo) _video.dispose();
     _workflow.dispose();
     super.dispose();
   }
 }
 
-/// 「文件转写 / 实时字幕」两个页签。
+class _StubVideoPlayerBackend implements VideoPlayerBackend {
+  const _StubVideoPlayerBackend();
+
+  @override
+  Widget buildVideo({VideoOverlayBuilder? overlayBuilder}) =>
+      const SizedBox.expand();
+
+  @override
+  Stream<Duration> get position => const Stream<Duration>.empty();
+
+  @override
+  Stream<Duration> get duration => const Stream<Duration>.empty();
+
+  @override
+  Stream<bool> get playing => const Stream<bool>.empty();
+
+  @override
+  Future<void> open(String path) async {}
+
+  @override
+  Future<void> playOrPause() async {}
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<void> setRate(double rate) async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+/// 「文件转写 / 实时字幕 / 视频播放」页签，采用紧凑现代的桌面 Studio 标签条。
 class _Tabs extends StatelessWidget {
   const _Tabs({required this.transcribe, this.live, this.video});
 
@@ -1160,17 +1248,68 @@ class _Tabs extends StatelessWidget {
       length: 1 + (live == null ? 0 : 1) + (video == null ? 0 : 1),
       child: Column(
         children: <Widget>[
-          TabBar(
-            tabs: <Widget>[
-              const Tab(icon: Icon(Icons.audio_file_outlined), text: '文件转写'),
-              if (live != null)
-                const Tab(icon: Icon(Icons.mic_none), text: '实时字幕'),
-              if (video != null)
-                const Tab(
-                  icon: Icon(Icons.video_library_outlined),
-                  text: '视频播放',
+          Container(
+            height: 38,
+            decoration: const BoxDecoration(
+              color: StudioColors.surface,
+              border: Border(
+                bottom: BorderSide(color: StudioColors.border, width: 1),
+              ),
+            ),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: TabBar(
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    indicatorSize: TabBarIndicatorSize.label,
+                    labelPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    indicatorColor: StudioColors.primary,
+                    indicatorWeight: 2,
+                    labelColor: StudioColors.primary,
+                    unselectedLabelColor: StudioColors.textSecondary,
+                    dividerColor: Colors.transparent,
+                    tabs: <Widget>[
+                      const Tab(
+                        height: 36,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(Icons.audio_file_outlined, size: 15),
+                            SizedBox(width: 6),
+                            Text('文件转写', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      if (live != null)
+                        const Tab(
+                          height: 36,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(Icons.mic_none, size: 15),
+                              SizedBox(width: 6),
+                              Text('实时字幕', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      if (video != null)
+                        const Tab(
+                          height: 36,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(Icons.video_library_outlined, size: 15),
+                              SizedBox(width: 6),
+                              Text('视频播放', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-            ],
+              ],
+            ),
           ),
           Expanded(
             child: TabBarView(children: <Widget>[transcribe, ?live, ?video]),
@@ -1198,21 +1337,42 @@ class _LanguagePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButton<String>(
-      value: controller.language,
-      underline: const SizedBox.shrink(),
-      onChanged: (controller.busy || !enabled)
-          ? null
-          : (String? value) {
-              if (value != null) controller.setLanguage(value);
-            },
-      items: <DropdownMenuItem<String>>[
-        for (final String code in kLanguages)
-          DropdownMenuItem<String>(
-            value: code,
-            child: Text(kLanguageLabels[code] ?? code),
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: StudioColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: StudioColors.border),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: controller.language,
+          isDense: true,
+          icon: const Icon(
+            Icons.arrow_drop_down,
+            size: 18,
+            color: StudioColors.textSecondary,
           ),
-      ],
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: StudioColors.textPrimary,
+          ),
+          onChanged: (controller.busy || !enabled)
+              ? null
+              : (String? value) {
+                  if (value != null) controller.setLanguage(value);
+                },
+          items: <DropdownMenuItem<String>>[
+            for (final String code in kLanguages)
+              DropdownMenuItem<String>(
+                value: code,
+                child: Text(kLanguageLabels[code] ?? code),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1274,201 +1434,8 @@ class _ModelSetupView extends StatelessWidget {
   }
 }
 
-/// 转写主视图：工具条 + 状态 + 分段列表。
-class _TranscribeView extends StatelessWidget {
-  const _TranscribeView({
-    required this.controller,
-    required this.onOpen,
-    required this.onOpenProject,
-    required this.recentProjects,
-    required this.onOpenRecentProject,
-    required this.onSaveProject,
-    required this.onExport,
-    required this.onEdit,
-    required this.onTranslate,
-    required this.onDiarize,
-    required this.onImport,
-    required this.onBatch,
-    required this.onDiagnostics,
-    required this.onHistory,
-    required this.historyAvailable,
-    this.batchBusy = false,
-  });
 
-  final TranscribeController controller;
-  final VoidCallback onOpen;
-  final VoidCallback onOpenProject;
-  final List<String> recentProjects;
-  final ValueChanged<String> onOpenRecentProject;
-  final VoidCallback onSaveProject;
-  final VoidCallback onExport;
-  final VoidCallback onEdit;
-  final VoidCallback onTranslate;
-  final VoidCallback onDiarize;
-  final VoidCallback onImport;
-  final VoidCallback onBatch;
-  final VoidCallback onDiagnostics;
-  final VoidCallback onHistory;
-  final bool historyAvailable;
-  final bool batchBusy;
 
-  @override
-  Widget build(BuildContext context) {
-    final TranscriptionResult? result = controller.result;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: <Widget>[
-              FilledButton.icon(
-                onPressed: controller.busy || batchBusy ? null : onOpen,
-                icon: const Icon(Icons.folder_open),
-                label: const Text('选择音频/视频'),
-              ),
-              OutlinedButton.icon(
-                key: const Key('openBatchProcessing'),
-                onPressed: controller.busy || batchBusy ? null : onBatch,
-                icon: const Icon(Icons.playlist_play),
-                label: const Text('批量处理'),
-              ),
-              PopupMenuButton<String>(
-                key: const Key('recentProjects'),
-                tooltip: '最近项目',
-                onSelected: controller.busy || batchBusy
-                    ? null
-                    : onOpenRecentProject,
-                itemBuilder: (BuildContext context) {
-                  if (recentProjects.isEmpty) {
-                    return <PopupMenuEntry<String>>[
-                      const PopupMenuItem<String>(
-                        enabled: false,
-                        value: '',
-                        child: Text('暂无最近项目'),
-                      ),
-                    ];
-                  }
-                  return recentProjects
-                      .map(
-                        (String path) => PopupMenuItem<String>(
-                          value: path,
-                          child: Text(
-                            p.basename(path),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(growable: false);
-                },
-                icon: const Icon(Icons.history),
-              ),
-              OutlinedButton.icon(
-                onPressed: controller.busy || batchBusy ? null : onOpenProject,
-                icon: const Icon(Icons.folder_zip_outlined),
-                label: const Text('打开项目'),
-              ),
-              OutlinedButton.icon(
-                onPressed: result == null || controller.busy || batchBusy
-                    ? null
-                    : onSaveProject,
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('保存项目'),
-              ),
-              OutlinedButton.icon(
-                onPressed: result == null || controller.busy || batchBusy
-                    ? null
-                    : onExport,
-                icon: const Icon(Icons.save_alt),
-                label: const Text('导出字幕'),
-              ),
-              if (controller.performanceReport != null)
-                OutlinedButton.icon(
-                  key: const Key('performanceDiagnostics'),
-                  onPressed: controller.busy || batchBusy
-                      ? null
-                      : onDiagnostics,
-                  icon: const Icon(Icons.speed_outlined),
-                  label: const Text('性能诊断'),
-                ),
-              if (historyAvailable)
-                OutlinedButton.icon(
-                  key: const Key('performanceHistory'),
-                  onPressed: controller.busy || batchBusy ? null : onHistory,
-                  icon: const Icon(Icons.history_toggle_off),
-                  label: const Text('性能历史'),
-                ),
-              OutlinedButton.icon(
-                key: const Key('importSubtitle'),
-                onPressed: controller.busy || batchBusy ? null : onImport,
-                icon: const Icon(Icons.file_download_outlined),
-                label: const Text('导入字幕'),
-              ),
-              OutlinedButton.icon(
-                key: const Key('openSubtitleEditor'),
-                onPressed: result == null || controller.busy || batchBusy
-                    ? null
-                    : onEdit,
-                icon: const Icon(Icons.edit_note),
-                label: const Text('校对字幕'),
-              ),
-              OutlinedButton.icon(
-                key: const Key('translateSubtitle'),
-                onPressed: result == null || controller.busy || batchBusy
-                    ? null
-                    : onTranslate,
-                icon: const Icon(Icons.translate),
-                label: const Text('翻译为中文'),
-              ),
-              OutlinedButton.icon(
-                key: const Key('autoSpeakerDiarization'),
-                onPressed: result == null || controller.busy || batchBusy
-                    ? null
-                    : onDiarize,
-                icon: const Icon(Icons.record_voice_over_outlined),
-                label: const Text('自动标注说话人'),
-              ),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 240),
-                child: Text(
-                  controller.filePath == null
-                      ? ''
-                      : p.basename(controller.filePath!),
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (controller.busy)
-          LinearProgressIndicator(value: controller.progress),
-        if (controller.statusText.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Text(controller.statusText),
-          ),
-        if (controller.errorText != null)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: _ErrorBox(message: controller.errorText!),
-          ),
-        const Divider(height: 1),
-        Expanded(
-          child: result == null || result.isEmpty
-              ? const Center(child: Text('选一个音频或视频文件开始'))
-              : _SegmentList(result: result),
-        ),
-        if (result != null && !result.isEmpty)
-          _Footer(controller: controller, result: result),
-      ],
-    );
-  }
-}
 
 /// 实时字幕页：录音按钮 + 定稿列表 + 末尾一行临时结果。
 class _LiveView extends StatelessWidget {
@@ -1666,85 +1633,8 @@ class _LiveList extends StatelessWidget {
   }
 }
 
-class _SegmentList extends StatelessWidget {
-  const _SegmentList({required this.result});
 
-  final TranscriptionResult result;
 
-  @override
-  Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      itemCount: result.length,
-      separatorBuilder: (BuildContext context, int index) =>
-          const Divider(height: 1),
-      itemBuilder: (BuildContext context, int index) {
-        final Segment segment = result.segments[index];
-        final String span =
-            '${formatTimestamp(segment.start, sep: '.')} → '
-            '${formatTimestamp(segment.end, sep: '.')}';
-        return ListTile(
-          dense: true,
-          leading: Text('${segment.index + 1}'),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if ((segment.speaker ?? '').trim().isNotEmpty)
-                Text(
-                  '【${segment.speaker!.trim()}】',
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
-              Text(segment.text),
-              if ((segment.translation ?? '').trim().isNotEmpty)
-                Text(
-                  segment.translation!.trim(),
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: Theme.of(context).colorScheme.primary),
-                ),
-            ],
-          ),
-          subtitle: Row(
-            children: <Widget>[
-              Text(span, style: Theme.of(context).textTheme.bodySmall),
-              if (segment.language.isNotEmpty) ...<Widget>[
-                const SizedBox(width: 8),
-                Text(
-                  kLanguageLabels[segment.language] ?? segment.language,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _Footer extends StatelessWidget {
-  const _Footer({required this.controller, required this.result});
-
-  final TranscribeController controller;
-  final TranscriptionResult result;
-
-  @override
-  Widget build(BuildContext context) {
-    final Duration? elapsed = controller.elapsed;
-    final String rtf = elapsed == null || result.duration <= 0
-        ? ''
-        : '　RTF ${(elapsed.inMilliseconds / 1000 / result.duration).toStringAsFixed(3)}';
-    return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Text(
-        '${result.length} 段　音频 ${result.duration.toStringAsFixed(2)}s'
-        '${elapsed == null ? '' : '　耗时 ${(elapsed.inMilliseconds / 1000).toStringAsFixed(2)}s'}'
-        '$rtf',
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
-    );
-  }
-}
 
 class _ErrorBox extends StatelessWidget {
   const _ErrorBox({required this.message});

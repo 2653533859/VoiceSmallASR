@@ -647,18 +647,6 @@ class _VideoPageState extends State<VideoPage> {
     return MenuAnchor(
       menuChildren: <Widget>[
         MenuItemButton(
-          key: const Key('videoTranslationToggle'),
-          onPressed: () => unawaited(
-            _setTranslationEnabled(!_playlistCoordinator.translationEnabled),
-          ),
-          leadingIcon: Icon(
-            _playlistCoordinator.translationEnabled
-                ? Icons.check
-                : Icons.translate,
-          ),
-          child: const Text('自动翻译字幕'),
-        ),
-        MenuItemButton(
           key: const Key('videoCacheToggle'),
           onPressed: () => _setSubtitleCacheEnabled(
             !_playlistCoordinator.subtitleCacheEnabled,
@@ -841,6 +829,10 @@ class _VideoPageState extends State<VideoPage> {
                         hasSubtitles: hasLinkedResult,
                         subtitleDisplayMode: _subtitleDisplayMode,
                         onSubtitleDisplayModeChanged: _setSubtitleDisplayMode,
+                        translationEnabled:
+                            _playlistCoordinator.translationEnabled,
+                        onTranslationEnabledChanged: (bool enabled) =>
+                            unawaited(_setTranslationEnabled(enabled)),
                       ),
               ),
             ),
@@ -874,15 +866,34 @@ class _VideoPageState extends State<VideoPage> {
         return CallbackShortcuts(
           bindings: <ShortcutActivator, VoidCallback>{
             const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
-                _seekVideoBy(const Duration(seconds: -10)),
+                _handlePlaybackShortcut(const Duration(seconds: -10)),
             const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
-                _seekVideoBy(const Duration(seconds: 10)),
+                _handlePlaybackShortcut(const Duration(seconds: 10)),
           },
           child: Focus(autofocus: true, child: content),
         );
       },
     );
   }
+
+  void _handlePlaybackShortcut(Duration offset) {
+    final BuildContext? focused = FocusManager.instance.primaryFocus?.context;
+    if (!shouldHandleVideoPlaybackShortcut(focused)) {
+      return;
+    }
+    _seekVideoBy(offset);
+  }
+}
+
+/// 文本编辑器和弹窗拥有方向键；只在播放器页面空白处处理快进/快退。
+bool shouldHandleVideoPlaybackShortcut(BuildContext? focused) {
+  if (focused == null) return true;
+  final Widget widget = focused.widget;
+  return widget is! EditableText &&
+      widget is! Dialog &&
+      widget is! AlertDialog &&
+      focused.findAncestorWidgetOfExactType<EditableText>() == null &&
+      focused.findAncestorWidgetOfExactType<Dialog>() == null;
 }
 
 class _SubtitleStyleDialog extends StatefulWidget {

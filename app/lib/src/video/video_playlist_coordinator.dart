@@ -669,16 +669,18 @@ class VideoPlaylistCoordinator extends ChangeNotifier
             final TranscriptionResult? current = _playlistResults[path];
             if (current == null || index >= current.segments.length) return;
             final Segment segment = current.segments[index];
-            final List<String> translated = await translator.translate(
+            final List<String> translated = await translateTexts(
+              translator,
               <String>[segment.text],
               from: segment.language.trim().isEmpty
                   ? current.language
                   : segment.language,
               to: targetLanguage,
+              isCancelled: () =>
+                  _disposed ||
+                  !_translationEnabled ||
+                  generation != _playlistGeneration,
             );
-            if (translated.length != 1) {
-              throw StateError('翻译服务返回 ${translated.length} 条结果，需要 1 条');
-            }
             final List<Segment> segments = <Segment>[...current.segments];
             segments[index] = segment.copyWith(
               translation: translated.single.trim(),
@@ -688,6 +690,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
           _setTranslationWarning(path, null);
         })
         .catchError((Object error) {
+          if (error is TranslationCancelledException) return;
           _setTranslationWarning(path, '翻译失败：$error');
         });
   }

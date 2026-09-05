@@ -167,6 +167,43 @@ class SubtitleEditorController extends ChangeNotifier {
     _commit(segments);
   }
 
+  /// 删除第 [index] 条字幕。
+  void deleteSegment(int index) {
+    if (index < 0 || index >= _result.segments.length) {
+      throw const SubtitleEditException('字幕序号无效');
+    }
+    if (_result.segments.length <= 1) {
+      throw const SubtitleEditException('至少保留一条字幕');
+    }
+    final List<Segment> segments = List<Segment>.of(_result.segments)
+      ..removeAt(index);
+    _commit(segments);
+  }
+
+  /// 更新第 [index] 条字幕的译文。
+  void updateTranslation(int index, String? translation) {
+    final Segment current = _segmentAt(index);
+    final String? next =
+        translation == null || translation.trim().isEmpty
+            ? null
+            : translation.trim();
+    if (next == current.translation) return;
+    final Segment updated = Segment(
+      text: current.text,
+      start: current.start,
+      end: current.end,
+      words: current.words,
+      language: current.language,
+      isFinal: current.isFinal,
+      index: current.index,
+      translation: next,
+      speaker: current.speaker,
+    );
+    final List<Segment> segments = List<Segment>.of(_result.segments);
+    segments[index] = updated;
+    _commit(segments);
+  }
+
   /// 将整份字幕和 token 时间戳一起平移 [seconds] 秒。
   void shiftTimeOffset(double seconds) {
     if (!seconds.isFinite) {

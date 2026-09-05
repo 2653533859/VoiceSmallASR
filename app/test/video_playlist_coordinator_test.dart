@@ -137,6 +137,67 @@ void main() {
     await _waitUntil(() => coordinator.playlistStatus[media.path] == '字幕已缓存');
     expect(coordinator.lifecycleSuspended, isFalse);
   });
+
+  test('一个播放列表条目解码失败后，后续条目仍会完成并缓存', () async {
+    final Directory workspace = Directory.systemTemp.createTempSync(
+      'vsasr_playlist_continue_after_failure_test',
+    );
+    final File first = File('${workspace.path}/broken.mp4')
+      ..writeAsBytesSync(<int>[0]);
+    final File second = File('${workspace.path}/next.mp4')
+      ..writeAsBytesSync(<int>[0]);
+    final _FailFirstDecoder decoder = _FailFirstDecoder(first.path);
+    final TranscribeController transcription = TranscribeController(
+      decoder: decoder,
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async => FakeTranscriber(
+            language: 'en',
+            liveSegments: const <Segment>[
+              Segment(text: 'next item', start: 0, end: 1, index: 0),
+            ],
+          ),
+    );
+    final VideoPlaybackController player = VideoPlaybackController(
+      backend: _FakeVideoBackend(),
+    );
+    final VideoPlaylistCoordinator coordinator = VideoPlaylistCoordinator(
+      controller: player,
+      transcription: transcription,
+      subtitleCache: VideoSubtitleCache(
+        rootDirectory: Directory('${workspace.path}/cache'),
+      ),
+    );
+    addTearDown(() async {
+      coordinator.dispose();
+      player.dispose();
+      await transcription.shutdown();
+      workspace.deleteSync(recursive: true);
+    });
+
+    coordinator.init();
+    coordinator.setProcessingPreferences(
+      translationEnabled: false,
+      cacheEnabled: true,
+    );
+    await coordinator.replaceWith(first.path);
+    await decoder.firstStarted.future;
+    await coordinator.addPaths(<String>[second.path]);
+    decoder.failFirst.complete();
+
+    await _waitUntil(
+      () => coordinator.playlistStatus[first.path]?.startsWith('转写失败：') == true,
+    );
+    await _waitUntil(() => coordinator.playlistStatus[second.path] == '字幕已缓存');
+    expect(coordinator.resultFor(first.path), isNull);
+    expect(
+      coordinator.resultFor(second.path)?.segments.single.text,
+      'next item',
+    );
+  });
 }
 
 Future<void> _waitUntil(bool Function() condition) async {
@@ -163,6 +224,30 @@ class _LifecycleDecoder implements AudioDecoder, ChunkedAudioDecoder {
       firstChunkYielded.complete();
       yield DecodedAudioChunk(Float32List(kSampleRate), isLast: false);
       await allowNextChunk.future;
+    }
+    yield DecodedAudioChunk(Float32List(kSampleRate), isLast: true);
+  }
+}
+
+class _FailFirstDecoder implements AudioDecoder, ChunkedAudioDecoder {
+  _FailFirstDecoder(this.firstPath);
+
+  final String firstPath;
+  final Completer<void> firstStarted = Completer<void>();
+  final Completer<void> failFirst = Completer<void>();
+
+  @override
+  Future<Float32List> decodeFile(String path) async => Float32List(kSampleRate);
+
+  @override
+  Stream<DecodedAudioChunk> decodeFileChunks(
+    String path, {
+    Duration chunkDuration = const Duration(seconds: 10),
+  }) async* {
+    if (path == firstPath) {
+      firstStarted.complete();
+      await failFirst.future;
+      throw const AudioDecodeException('模拟解码器异常');
     }
     yield DecodedAudioChunk(Float32List(kSampleRate), isLast: true);
   }

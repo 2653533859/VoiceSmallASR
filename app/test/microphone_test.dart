@@ -10,6 +10,23 @@ import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/audio/microphone.dart';
 
 void main() {
+  for (final bool hangs in <bool>[false, true]) {
+    test('stop ${hangs ? '挂起' : '抛异常'}仍调用 dispose 并有界返回', () async {
+      final _FailingRecorder recorder = _FailingRecorder(hangs);
+      final MicrophoneSource mic = MicrophoneSource(
+        createRecorder: () => recorder,
+        operationTimeout: const Duration(milliseconds: 20),
+      );
+      await mic.start();
+      await expectLater(
+        mic.stop().timeout(const Duration(seconds: 1)),
+        throwsA(hangs ? isA<TimeoutException>() : isA<StateError>()),
+      );
+      expect(recorder.disposed, isTrue);
+      await mic.stop();
+    });
+  }
+
   test('int16 小端 → float32：按 32768 归一，与 wav.dart 一致', () {
     final Uint8List bytes = Uint8List.fromList(<int>[
       0x00, 0x00, // 0
@@ -27,7 +44,9 @@ void main() {
 
   test('开始录音：要 16 kHz 单声道 PCM16，并把字节流转成采样流', () async {
     final _FakeRecorder recorder = _FakeRecorder();
-    final MicrophoneSource mic = MicrophoneSource(createRecorder: () => recorder);
+    final MicrophoneSource mic = MicrophoneSource(
+      createRecorder: () => recorder,
+    );
 
     final Stream<Float32List> audio = await mic.start();
     final Future<List<Float32List>> collected = audio.toList();
@@ -70,7 +89,9 @@ void main() {
 
   test('没权限时抛中文异常，并把录音器收掉', () async {
     final _FakeRecorder recorder = _FakeRecorder(granted: false);
-    final MicrophoneSource mic = MicrophoneSource(createRecorder: () => recorder);
+    final MicrophoneSource mic = MicrophoneSource(
+      createRecorder: () => recorder,
+    );
 
     await expectLater(
       mic.start(),
@@ -89,7 +110,9 @@ void main() {
   });
 
   test('没开起来就 stop 是安全的', () async {
-    final MicrophoneSource mic = MicrophoneSource(createRecorder: _FakeRecorder.new);
+    final MicrophoneSource mic = MicrophoneSource(
+      createRecorder: _FakeRecorder.new,
+    );
     await mic.stop();
   });
 }
@@ -137,4 +160,14 @@ class _FakeRecorder implements AudioRecorder {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnsupportedError('替身没实现 ${invocation.memberName}');
+}
+
+class _FailingRecorder extends _FakeRecorder {
+  _FailingRecorder(this.hangs);
+  final bool hangs;
+  @override
+  Future<String?> stop() {
+    if (hangs) return Completer<String?>().future;
+    throw StateError('stop failed');
+  }
 }

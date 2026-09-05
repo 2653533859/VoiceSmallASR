@@ -23,6 +23,7 @@ class VideoSubtitleCacheEntry {
     required this.checkpointPath,
     required this.bytes,
     required this.updatedAt,
+    required this.lastAccessedAt,
     required this.isValid,
     required this.isComplete,
     required this.mediaExists,
@@ -36,6 +37,7 @@ class VideoSubtitleCacheEntry {
   final String checkpointPath;
   final int bytes;
   final DateTime updatedAt;
+  final DateTime lastAccessedAt;
   final bool isValid;
   final bool isComplete;
   final bool mediaExists;
@@ -281,7 +283,7 @@ class VideoSubtitleCache {
     }
     entries.sort(
       (VideoSubtitleCacheEntry left, VideoSubtitleCacheEntry right) =>
-          right.updatedAt.compareTo(left.updatedAt),
+          right.lastAccessedAt.compareTo(left.lastAccessedAt),
     );
     return VideoSubtitleCacheSummary(
       entries: List<VideoSubtitleCacheEntry>.unmodifiable(entries),
@@ -389,7 +391,7 @@ class VideoSubtitleCache {
     return removed;
   }
 
-  /// 按最近更新时间保留缓存，保护当前播放/写入中的媒体不被驱逐。
+  /// 按最近访问时间保留缓存，保护当前播放/写入中的媒体不被驱逐。
   Future<VideoSubtitleCacheCleanupReport> trimToMaxBytes(
     int maxBytes, {
     Set<String> protectedMediaPaths = const <String>{},
@@ -404,7 +406,7 @@ class VideoSubtitleCache {
     final List<VideoSubtitleCacheEntry> oldest =
         <VideoSubtitleCacheEntry>[...summary.entries]..sort(
           (VideoSubtitleCacheEntry left, VideoSubtitleCacheEntry right) =>
-              left.updatedAt.compareTo(right.updatedAt),
+              left.lastAccessedAt.compareTo(right.lastAccessedAt),
         );
     for (final VideoSubtitleCacheEntry entry in oldest) {
       if (remaining <= maxBytes) break;
@@ -472,10 +474,9 @@ class VideoSubtitleCache {
     final File accessFile = await jsonFile.exists()
         ? jsonFile
         : File(checkpointPath);
-    final DateTime fileUpdatedAt = await accessFile.exists()
+    final DateTime lastAccessedAt = await accessFile.exists()
         ? (await accessFile.stat()).modified
         : updatedAt;
-    if (fileUpdatedAt.isAfter(updatedAt)) updatedAt = fileUpdatedAt;
     final File media = File(mediaPath);
     final bool mediaExists = await media.exists();
     if (mediaExists) {
@@ -502,6 +503,7 @@ class VideoSubtitleCache {
           await _length(File(srtPath)) +
           await _length(File(checkpointPath)),
       updatedAt: updatedAt,
+      lastAccessedAt: lastAccessedAt,
       isValid: isValid,
       isComplete: isComplete,
       mediaExists: mediaExists,

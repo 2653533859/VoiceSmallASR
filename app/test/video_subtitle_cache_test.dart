@@ -133,6 +133,14 @@ void main() {
     final VideoSubtitleCacheSummary summary = await cache.inspect();
     expect(summary.entries, hasLength(2));
     expect(summary.bytes, greaterThan(0));
+    expect(
+      summary.entries.every(
+        (VideoSubtitleCacheEntry entry) => entry.lastAccessedAt.isAfter(
+          DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+      ),
+      isTrue,
+    );
 
     final VideoSubtitleCacheCleanupReport protected = await cache.deleteMedia(
       video.path,

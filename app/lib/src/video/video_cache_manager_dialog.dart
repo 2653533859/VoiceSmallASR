@@ -31,6 +31,7 @@ class VideoSubtitleCacheDialog extends StatefulWidget {
 class _VideoSubtitleCacheDialogState extends State<VideoSubtitleCacheDialog> {
   late VideoSubtitleCacheSummary _summary = widget.initialSummary;
   bool _busy = false;
+  String? _cleanupResult;
 
   Future<void> _reload() async {
     final VideoSubtitleCacheSummary summary = await widget.cache.inspect(
@@ -42,11 +43,15 @@ class _VideoSubtitleCacheDialogState extends State<VideoSubtitleCacheDialog> {
   Future<void> _delete(VideoSubtitleCacheEntry entry) async {
     setState(() => _busy = true);
     try {
-      await widget.cache.deleteMedia(
-        entry.mediaPath,
-        protectedMediaPaths: widget.protectedMediaPaths,
-      );
+      final VideoSubtitleCacheCleanupReport report = await widget.cache
+          .deleteMedia(
+            entry.mediaPath,
+            protectedMediaPaths: widget.protectedMediaPaths,
+          );
       await _reload();
+      if (mounted) {
+        setState(() => _cleanupResult = _formatCleanupReport(report));
+      }
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -60,10 +65,12 @@ class _VideoSubtitleCacheDialogState extends State<VideoSubtitleCacheDialog> {
   Future<void> _clearAll() async {
     setState(() => _busy = true);
     try {
-      await widget.cache.clearAll(
-        protectedMediaPaths: widget.protectedMediaPaths,
-      );
+      final VideoSubtitleCacheCleanupReport report = await widget.cache
+          .clearAll(protectedMediaPaths: widget.protectedMediaPaths);
       await _reload();
+      if (mounted) {
+        setState(() => _cleanupResult = _formatCleanupReport(report));
+      }
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -88,6 +95,10 @@ class _VideoSubtitleCacheDialogState extends State<VideoSubtitleCacheDialog> {
               '默认位置：${widget.cacheDirectory ?? '应用数据目录/video_subtitles'}\n'
               '共 ${_summary.entries.length} 项，${formatVideoCacheBytes(_summary.bytes)}；上限 ${formatVideoCacheBytes(kDefaultVideoSubtitleCacheMaxBytes)}',
             ),
+            if (_cleanupResult != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Text(_cleanupResult!),
+            ],
             const SizedBox(height: 12),
             Expanded(
               child: _summary.entries.isEmpty
@@ -121,7 +132,8 @@ class _VideoSubtitleCacheDialogState extends State<VideoSubtitleCacheDialog> {
                             overflow: TextOverflow.ellipsis,
                           ),
                           subtitle: Text(
-                            '$status · ${formatVideoCacheBytes(entry.bytes)}',
+                            '$status · ${formatVideoCacheBytes(entry.bytes)}\n'
+                            '最后访问：${formatVideoCacheTime(entry.lastAccessedAt)}',
                           ),
                           trailing: IconButton(
                             tooltip: protected ? '当前使用中，暂不能删除' : '删除缓存',
@@ -151,6 +163,10 @@ class _VideoSubtitleCacheDialogState extends State<VideoSubtitleCacheDialog> {
   }
 }
 
+String _formatCleanupReport(VideoSubtitleCacheCleanupReport report) =>
+    '清理结果：已移除 ${report.removedEntries} 项 '
+    '(${formatVideoCacheBytes(report.removedBytes)})，保护 ${report.skippedEntries} 项';
+
 String formatVideoCacheBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
@@ -158,4 +174,11 @@ String formatVideoCacheBytes(int bytes) {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
   return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+}
+
+String formatVideoCacheTime(DateTime value) {
+  final DateTime local = value.toLocal();
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${local.year}-${two(local.month)}-${two(local.day)} '
+      '${two(local.hour)}:${two(local.minute)}';
 }

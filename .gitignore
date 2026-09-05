@@ -49,6 +49,10 @@ models/*
 # ---- 音频与数据样本（体积大，不入库）----
 data/*
 !data/.gitkeep
+!data/benchmark/
+data/benchmark/*
+!data/benchmark/*.md
+!data/benchmark/*.json
 *.wav
 *.mp3
 *.m4a

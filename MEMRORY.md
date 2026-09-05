@@ -1,6 +1,8 @@
 # VoiceSmallASR 开发记忆
 
-> 更新时间：2026-08-27
+> 更新时间：2026-09-05
+
+当前工作树已落实三轮改进：工作台校对、普通文件/WAV 分块、worker/实时资源保护、日常 CI 和质量评测入口。实现与本机验证以 [THREE_ROUND_IMPROVEMENTS.md](THREE_ROUND_IMPROVEMENTS.md) 为准；下方阶段历史不代表当前发布状态。真实长语音、Android/Windows 真机及人工质量语料仍待验收。
 
 ## 当前阶段
 
@@ -49,7 +51,8 @@
 - M20 已开始：新增播放列表设备验收参数 `VSASR_DEVICE_TEST_PLAYLIST`，并将视频音轨验收改为连续分块解码，避免大视频一次性构造整段 `Float32List` 导致测试进程内存突增；播放器补充字幕模式、倍速、当前位置和 10 秒播放进度增减的稳定语义，并加入 widget 回归测试；验收报告补充架构、逻辑处理器、物理内存和推荐线程记录。2026-08-27 macOS 26.5.2 Apple Silicon 已通过 1 小时/约 400 MiB 合成视频解码、播放器打开/推进和三个播放列表条目切换；报告记录音轨样本数、解码耗时、打开耗时、读取时长和 RSS。详见 [`M20_DEVICE_ACCEPTANCE.md`](M20_DEVICE_ACCEPTANCE.md)。Android 真机、Windows 用户桌面、macOS 睡眠唤醒和 macOS 辅助功能检查器仍待验收，M20 未完成。
 - M20 生命周期稳定性补充：`VideoPlaylistCoordinator` 监听应用 `hidden`/`paused`/`detached` 状态，暂停时停止继续读取视频音轨并保存当前字幕检查点，恢复到 `resumed` 后重新排队；取消了最终检查点必须跨过 30 秒的限制，短片段暂停也能保留进度。新增协调器回归覆盖暂停、检查点和恢复；真实 macOS 睡眠唤醒、Android 真机和 Windows 用户桌面仍待验收，M20 未完成。
 - M20 视频流式转写验收入口已补充：设置 `VSASR_DEVICE_TEST_VIDEO_TRANSCRIPTION=1` 后，`device_acceptance_test.dart` 会调用生产 `TranscribeController.transcribeVideoStream`，记录 `VideoTranscriptionReport`、分块/解码/识别耗时和进程 RSS；macOS 已用 8.021 秒合成 MP4 通过，处理 `127,994` samples、1 个分块，耗时约 `3,069` ms，报告标记完成。该合成音频没有语音，只是生产管线 smoke，真实长语音视频仍待 M22/M20 设备验收。
-- 2026-09-04 并发与 Android 长任务实现待纳入 M20：转写控制器使用可清空的 worker 池，调度器按平台容量（移动端 2、桌面 4）允许并发，批量任务按容量分发；Android 硬字幕编码使用前台服务并复用字幕位图；ONNX provider 可选 `auto`/`cpu`/`nnapi`/`coreml`。`flutter analyze` 与 269 项 Flutter 测试通过，但当前开发机未安装 Java Runtime，Android Kotlin 与真实设备的 provider、前台服务、峰值内存仍未验收，M20 未完成。
+- 2026-09-04 并发与 Android 长任务实现待纳入 M20：转写控制器使用可清空的 worker 池，调度器按平台容量（移动端 2、桌面 4）允许并发，批量任务按容量分发；Android 硬字幕编码使用前台服务并复用字幕位图；ONNX provider 可选 `auto`/`cpu`/`nnapi`/`coreml`。`flutter analyze` 与 280 项 Flutter 测试通过，但当前开发机未安装 Java Runtime，Android Kotlin 与真实设备的 provider、前台服务、峰值内存仍未验收，M20 未完成。
+- 2026-09-04 已按优先级提前完成 M21 与 M23 的可自动化代码：播放器控制条集中字幕模式、自动翻译、倍速与进度控制，文本输入和弹窗不抢方向键；`TranslationRequestPolicy` 覆盖文件、批量、实时和视频字幕的超时、取消、限流退避和可重试错误判定。M22 增加播放列表失败后继续处理的回归，M24 缓存管理器新增最后访问时间与清理结果展示；真实语音长视频、磁盘空间不足、真实睡眠唤醒、三端构建和发布仍不能宣称验收完成。
 - 2026-08-27 已将 M20 之后的建议路线写入 [`NEXT_DEVELOPMENT_PLAN.md`](NEXT_DEVELOPMENT_PLAN.md)：先完成 M20 真实设备报告，再依次推进 M21 播放器内字幕显示模式/倍速/快捷键和响应式布局收敛、M22 长视频与播放列表恢复及崩溃隔离、M23 自定义翻译 API 的模型列表/重试/限流/缓存作用域可诊断性、M24 字幕缓存与队列成本控制及三端发布维护。规划项不等于已完成，真实设备和真实长语音视频仍不能用模拟器或合成样本替代。
 
 ## 已验证结果

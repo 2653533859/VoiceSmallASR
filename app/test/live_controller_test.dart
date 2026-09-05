@@ -2,7 +2,10 @@
 /// 不需要设备、不需要模型。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/asr_engine.dart';
@@ -15,6 +18,125 @@ import 'package:vsasr_app/src/ui/transcription_task_scheduler.dart';
 import 'support/fake_asr.dart';
 
 void main() {
+  testWidgets('总收尾超时后旧音频确认不会污染新会话', (WidgetTester tester) async {
+    final Completer<void> first = Completer<void>();
+    final Completer<void> late = Completer<void>();
+    int oldCalls = 0;
+    final FakeLiveSession oldSession = FakeLiveSession(
+      onAccept: (_, _) => oldCalls++ == 0 ? first.future : late.future,
+    );
+    final Completer<void> current = Completer<void>();
+    final FakeLiveSession newSession = FakeLiveSession(
+      onAccept: (_, _) => current.future,
+    );
+    int starts = 0;
+    final FakeMicrophone mic = FakeMicrophone();
+    final LiveController live = LiveController(
+      provideWorker: () async =>
+          _SessionTranscriber(starts++ == 0 ? oldSession : newSession),
+      languageOf: () => 'auto',
+      mic: mic,
+      operationTimeout: const Duration(milliseconds: 60),
+    );
+    await live.start();
+    mic.push(Float32List(160));
+    mic.push(Float32List(160));
+    await tester.pump();
+    final Future<void> stopping = live.stop();
+    await tester.pump(const Duration(milliseconds: 40));
+    first.complete();
+    await tester.pump();
+    expect(oldCalls, 2);
+    await tester.pump(const Duration(milliseconds: 20));
+    await stopping;
+    await live.start();
+    mic.push(Float32List(320));
+    await tester.pump();
+    expect(live.pendingAudioDuration, const Duration(milliseconds: 20));
+    late.complete();
+    await tester.pump();
+    expect(live.pendingAudioDuration, const Duration(milliseconds: 20));
+    expect(live.recording, isTrue);
+    mic.push(Float32List(160));
+    await tester.pump();
+    expect(newSession.chunks, hasLength(1));
+    current.complete();
+    await tester.pump();
+    expect(newSession.chunks, hasLength(2));
+    expect(live.pendingAudioDuration, Duration.zero);
+    await live.stop();
+    live.dispose();
+    await tester.pump();
+  });
+
+  for (final String failure in <String>[
+    'accept',
+    'finish',
+    'mic.stop',
+    'finish.throw',
+    'mic.stop.throw',
+  ]) {
+    test('$failure 挂起时有界收尾并弃用 worker 和释放租约', () async {
+      final _HangingSession session = _HangingSession(failure);
+      final _SessionTranscriber worker = _SessionTranscriber(session);
+      final FakeMicrophone mic = failure.startsWith('mic.stop')
+          ? _HangingMicrophone(throwsOnStop: failure.endsWith('.throw'))
+          : FakeMicrophone();
+      final TranscriptionTaskScheduler scheduler = TranscriptionTaskScheduler(
+        capacity: 1,
+      );
+      int released = 0;
+      int discarded = 0;
+      final LiveController live = LiveController(
+        provideWorker: () async => worker,
+        releaseWorker: (_) => released++,
+        discardWorker: (worker) async {
+          discarded++;
+          await worker.dispose();
+        },
+        languageOf: () => 'auto',
+        mic: mic,
+        scheduler: scheduler,
+        operationTimeout: const Duration(milliseconds: 20),
+      );
+      await live.start();
+      if (failure == 'accept') {
+        mic.push(Float32List(160));
+        await Future<void>.delayed(Duration.zero);
+      }
+      await live.stop().timeout(const Duration(seconds: 1));
+      expect(live.stage, LiveStage.idle);
+      expect(scheduler.activeLeases, isEmpty);
+      expect(discarded, 1);
+      expect(released, 0);
+      expect(live.errorText, isNotNull);
+      live.dispose();
+    });
+  }
+
+  test('实际未确认采样点用于积压计量，超限自动停止', () async {
+    final _HangingSession session = _HangingSession('accept');
+    final FakeMicrophone mic = FakeMicrophone();
+    final LiveController live = LiveController(
+      provideWorker: () async => _SessionTranscriber(session),
+      languageOf: () => 'auto',
+      mic: mic,
+      operationTimeout: const Duration(milliseconds: 20),
+      maxPendingAudio: const Duration(milliseconds: 150),
+    );
+    await live.start();
+    mic.push(Float32List(1600));
+    await Future<void>.delayed(Duration.zero);
+    expect(live.pendingAudioDuration, const Duration(milliseconds: 100));
+    mic.push(Float32List(1600));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(live.overloadCount, 1);
+    expect(live.peakPendingAudioDuration, const Duration(milliseconds: 100));
+    expect(live.stage, LiveStage.idle);
+    expect(live.pendingAudioDuration, Duration.zero);
+    live.dispose();
+  });
+
   test('开始录音：借到 worker、开会话、开设备，状态变成录音中', () async {
     final _Fixture f = _Fixture();
     addTearDown(f.dispose);
@@ -135,8 +257,14 @@ void main() {
 
   test('单条实时翻译失败后可以重试，原文和时间轴保持不变', () async {
     final _FakeLiveTranslationProvider provider = _FakeLiveTranslationProvider()
-      ..failuresRemaining = 1;
-    final _Fixture f = _Fixture(translationProvider: () async => provider);
+      // 默认策略会额外重试两次；超过上限后才允许用户手动重试。
+      ..failuresRemaining = 3;
+    final _Fixture f = _Fixture(
+      translationProvider: () async => provider,
+      translationRequestPolicy: const TranslationRequestPolicy(
+        initialRetryDelay: Duration.zero,
+      ),
+    );
     addTearDown(f.dispose);
     await f.live.start();
     f.live.setTranslationEnabled(true);
@@ -160,12 +288,12 @@ void main() {
 
     expect(f.live.finals.single.translation, '译文：hello');
     expect(f.live.finals.single.start, original.start);
-    expect(provider.calls, 2);
+    expect(provider.calls, 4);
     expect(f.live.canRetryTranslation(f.live.finals.single), isFalse);
 
     f.live.setTranslationEnabled(false);
     await f.live.retryTranslation(f.live.finals.single);
-    expect(provider.calls, 2);
+    expect(provider.calls, 4);
   });
 
   test('停止录音：先停设备再收会话，尾句能进来', () async {
@@ -398,12 +526,15 @@ class _Fixture {
     Future<Transcriber?> Function()? worker,
     String Function()? language,
     TranslationProviderResolver? translationProvider,
+    TranslationRequestPolicy? translationRequestPolicy,
     TranscriptionTaskScheduler? scheduler,
   }) : mic = mic ?? FakeMicrophone() {
     live = LiveController(
       provideWorker: worker ?? () async => transcriber,
       languageOf: language ?? () => 'auto',
       provideTranslationProvider: translationProvider,
+      translationRequestPolicy:
+          translationRequestPolicy ?? const TranslationRequestPolicy(),
       // 必须写 this.mic：构造体里的 mic 是那个可空的形参，传进去等于没传，
       // LiveController 会退回真实的 MicrophoneSource
       mic: this.mic,
@@ -449,4 +580,34 @@ class _FakeLiveTranslationProvider implements ClosableTranslationProvider {
 
   @override
   void close() => closed = true;
+}
+
+class _SessionTranscriber extends FakeTranscriber {
+  _SessionTranscriber(this.session);
+  final LiveSession session;
+  @override
+  Future<LiveSession> startLive() async => session;
+}
+
+class _HangingSession extends FakeLiveSession {
+  _HangingSession(this.failure);
+  final String failure;
+  @override
+  Future<void> accept(Float32List chunk) =>
+      failure == 'accept' ? Completer<void>().future : super.accept(chunk);
+  @override
+  Future<void> finish() {
+    if (failure == 'finish.throw') throw StateError('finish failed');
+    return failure == 'finish' ? Completer<void>().future : super.finish();
+  }
+}
+
+class _HangingMicrophone extends FakeMicrophone {
+  _HangingMicrophone({this.throwsOnStop = false});
+  final bool throwsOnStop;
+  @override
+  Future<void> stop() {
+    if (started && throwsOnStop) throw StateError('stop failed');
+    return started ? Completer<void>().future : super.stop();
+  }
 }

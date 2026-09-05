@@ -5,6 +5,7 @@
 /// 压缩格式（mp3/m4a/视频）不在这里处理，交给平台原生解码，见 `audio_decoder.dart`。
 library;
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:vsasr_app/src/asr/asr_config.dart';
@@ -191,4 +192,128 @@ Float32List resampleLinear(Float32List samples, int from, int to) {
 Float32List decodeWavToModelInput(Uint8List bytes) {
   final WavData wav = decodeWav(bytes);
   return resampleLinear(wav.samples, wav.sampleRate, kSampleRate);
+}
+
+/// 文件增量解码的输出；只保留当前输出块和固定大小的输入缓冲。
+class WavAudioChunk {
+  const WavAudioChunk(this.samples, {required this.isLast});
+
+  final Float32List samples;
+  final bool isLast;
+}
+
+/// 通过 seek 跳过元数据/已完成音频，保持全文件重采样的绝对采样相位。
+/// 取消订阅、解码失败和正常结束都会关闭文件。
+Stream<WavAudioChunk> decodeWavFileChunks(
+  File file, {
+  required int chunkSamples,
+  int startSample = 0,
+}) async* {
+  if (chunkSamples <= 0 || startSample < 0) {
+    throw ArgumentError('chunkSamples 必须为正，startSample 不能为负');
+  }
+  final RandomAccessFile input = await file.open();
+  try {
+    final int fileLength = await input.length();
+    final Uint8List header = await input.read(12);
+    if (header.length < 12 ||
+        _tag(header, 0) != 'RIFF' ||
+        _tag(header, 8) != 'WAVE') {
+      throw const WavFormatException('缺少 RIFF/WAVE 头，不是 WAV 文件');
+    }
+    int format = -1;
+    int channels = 0;
+    int sampleRate = 0;
+    int bits = 0;
+    int dataOffset = -1;
+    int dataLength = 0;
+    int offset = 12;
+    // 与 decodeWav 一样允许 data 在 fmt 前面，并采用最后一个 data chunk。
+    while (offset + 8 <= fileLength) {
+      await input.setPosition(offset);
+      final Uint8List chunk = await input.read(8);
+      if (chunk.length != 8) {
+        throw FileSystemException('读取 WAV chunk 失败', file.path);
+      }
+      final String id = _tag(chunk, 0);
+      final int size = ByteData.sublistView(chunk).getUint32(4, Endian.little);
+      final int body = offset + 8;
+      int step = size;
+      if (id == 'fmt ') {
+        if (size < 16 || body + 16 > fileLength) {
+          throw const WavFormatException('fmt chunk 长度异常');
+        }
+        final int count = size >= 40 && body + 26 <= fileLength ? 26 : 16;
+        final Uint8List raw = await input.read(count);
+        if (raw.length != count) {
+          throw FileSystemException('读取 WAV 格式失败', file.path);
+        }
+        final ByteData fmt = ByteData.sublistView(raw);
+        format = fmt.getUint16(0, Endian.little);
+        channels = fmt.getUint16(2, Endian.little);
+        sampleRate = fmt.getUint32(4, Endian.little);
+        bits = fmt.getUint16(14, Endian.little);
+        if (format == _formatExtensible && count == 26) {
+          format = fmt.getUint16(24, Endian.little);
+        }
+      } else if (id == 'data') {
+        dataOffset = body;
+        final int available = fileLength - body;
+        dataLength = size == 0 || size > available ? available : size;
+        step = dataLength;
+      }
+      offset = body + step + (step.isOdd ? 1 : 0);
+    }
+    if (format < 0 || channels <= 0 || sampleRate <= 0) {
+      throw const WavFormatException('缺少 fmt chunk 或参数非法');
+    }
+    if (dataOffset < 0) throw const WavFormatException('缺少 data chunk');
+    if (format != _formatPcm && format != _formatFloat) {
+      throw WavFormatException('不支持的 WAV 编码 $format');
+    }
+    if (!(format == _formatPcm
+        ? <int>[8, 16, 24, 32].contains(bits)
+        : <int>[32, 64].contains(bits))) {
+      throw WavFormatException('不支持的 WAV 位深 $bits');
+    }
+    final int frameBytes = channels * (bits ~/ 8);
+    final int frames = dataLength ~/ frameBytes;
+    final int totalSamples = (frames * kSampleRate / sampleRate).floor();
+    final double step = sampleRate / kSampleRate;
+    int bufferStart = -1;
+    Float32List buffer = Float32List(0);
+    // 输入窗口约 64 KiB，至少容纳两帧以完成边界插值。
+    final int bufferFrames = (65536 ~/ frameBytes).clamp(2, 4096);
+    for (int offset = startSample; offset < totalSamples;) {
+      final int count = (totalSamples - offset).clamp(0, chunkSamples);
+      final Float32List output = Float32List(count);
+      for (int i = 0; i < count; i++) {
+        final double position = (offset + i) * step;
+        final int left = position.floor();
+        final int right = left + 1 < frames ? left + 1 : frames - 1;
+        if (left < bufferStart || right >= bufferStart + buffer.length) {
+          bufferStart = left;
+          final int readFrames = (frames - left).clamp(0, bufferFrames);
+          await input.setPosition(dataOffset + left * frameBytes);
+          final Uint8List raw = await input.read(readFrames * frameBytes);
+          if (raw.length != readFrames * frameBytes) {
+            throw FileSystemException('WAV 数据在解码时被截断', file.path);
+          }
+          buffer = _toMono(raw, format, bits, channels);
+        }
+        if (sampleRate == kSampleRate) {
+          output[i] = buffer[left - bufferStart];
+        } else {
+          final double fraction = position - left;
+          output[i] =
+              buffer[left - bufferStart] * (1 - fraction) +
+              buffer[right - bufferStart] * fraction;
+        }
+      }
+      offset += count;
+      yield WavAudioChunk(output, isLast: offset == totalSamples);
+    }
+  } finally {
+    await input.close();
+  }
 }

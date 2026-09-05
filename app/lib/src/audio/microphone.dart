@@ -41,10 +41,13 @@ abstract interface class AudioSource {
 /// 录音器实例销毁，之后同一个对象再 `startStream()` 就失败了 —— 而「开始 → 停止
 /// → 再开始」是最常见的用法，所以录音器的生命周期只能是一场录音，不能是本对象。
 class MicrophoneSource implements AudioSource {
-  MicrophoneSource({AudioRecorder Function()? createRecorder})
-    : _create = createRecorder ?? AudioRecorder.new;
+  MicrophoneSource({
+    AudioRecorder Function()? createRecorder,
+    this.operationTimeout = const Duration(seconds: 10),
+  }) : _create = createRecorder ?? AudioRecorder.new;
 
   final AudioRecorder Function() _create;
+  final Duration operationTimeout;
   AudioRecorder? _recorder;
 
   @override
@@ -75,7 +78,7 @@ class MicrophoneSource implements AudioSource {
     } on Object {
       // 开不起来也要把录音器收掉，否则平台侧的实例会一直留着
       _recorder = null;
-      await recorder.dispose();
+      await recorder.dispose().timeout(operationTimeout);
       rethrow;
     }
   }
@@ -85,8 +88,11 @@ class MicrophoneSource implements AudioSource {
     final AudioRecorder? recorder = _recorder;
     _recorder = null;
     if (recorder == null) return;
-    await recorder.stop();
-    await recorder.dispose();
+    try {
+      await recorder.stop().timeout(operationTimeout);
+    } finally {
+      await recorder.dispose().timeout(operationTimeout);
+    }
   }
 }
 
