@@ -28,6 +28,7 @@ class PerformanceReport {
     this.peakRssBytes,
     this.firstFinalElapsed,
     this.chunkCount,
+    this.inputGainDb = 0,
   });
 
   final DateTime generatedAt;
@@ -51,6 +52,7 @@ class PerformanceReport {
   final int numThreads;
   final bool useItn;
   final double partialInterval;
+  final double inputGainDb;
   final double vadThreshold;
   final double minSilenceDuration;
   final double minSpeechDuration;
@@ -91,6 +93,7 @@ class PerformanceReport {
       'num_threads': numThreads,
       'use_itn': useItn,
       'partial_interval_seconds': partialInterval,
+      'input_gain_db': inputGainDb,
       'vad_threshold': vadThreshold,
       'min_silence_duration_seconds': minSilenceDuration,
       'min_speech_duration_seconds': minSpeechDuration,
@@ -124,6 +127,7 @@ class PerformanceReport {
       'RTF：$rtf',
       '模型占用：${modelBytes == null ? '未统计' : _formatBytes(modelBytes!)}',
       '线程数：$numThreads',
+      '输入增益：${inputGainDb.toStringAsFixed(1)} dB',
       'ITN：${useItn ? '开启' : '关闭'}',
       '局部结果间隔：${partialInterval.toStringAsFixed(3)} 秒',
       'VAD：threshold=${vadThreshold.toStringAsFixed(3)}, '

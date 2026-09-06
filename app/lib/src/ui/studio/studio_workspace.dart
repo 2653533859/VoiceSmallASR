@@ -11,6 +11,7 @@ import 'package:vsasr_app/src/subtitles/subtitle_editor_controller.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/ui/studio/studio_header_bar.dart';
+import 'package:vsasr_app/src/ui/studio/range_retranscription_dialog.dart';
 import 'package:vsasr_app/src/ui/studio/studio_subtitle_panel.dart';
 import 'package:vsasr_app/src/ui/studio/studio_video_monitor.dart';
 import 'package:vsasr_app/src/ui/theme/studio_theme.dart';
@@ -148,6 +149,52 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
       _editor!.redo();
     }
     _commitEditorChange();
+  }
+
+  Future<void> _retranscribeRange() async {
+    final editor = _editor;
+    final controller = widget.controller;
+    if (editor == null || controller.busy || controller.filePath == null) {
+      return;
+    }
+    final source = editor.result;
+    final path = controller.filePath;
+    final video = widget.videoController;
+    final double? mediaDuration =
+        video.filePath == path && video.duration > Duration.zero
+        ? video.duration.inMicroseconds / 1000000
+        : null;
+    final replacement = await showDialog<RangeReplacement>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => RangeRetranscriptionDialog(
+        controller: controller,
+        initial: source,
+        mediaDuration: mediaDuration,
+        position: widget.videoController.position.inMicroseconds / 1000000,
+      ),
+    );
+    if (!mounted || replacement == null) return;
+    if (!identical(editor, _editor) ||
+        !identical(source, editor.result) ||
+        path != controller.filePath ||
+        controller.busy) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('字幕或媒体已变化，请重新选择范围')));
+      return;
+    }
+    try {
+      editor.replaceRange(
+        replacement.start,
+        replacement.end,
+        replacement.segments,
+        mediaDuration: mediaDuration,
+      );
+      _commitEditorChange();
+    } on SubtitleEditException catch (error) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
+    }
   }
 
   Future<void> _replaceText() async {
@@ -448,6 +495,14 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
                       : null,
                   icon: const Icon(Icons.redo),
                   label: const Text('重做'),
+                ),
+                TextButton.icon(
+                  key: const Key('studioRetranscribeRange'),
+                  onPressed: c.busy || widget.batchBusy || c.filePath == null
+                      ? null
+                      : _retranscribeRange,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('选区重新识别'),
                 ),
                 TextButton.icon(
                   key: const Key('studioReplace'),

@@ -16,6 +16,7 @@ import 'dart:typed_data';
 
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/audio/input_gain.dart';
 
 /// 局部结果所需的最短音频长度（秒），太短的片段识别没有意义。
 /// 与 Python 端 `MIN_PARTIAL_SECONDS` 一致。
@@ -123,14 +124,15 @@ class StreamingTranscriber {
 
   /// 送入一块音频，返回本次产生的段（定稿段在前，局部段在后）。
   List<Segment> accept(Float32List chunk) {
+    final Float32List input = applyInputGain(chunk, config.inputGainDb);
     // 按窗口逐块喂：整段一次性喂会让段起点判定失准（Python 端同样如此），
     // 而且只有逐窗口喂才能捕捉到「开口」的那一刻，进而维护局部缓冲。
     final int window = config.vad.windowSize;
-    for (int offset = 0; offset < chunk.length; offset += window) {
-      final int end = (offset + window) < chunk.length
+    for (int offset = 0; offset < input.length; offset += window) {
+      final int end = (offset + window) < input.length
           ? offset + window
-          : chunk.length;
-      final Float32List view = Float32List.sublistView(chunk, offset, end);
+          : input.length;
+      final Float32List view = Float32List.sublistView(input, offset, end);
       segmenter.accept(view);
       _absorb(view);
       _fed += view.length;

@@ -8,6 +8,79 @@ import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 
 void main() {
+  testWidgets('小声预设保存原音频语言与增益且不改变翻译语言，可恢复标准参数', (tester) async {
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: _FakeSecretStore()),
+    );
+    final TranscribeController controller = TranscribeController();
+    addTearDown(controller.shutdown);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsPage(controller: controller, repository: repository),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settingsLanguage')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('日文').last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('quietSpeechPreset')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 30,
+    );
+    await tester.tap(find.byKey(const Key('quietSpeechPreset')));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('保存设置'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 30,
+    );
+    await tester.tap(find.text('保存设置'));
+    await tester.pumpAndSettle();
+    final config = await repository.loadConfig();
+    expect(config.language, 'ja');
+    expect(config.inputGainDb, 6);
+    expect(config.vad.threshold, .35);
+    expect(config.vad.minSilenceDuration, .5);
+    expect(config.vad.minSpeechDuration, .15);
+    expect(
+      (await repository.loadTranslationApiSettings()).targetLanguage,
+      'zh-CN',
+    );
+    expect(controller.config.inputGainDb, 6);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsPage(controller: controller, repository: repository),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('standardSpeechPreset')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 30,
+    );
+    await tester.tap(find.byKey(const Key('standardSpeechPreset')));
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('保存设置'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 30,
+    );
+    await tester.tap(find.text('保存设置'));
+    await tester.pumpAndSettle();
+    expect(controller.config.inputGainDb, 0);
+    expect(controller.config.vad.threshold, .5);
+    expect(controller.config.vad.minSpeechDuration, .25);
+    expect(controller.config.language, 'ja');
+  });
+
   testWidgets('设置页保存普通配置和第三方翻译 API Key，并立即应用到控制器', (WidgetTester tester) async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
     final _FakeSecretStore secrets = _FakeSecretStore();

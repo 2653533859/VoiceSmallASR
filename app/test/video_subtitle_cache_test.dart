@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
+
+import 'package:vsasr_app/src/asr/asr_config.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -17,6 +20,35 @@ void main() {
   });
 
   tearDown(() => root.deleteSync(recursive: true));
+
+  test('输入增益隔离完整字幕和检查点缓存', () async {
+    const TranscriptionResult result = TranscriptionResult(
+      segments: <Segment>[],
+      duration: 1,
+    );
+    final String original = jsonEncode(AsrConfig().toJson());
+    final String boosted = jsonEncode(AsrConfig(inputGainDb: 6).toJson());
+    await cache.write(video.path, result, configurationScope: original);
+    await cache.writeCheckpoint(
+      video.path,
+      result,
+      processedSamples: 16000,
+      configurationScope: original,
+    );
+    expect(
+      await cache.read(video.path, configurationScope: original),
+      isNotNull,
+    );
+    expect(
+      await cache.readCheckpoint(video.path, configurationScope: original),
+      isNotNull,
+    );
+    expect(await cache.read(video.path, configurationScope: boosted), isNull);
+    expect(
+      await cache.readCheckpoint(video.path, configurationScope: boosted),
+      isNull,
+    );
+  });
 
   test('缓存会保存结构化结果和可直接使用的 SRT', () async {
     const TranscriptionResult result = TranscriptionResult(

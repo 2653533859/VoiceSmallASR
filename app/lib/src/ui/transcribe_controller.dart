@@ -409,6 +409,121 @@ class TranscribeController extends ChangeNotifier {
   Future<void> setLanguage(String language) =>
       applyConfig(_config.copyWith(language: language));
 
+  /// 仅生成选区预览，不改变当前字幕或全局识别配置。
+  Future<List<Segment>> previewRange({
+    required double start,
+    required double end,
+    required AsrConfig config,
+    bool Function()? isCancelled,
+    double? mediaDuration,
+  }) async {
+    final double limit = mediaDuration ?? _result?.duration ?? 0;
+    final path = _filePath;
+    if (_disposed || busy || path == null) throw StateError('当前无法重新识别');
+    if (!start.isFinite ||
+        !end.isFinite ||
+        start < 0 ||
+        end <= start ||
+        !limit.isFinite ||
+        limit <= 0 ||
+        end > limit ||
+        end - start > 120) {
+      throw ArgumentError('请选择媒体内不超过 120 秒的范围');
+    }
+    final decoder = _decoder;
+    if (decoder is! ResumableChunkedAudioDecoder) {
+      throw StateError('当前解码器不支持选区解码');
+    }
+    final generation = _cancelGeneration;
+    void checkCancelled() {
+      if (_disposed ||
+          generation != _cancelGeneration ||
+          (isCancelled?.call() ?? false)) {
+        throw StateError('选区识别已取消');
+      }
+    }
+
+    _activeFileTasks++;
+    notifyListeners();
+    TranscriptionTaskLease? lease;
+    Transcriber? worker;
+    try {
+      lease = await _scheduler.acquire(
+        priority: TranscriptionTaskPriority.userTask,
+        label: '选区重新识别',
+      );
+      checkCancelled();
+      // 与原生解码毫秒精度一致，随后裁去首尾多余采样。
+      final int startMs = (start * 1000).floor();
+      int skip = (start * kSampleRate).round() - startMs * 16;
+      final int count = ((end - start) * kSampleRate).floor();
+      final audio = Float32List(count);
+      int written = 0;
+      await for (final chunk
+          in (decoder as ResumableChunkedAudioDecoder).decodeFileChunksFrom(
+            path,
+            startAt: Duration(milliseconds: startMs),
+            chunkDuration: const Duration(seconds: 2),
+          )) {
+        checkCancelled();
+        final int from = skip.clamp(0, chunk.samples.length);
+        skip -= from;
+        final int length = (chunk.samples.length - from).clamp(
+          0,
+          count - written,
+        );
+        audio.setRange(written, written + length, chunk.samples, from);
+        written += length;
+        if (written == count) break;
+      }
+      checkCancelled();
+      if (written == 0) throw StateError('选区没有可解码的音频');
+      await _clearingWorkers;
+      worker = await _pool.acquire(
+        config: config,
+        allowDownload: !_offlineMode,
+        onModelProgress: (_, _, _) {},
+      );
+      checkCancelled();
+      final preview = await worker.transcribe(
+        Float32List.sublistView(audio, 0, written),
+      );
+      checkCancelled();
+      return preview.segments
+          .where(
+            (s) =>
+                s.text.trim().isNotEmpty &&
+                s.end > s.start &&
+                s.start < end - start,
+          )
+          .map((s) {
+            final double segmentStart = (start + s.start).clamp(start, end);
+            final double segmentEnd = (start + s.end).clamp(segmentStart, end);
+            return Segment(
+              text: s.text,
+              start: segmentStart,
+              end: segmentEnd,
+              language: s.language,
+              words: s.words
+                  .map(
+                    (w) => Word(
+                      text: w.text,
+                      start: (start + w.start).clamp(segmentStart, segmentEnd),
+                      end: (start + w.end).clamp(segmentStart, segmentEnd),
+                    ),
+                  )
+                  .toList(),
+            );
+          })
+          .toList();
+    } finally {
+      if (worker != null) _pool.release(worker);
+      lease?.release();
+      _activeFileTasks--;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   /// 解码并识别一个文件。
   ///
   /// 返回识别结果与性能报告；如果是主界面任务，也会写回 [result] 字段。
@@ -521,6 +636,7 @@ class TranscribeController extends ChangeNotifier {
         numThreads: _config.numThreads,
         useItn: _config.useItn,
         partialInterval: _config.partialInterval,
+        inputGainDb: _config.inputGainDb,
         vadThreshold: _config.vad.threshold,
         minSilenceDuration: _config.vad.minSilenceDuration,
         minSpeechDuration: _config.vad.minSpeechDuration,
@@ -605,6 +721,7 @@ class TranscribeController extends ChangeNotifier {
         numThreads: config.numThreads,
         useItn: config.useItn,
         partialInterval: config.partialInterval,
+        inputGainDb: config.inputGainDb,
         vadThreshold: config.vad.threshold,
         minSilenceDuration: config.vad.minSilenceDuration,
         minSpeechDuration: config.vad.minSpeechDuration,
@@ -1241,6 +1358,7 @@ class TranscribeController extends ChangeNotifier {
         a.useItn == b.useItn &&
         a.numThreads == b.numThreads &&
         a.partialInterval == b.partialInterval &&
+        a.inputGainDb == b.inputGainDb &&
         a.provider == b.provider &&
         av.threshold == bv.threshold &&
         av.minSilenceDuration == bv.minSilenceDuration &&

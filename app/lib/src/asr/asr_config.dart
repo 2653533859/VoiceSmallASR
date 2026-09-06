@@ -114,6 +114,7 @@ class AsrConfig {
     this.useItn = true,
     this.numThreads = 2,
     this.partialInterval = 0.6,
+    this.inputGainDb = 0,
     this.vad = const VadConfig(),
     this.provider = 'auto',
   }) {
@@ -122,6 +123,9 @@ class AsrConfig {
     }
     if (numThreads < 1) {
       throw ArgumentError.value(numThreads, 'numThreads', '必须 >= 1');
+    }
+    if (!inputGainDb.isFinite || inputGainDb < 0 || inputGainDb > 12) {
+      throw ArgumentError.value(inputGainDb, 'inputGainDb', '必须是 0 到 12 的有限数字');
     }
     if (partialInterval < 0) {
       throw ArgumentError.value(partialInterval, 'partialInterval', '不能为负');
@@ -139,6 +143,9 @@ class AsrConfig {
 
   /// 流式局部结果的最小间隔（秒）。设为 0 关闭局部结果，只输出定稿句子。
   final double partialInterval;
+
+  /// 识别输入增益（dB），范围 0 到 12；0 保持原始音量。
+  final double inputGainDb;
 
   /// 推理运行时的后端提供者。
   /// 可选值：`auto` (根据平台自动选择), `cpu`, `nnapi` (Android), `coreml` (macOS).
@@ -162,6 +169,11 @@ class AsrConfig {
         'config.num_threads',
         fallback: 2,
       ),
+      inputGainDb: _configDouble(
+        value['input_gain_db'],
+        'config.input_gain_db',
+        fallback: 0,
+      ),
       partialInterval: _configDouble(
         value['partial_interval'],
         'config.partial_interval',
@@ -181,6 +193,7 @@ class AsrConfig {
     'use_itn': useItn,
     'num_threads': numThreads,
     'partial_interval': partialInterval,
+    'input_gain_db': inputGainDb,
     'provider': provider,
     'vad': <String, dynamic>{
       'threshold': vad.threshold,
@@ -199,6 +212,7 @@ class AsrConfig {
     bool? useItn,
     int? numThreads,
     double? partialInterval,
+    double? inputGainDb,
     VadConfig? vad,
     String? provider,
   }) {
@@ -207,6 +221,7 @@ class AsrConfig {
       useItn: useItn ?? this.useItn,
       numThreads: numThreads ?? this.numThreads,
       partialInterval: partialInterval ?? this.partialInterval,
+      inputGainDb: inputGainDb ?? this.inputGainDb,
       vad: vad ?? this.vad,
       provider: provider ?? this.provider,
     );

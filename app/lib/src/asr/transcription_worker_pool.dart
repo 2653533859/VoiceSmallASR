@@ -160,6 +160,7 @@ class TranscriptionWorkerPool {
         a.provider == b.provider &&
         a.useItn == b.useItn &&
         a.partialInterval == b.partialInterval &&
+        a.inputGainDb == b.inputGainDb &&
         av.threshold == bv.threshold &&
         av.minSilenceDuration == bv.minSilenceDuration &&
         av.minSpeechDuration == bv.minSpeechDuration &&

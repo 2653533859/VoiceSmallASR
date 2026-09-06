@@ -12,6 +12,7 @@ import 'package:vsasr_app/src/translation/api_provider.dart';
 const String _languageKey = 'settings.asr.language';
 const String _useItnKey = 'settings.asr.use_itn';
 const String _numThreadsKey = 'settings.asr.num_threads';
+const String _inputGainDbKey = 'settings.asr.input_gain_db';
 const String _partialIntervalKey = 'settings.asr.partial_interval';
 const String _vadThresholdKey = 'settings.vad.threshold';
 const String _minSilenceDurationKey = 'settings.vad.min_silence_duration';
@@ -136,6 +137,9 @@ class AppSettingsRepository {
     final double? storedPartial = await _preferences.readDouble(
       _partialIntervalKey,
     );
+    final double? storedInputGain = await _preferences.readDouble(
+      _inputGainDbKey,
+    );
     final double? storedThreshold = await _preferences.readDouble(
       _vadThresholdKey,
     );
@@ -184,6 +188,9 @@ class AppSettingsRepository {
       useItn: storedUseItn ?? base.useItn,
       numThreads: numThreads,
       partialInterval: partialInterval,
+      inputGainDb: _validDouble(storedInputGain, min: 0, max: 12)
+          ? storedInputGain
+          : base.inputGainDb,
       vad: vad,
     );
   }
@@ -194,6 +201,7 @@ class AppSettingsRepository {
     await _preferences.writeBool(_useItnKey, config.useItn);
     await _preferences.writeInt(_numThreadsKey, config.numThreads);
     await _preferences.writeDouble(_partialIntervalKey, config.partialInterval);
+    await _preferences.writeDouble(_inputGainDbKey, config.inputGainDb);
     await _preferences.writeDouble(_vadThresholdKey, config.vad.threshold);
     await _preferences.writeDouble(
       _minSilenceDurationKey,

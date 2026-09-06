@@ -12,6 +12,7 @@ import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 import 'package:vsasr_app/src/asr/vad_session.dart';
+import 'package:vsasr_app/src/audio/input_gain.dart';
 
 /// 整段转写进度：[done] / [total] 为已处理与总采样数。
 typedef TranscribeProgress = void Function(int done, int total);
@@ -147,7 +148,12 @@ class AsrEngine implements Transcriber, SegmentDecoder {
         final int end = (offset + chunk) < samples.length
             ? offset + chunk
             : samples.length;
-        vad.accept(Float32List.sublistView(samples, offset, end));
+        vad.accept(
+          applyInputGain(
+            Float32List.sublistView(samples, offset, end),
+            config.inputGainDb,
+          ),
+        );
         for (final ({Float32List samples, double start}) speech
             in vad.drain()) {
           collected.add(decodeSamples(speech.samples, offset: speech.start));

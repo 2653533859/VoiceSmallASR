@@ -326,8 +326,11 @@ class VideoPlaylistCoordinator extends ChangeNotifier
       return;
     }
     final Duration duration = controller.duration;
-    if (duration <= Duration.zero ||
-        controller.position < duration - const Duration(milliseconds: 250)) {
+    if (controller.busy ||
+        controller.seeking ||
+        duration <= Duration.zero ||
+        controller.actualPosition <
+            duration - const Duration(milliseconds: 250)) {
       return;
     }
     _autoAdvancing = true;

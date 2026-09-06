@@ -57,6 +57,63 @@ class SubtitleEditorController extends ChangeNotifier {
 
   bool get canRedo => _redo.isNotEmpty;
 
+  /// 扩展到完整字幕边界，避免替换半句话而丢失选区外文字。
+  ({double start, double end}) resolveRange(
+    double start,
+    double end, {
+    double? mediaDuration,
+  }) {
+    final double limit = mediaDuration ?? _result.duration;
+    if (!start.isFinite ||
+        !end.isFinite ||
+        start < 0 ||
+        end <= start ||
+        !limit.isFinite ||
+        limit <= 0 ||
+        end > limit) {
+      throw const SubtitleEditException('选区必须位于媒体时长内，且结束时间大于开始时间');
+    }
+    for (final segment in _result.segments) {
+      if (segment.end > start && segment.start < end) {
+        if (segment.start < start) start = segment.start;
+        if (segment.end > end) end = segment.end;
+      }
+    }
+    return (start: start, end: end);
+  }
+
+  /// 替换完整选区；新字幕采用绝对时间，作为一次可撤销编辑。
+  void replaceRange(
+    double start,
+    double end,
+    List<Segment> replacements, {
+    double? mediaDuration,
+  }) {
+    final range = resolveRange(start, end, mediaDuration: mediaDuration);
+    if (range.start != start || range.end != end) {
+      throw const SubtitleEditException('选区必须包含完整字幕');
+    }
+    if (replacements.isEmpty) {
+      throw const SubtitleEditException('没有识别到语音，保留原字幕');
+    }
+    if (replacements.any((s) => s.start < start || s.end > end)) {
+      throw const SubtitleEditException('新字幕超出选区');
+    }
+    _commit(<Segment>[
+      ..._result.segments.where((s) => s.end <= start),
+      ...replacements.map(
+        (s) => Segment(
+          text: s.text,
+          start: s.start,
+          end: s.end,
+          words: s.words,
+          language: s.language,
+        ),
+      ),
+      ..._result.segments.where((s) => s.start >= end),
+    ], duration: mediaDuration);
+  }
+
   /// 修改一条字幕的文本和/或时间。
   ///
   /// 文本发生变化时清除旧译文，因为旧译文已经不再对应新的原文；token 时间戳
@@ -183,10 +240,9 @@ class SubtitleEditorController extends ChangeNotifier {
   /// 更新第 [index] 条字幕的译文。
   void updateTranslation(int index, String? translation) {
     final Segment current = _segmentAt(index);
-    final String? next =
-        translation == null || translation.trim().isEmpty
-            ? null
-            : translation.trim();
+    final String? next = translation == null || translation.trim().isEmpty
+        ? null
+        : translation.trim();
     if (next == current.translation) return;
     final Segment updated = Segment(
       text: current.text,
@@ -327,9 +383,10 @@ class SubtitleEditorController extends ChangeNotifier {
     return _result.segments[index];
   }
 
-  void _commit(List<Segment> segments) {
+  void _commit(List<Segment> segments, {double? duration}) {
     final TranscriptionResult next = _result.copyWith(
       segments: _withIndexesFrom(segments),
+      duration: duration,
     );
     _ensureValid(next);
     _undo.add(_result);

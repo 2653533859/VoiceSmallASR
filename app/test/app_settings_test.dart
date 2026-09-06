@@ -6,6 +6,23 @@ import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 
 void main() {
+  test('缺失或无效增益回退，支持旧偏好设置', () async {
+    final _FakePreferenceStore preferences = _FakePreferenceStore();
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: preferences,
+    );
+    expect((await repository.loadConfig()).inputGainDb, 0);
+    for (final double value in <double>[-1, 13, double.nan, double.infinity]) {
+      preferences.doubles['settings.asr.input_gain_db'] = value;
+      expect((await repository.loadConfig()).inputGainDb, 0);
+      expect(
+        (await repository.loadConfig(fallback: AsrConfig(inputGainDb: 3)))
+            .inputGainDb,
+        3,
+      );
+    }
+  });
+
   test('普通识别设置可以保存并在下一次加载时恢复', () async {
     final _FakePreferenceStore preferences = _FakePreferenceStore();
     final AppSettingsRepository repository = AppSettingsRepository(
@@ -16,6 +33,7 @@ void main() {
       useItn: false,
       numThreads: 8,
       partialInterval: 1.2,
+      inputGainDb: 6,
       vad: const VadConfig(
         threshold: 0.7,
         minSilenceDuration: 0.8,
@@ -31,6 +49,7 @@ void main() {
     expect(loaded.useItn, isFalse);
     expect(loaded.numThreads, 8);
     expect(loaded.partialInterval, 1.2);
+    expect(loaded.inputGainDb, 6);
     expect(loaded.vad.threshold, 0.7);
     expect(loaded.vad.minSilenceDuration, 0.8);
     expect(loaded.vad.minSpeechDuration, 0.3);

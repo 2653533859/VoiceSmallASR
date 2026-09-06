@@ -31,6 +31,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late double _partialInterval;
   late double _vadThreshold;
   late double _minSilenceDuration;
+  late double _minSpeechDuration;
+  late double _inputGainDb;
   bool _videoSubtitlesEnabled = true;
   bool _videoTranslationEnabled = false;
   bool _videoSubtitleCacheEnabled = true;
@@ -62,6 +64,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _numThreads = config.numThreads.clamp(1, 16).toInt();
     _partialInterval = config.partialInterval.clamp(0.0, 3.0).toDouble();
     _vadThreshold = config.vad.threshold.clamp(0.1, 0.9).toDouble();
+    _minSpeechDuration = config.vad.minSpeechDuration;
+    _inputGainDb = config.inputGainDb;
     _minSilenceDuration = config.vad.minSilenceDuration
         .clamp(0.1, 1.5)
         .toDouble();
@@ -136,9 +140,11 @@ class _SettingsPageState extends State<SettingsPage> {
       useItn: _useItn,
       numThreads: _numThreads,
       partialInterval: _partialInterval,
+      inputGainDb: _inputGainDb,
       vad: current.vad.copyWith(
         threshold: _vadThreshold,
         minSilenceDuration: _minSilenceDuration,
+        minSpeechDuration: _minSpeechDuration,
       ),
     );
     try {
@@ -498,7 +504,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 DropdownButtonFormField<String>(
                   key: const Key('settingsLanguage'),
                   initialValue: _language,
-                  decoration: const InputDecoration(labelText: '识别语言'),
+                  decoration: const InputDecoration(
+                    labelText: '识别语言（原音频）',
+                    helperText: '主要是日语时选日文；多语种混合时选自动检测。不会改变翻译目标语言。',
+                    helperMaxLines: 3,
+                  ),
                   onChanged: disabled
                       ? null
                       : (String? value) {
@@ -624,7 +634,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 DropdownButtonFormField<String>(
                   key: const Key('translationTargetLanguage'),
                   initialValue: _targetLanguage,
-                  decoration: const InputDecoration(labelText: '翻译目标语言'),
+                  decoration: const InputDecoration(
+                    labelText: '翻译目标语言',
+                    helperText: '仅决定译文语言，不影响原文识别。检查识别结果时可切换为仅原文。',
+                    helperMaxLines: 3,
+                  ),
                   onChanged: disabled
                       ? null
                       : (String? value) {
@@ -826,8 +840,46 @@ class _SettingsPageState extends State<SettingsPage> {
                       setState(() => _partialInterval = value),
                 ),
                 const SizedBox(height: 8),
+                const Divider(height: 24),
+                Text(
+                  '语音检测与输入音量（文件、视频、实时通用）',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                Wrap(
+                  spacing: 8,
+                  children: <Widget>[
+                    OutlinedButton(
+                      key: const Key('quietSpeechPreset'),
+                      onPressed: disabled
+                          ? null
+                          : () => setState(() {
+                              _vadThreshold = 0.35;
+                              _minSilenceDuration = 0.5;
+                              _minSpeechDuration = 0.15;
+                              _inputGainDb = 6;
+                            }),
+                      child: const Text('应用小声语音预设'),
+                    ),
+                    TextButton(
+                      key: const Key('standardSpeechPreset'),
+                      onPressed: disabled
+                          ? null
+                          : () => setState(() {
+                              const VadConfig defaults = VadConfig();
+                              _vadThreshold = defaults.threshold;
+                              _minSilenceDuration = defaults.minSilenceDuration;
+                              _minSpeechDuration = defaults.minSpeechDuration;
+                              _inputGainDb = 0;
+                            }),
+                      child: const Text('恢复标准语音参数'),
+                    ),
+                  ],
+                ),
+                const Text(
+                  '小声预设：阈值 0.35、句末静音 0.50 秒、最短语音 0.15 秒、增益 +6 dB。需要保存后重新转写；不会自动切换识别语言。',
+                ),
                 _ValueSlider(
-                  label: 'VAD 断句灵敏度',
+                  label: '语音检测阈值（越低越容易接收小声语音）',
                   valueText: _vadThreshold.toStringAsFixed(2),
                   value: _vadThreshold,
                   min: 0.1,
@@ -836,6 +888,26 @@ class _SettingsPageState extends State<SettingsPage> {
                   enabled: !disabled,
                   onChanged: (double value) =>
                       setState(() => _vadThreshold = value),
+                ),
+                const Text('这是语音概率阈值，不是音量大小。降低可能增加噪声误识别。'),
+                Text(
+                  '当前最短语音：${_minSpeechDuration.toStringAsFixed(2)} 秒；更短的片段会被过滤。',
+                ),
+                _ValueSlider(
+                  label: '识别输入增益',
+                  valueText: _inputGainDb == 0
+                      ? '关闭（0 dB）'
+                      : '+${_inputGainDb.toStringAsFixed(0)} dB',
+                  value: _inputGainDb,
+                  min: 0,
+                  max: 12,
+                  divisions: 12,
+                  enabled: !disabled,
+                  onChanged: (double value) =>
+                      setState(() => _inputGainDb = value),
+                ),
+                const Text(
+                  '只增强送入识别器的音频，原文件和播放音量不变。增益也会放大噪声；峰值限幅，过高可能失真，建议先试 +6 dB。',
                 ),
                 _ValueSlider(
                   label: '句末静音时长',

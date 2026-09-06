@@ -103,14 +103,15 @@ void main() {
     tester.semantics.increase(find.semantics.byLabel('播放进度'));
     expect(backend.lastSeek, const Duration(milliseconds: 10500));
     tester.semantics.decrease(find.semantics.byLabel('播放进度'));
-    expect(backend.lastSeek, Duration.zero);
+    await tester.pump();
+    expect(backend.lastSeek, const Duration(milliseconds: 500));
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pump();
     expect(backend.lastSeek, const Duration(milliseconds: 10500));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await tester.pump();
-    expect(backend.lastSeek, Duration.zero);
+    expect(backend.lastSeek, const Duration(milliseconds: 500));
 
     expect(find.text('字幕第一条'), findsNWidgets(2));
     await tester.tap(find.text('字幕第一条').last);

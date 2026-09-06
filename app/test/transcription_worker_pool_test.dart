@@ -9,6 +9,29 @@ import 'package:vsasr_app/src/asr/transcription_worker_pool.dart';
 import 'support/fake_asr.dart';
 
 void main() {
+  test('增益变化不复用旧worker，同增益仍复用', () async {
+    final TranscriptionWorkerPool pool = TranscriptionWorkerPool(
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => FakeTranscriber(),
+    );
+    addTearDown(pool.dispose);
+    Future<Transcriber> acquire(double gain) => pool.acquire(
+      config: AsrConfig(inputGainDb: gain),
+      allowDownload: false,
+      onModelProgress: (_, _, _) {},
+    );
+    final Transcriber original = await acquire(0);
+    pool.release(original);
+    final Transcriber boosted = await acquire(6);
+    expect(boosted, isNot(same(original)));
+    pool.release(boosted);
+    expect(await acquire(6), same(boosted));
+    pool.release(boosted);
+  });
+
   test('非正容量在运行时拒绝', () {
     expect(() => TranscriptionWorkerPool(maxWorkers: 0), throwsArgumentError);
     expect(() => TranscriptionWorkerPool(maxWorkers: -1), throwsArgumentError);

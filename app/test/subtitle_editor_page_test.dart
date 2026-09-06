@@ -65,6 +65,8 @@ void main() {
     await tester.tap(find.byKey(const Key('subtitleSeek_1')));
     await tester.pump();
     expect(backend.lastSeek, const Duration(seconds: 1));
+    // 测试后端不报告跳转位置，让控制器的确认超时完成。
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('编辑器支持合并和拆分入口', (WidgetTester tester) async {

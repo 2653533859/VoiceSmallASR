@@ -20,6 +20,53 @@ import 'support/fake_asr.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('未确认和失败的片尾跳转不会自动切换，实际到达片尾才切换', () async {
+    final root = Directory.systemTemp.createTempSync('seek_playlist_');
+    final backend = _FakeVideoBackend();
+    final player = VideoPlaybackController(backend: backend);
+    final transcription = TranscribeController();
+    final coordinator = VideoPlaylistCoordinator(
+      controller: player,
+      transcription: transcription,
+      playlistStore: VideoPlaylistStore(rootDirectory: root),
+    );
+    addTearDown(() async {
+      coordinator.dispose();
+      player.dispose();
+      await transcription.shutdown();
+      root.deleteSync(recursive: true);
+    });
+    coordinator.init();
+    coordinator.setProcessingPreferences(
+      translationEnabled: false,
+      cacheEnabled: false,
+    );
+    const result = TranscriptionResult(segments: [], duration: 30);
+    coordinator.storePlaylistResult('/tmp/b.mp4', result);
+    await coordinator.replaceWith('/tmp/a.mp4', result: result);
+    await coordinator.addPaths(['/tmp/b.mp4']);
+    backend.emitDuration(const Duration(seconds: 30));
+    backend.positions.add(const Duration(seconds: 20));
+    backend.pendingSeek = Completer<void>();
+    backend.failSeek = true;
+    final seeking = player.seek(const Duration(seconds: 30));
+    expect(player.position, const Duration(seconds: 30));
+    expect(player.actualPosition, const Duration(seconds: 20));
+    expect(coordinator.currentPlaylistIndex, 0);
+    backend.pendingSeek!.complete();
+    await seeking;
+    expect(coordinator.currentPlaylistIndex, 0);
+    expect(player.filePath, '/tmp/a.mp4');
+    backend.failSeek = false;
+    backend.pendingSeek = null;
+    await player.seek(const Duration(seconds: 30));
+    expect(coordinator.currentPlaylistIndex, 0);
+    backend.positions.add(const Duration(seconds: 30));
+    await Future<void>.delayed(Duration.zero);
+    expect(coordinator.currentPlaylistIndex, 1);
+    expect(player.filePath, '/tmp/b.mp4');
+  });
+
   test('协调器管理播放列表状态并在销毁后解绑监听器', () async {
     final Directory workspace = Directory.systemTemp.createTempSync(
       'vsasr_playlist_coordinator_test',
@@ -254,6 +301,9 @@ class _FailFirstDecoder implements AudioDecoder, ChunkedAudioDecoder {
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {
+  final positions = StreamController<Duration>.broadcast(sync: true);
+  Completer<void>? pendingSeek;
+  bool failSeek = false;
   final StreamController<Duration> _durations =
       StreamController<Duration>.broadcast(sync: true);
 
@@ -262,7 +312,7 @@ class _FakeVideoBackend implements VideoPlayerBackend {
       const SizedBox.expand();
 
   @override
-  Stream<Duration> get position => const Stream<Duration>.empty();
+  Stream<Duration> get position => positions.stream;
 
   @override
   Stream<Duration> get duration => _durations.stream;
@@ -277,13 +327,19 @@ class _FakeVideoBackend implements VideoPlayerBackend {
   Future<void> playOrPause() async {}
 
   @override
-  Future<void> seek(Duration position) async {}
+  Future<void> seek(Duration position) async {
+    if (pendingSeek != null) await pendingSeek!.future;
+    if (failSeek) throw StateError('seek failed');
+  }
 
   @override
   Future<void> setRate(double rate) async {}
 
   @override
-  Future<void> dispose() async => _durations.close();
+  Future<void> dispose() async {
+    await _durations.close();
+    await positions.close();
+  }
 
   void emitDuration(Duration value) => _durations.add(value);
 }

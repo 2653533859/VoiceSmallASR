@@ -103,6 +103,12 @@ class VideoPlaybackController extends ChangeNotifier {
   String? _errorText;
   bool _disposed = false;
   Duration _lastPublishedPosition = Duration.zero;
+  Duration _backendPosition = Duration.zero;
+  Duration? _queuedSeek;
+  Duration? _seekTarget;
+  Future<void>? _seekOperation;
+  Timer? _seekSettlement;
+  int _mediaGeneration = 0;
 
   static const Duration _positionPublishInterval = Duration(milliseconds: 200);
   static const Duration _playbackEndNotificationWindow = Duration(
@@ -112,6 +118,11 @@ class VideoPlaybackController extends ChangeNotifier {
   String? get filePath => _filePath;
 
   Duration get position => _position;
+
+  /// 后端报告的实际位置，不能用尚未确认的跳转目标判断播放结束。
+  Duration get actualPosition => _backendPosition;
+
+  bool get seeking => _seekOperation != null || _seekTarget != null;
 
   Duration get duration => _duration;
 
@@ -129,6 +140,11 @@ class VideoPlaybackController extends ChangeNotifier {
   Future<void> open(String path) async {
     if (_disposed || _busy) return;
     _busy = true;
+    _mediaGeneration++;
+    _queuedSeek = null;
+    _seekTarget = null;
+    _seekSettlement?.cancel();
+    _backendPosition = Duration.zero;
     _errorText = null;
     _filePath = path;
     _position = Duration.zero;
@@ -159,15 +175,62 @@ class VideoPlaybackController extends ChangeNotifier {
     }
   }
 
-  Future<void> seek(Duration target) async {
-    if (_disposed || _filePath == null || _busy) return;
+  Future<void> seek(Duration target) {
+    if (_disposed || _filePath == null || _busy) return Future<void>.value();
     final Duration clamped = _clampPosition(target);
+    _seekSettlement?.cancel();
+    _seekTarget = clamped;
+    _queuedSeek = clamped;
+    // 立即发布目标，让连按基于新位置累加，而非重复使用滞后的原生位置。
+    _position = clamped;
+    _lastPublishedPosition = clamped;
+    _errorText = null;
+    // 先占用执行槽，再通知监听者，避免字幕循环等回调重入启动第二路 seek。
+    final Future<void> operation;
+    if (_seekOperation == null) {
+      final completion = Completer<void>();
+      operation = completion.future;
+      _seekOperation = operation;
+      unawaited(_drainSeeks(completion));
+    } else {
+      operation = _seekOperation!;
+    }
+    notifyListeners();
+    return operation;
+  }
+
+  Future<void> _drainSeeks(Completer<void> completion) async {
     try {
-      await _backend.seek(clamped);
-    } on Object catch (error) {
-      if (_disposed) return;
-      _errorText = '跳转失败：$error';
-      notifyListeners();
+      while (!_disposed && _queuedSeek != null) {
+        final target = _queuedSeek!;
+        final generation = _mediaGeneration;
+        _queuedSeek = null;
+        try {
+          await _backend.seek(target);
+          if (_disposed || generation != _mediaGeneration) continue;
+          if (_queuedSeek == null && _seekTarget != null) {
+            // 部分后端先完成命令、后报告位置；短暂屏蔽旧位置，超时恢复真实位置。
+            _seekSettlement = Timer(const Duration(seconds: 1), () {
+              if (_disposed || generation != _mediaGeneration) return;
+              _seekTarget = null;
+              _onPosition(_backendPosition);
+            });
+          }
+        } on Object catch (error) {
+          if (_disposed || generation != _mediaGeneration) continue;
+          if (_queuedSeek == null) {
+            _seekTarget = null;
+            _position = _backendPosition;
+            _lastPublishedPosition = _position;
+            _errorText = '跳转失败：$error';
+            notifyListeners();
+          }
+        }
+      }
+    } finally {
+      _seekOperation = null;
+      completion.complete();
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -194,6 +257,13 @@ class VideoPlaybackController extends ChangeNotifier {
   void _onPosition(Duration value) {
     if (_disposed) return;
     final Duration next = _clampPosition(value);
+    _backendPosition = next;
+    final target = _seekTarget;
+    if (target != null) {
+      if ((next - target).abs() > const Duration(milliseconds: 500)) return;
+      _seekTarget = null;
+      _seekSettlement?.cancel();
+    }
     _position = next;
     final Duration delta = next - _lastPublishedPosition;
     final Duration endWindowStart = _duration > _playbackEndNotificationWindow
@@ -231,6 +301,8 @@ class VideoPlaybackController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _queuedSeek = null;
+    _seekSettlement?.cancel();
     for (final StreamSubscription<dynamic> subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }

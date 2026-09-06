@@ -10,6 +10,25 @@ import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/asr/streaming_transcriber.dart';
 
 void main() {
+  test('增益在VAD之前应用一次，定稿使用同一增强音频且时间轴不变', () {
+    final _EchoSegmenter vad = _EchoSegmenter();
+    final _FakeDecoder decoder = _FakeDecoder();
+    final StreamingTranscriber streamer = StreamingTranscriber(
+      segmenter: vad,
+      decoder: decoder,
+      config: AsrConfig(inputGainDb: 6),
+    );
+    final Float32List input = Float32List.fromList(
+      List<double>.filled(512, .1),
+    );
+    final List<Segment> result = streamer.accept(input);
+    expect(vad.windows, <int>[512]);
+    expect(decoder.calls.single.samples.first, closeTo(.199526, 1e-6));
+    expect(input.first, closeTo(.1, 1e-6));
+    expect(result.single.start, 0);
+    expect(result.single.end, 512 / kSampleRate);
+  });
+
   test('音频按 windowSize 逐窗口喂给 VAD，而不是整块塞进去', () {
     final _FakeSegmenter vad = _FakeSegmenter();
     final StreamingTranscriber streamer = _build(vad, _FakeDecoder());
@@ -125,7 +144,10 @@ void main() {
     expect(lookback, lessThanOrEqualTo(limit));
     expect(lookback, greaterThan(limit - 512));
     // 起点相应往前挪了回看的时长：静音段结束于 1.0 秒
-    expect(decoder.calls.single.offset, closeTo(1.0 - lookback / kSampleRate, 1e-9));
+    expect(
+      decoder.calls.single.offset,
+      closeTo(1.0 - lookback / kSampleRate, 1e-9),
+    );
   });
 
   test('定稿之后缓冲作废，下一句立刻能出局部结果', () {
@@ -246,6 +268,14 @@ class _FakeSegmenter implements SpeechSegmenter {
   void dispose() => disposed = true;
 }
 
+class _EchoSegmenter extends _FakeSegmenter {
+  @override
+  void accept(Float32List samples) {
+    super.accept(samples);
+    queue.add((samples: samples, start: 0));
+  }
+}
+
 /// 假解码器：记下每次调用的入参，文本可由测试指定。
 class _FakeDecoder implements SegmentDecoder {
   _FakeDecoder({this.texts = const <String>[]});
@@ -256,8 +286,8 @@ class _FakeDecoder implements SegmentDecoder {
   /// 每次解码后执行，用来模拟「解码本身很慢」。
   void Function()? onDecode;
 
-  final List<({Float32List samples, double offset, bool isFinal, int index})> calls =
-      <({Float32List samples, double offset, bool isFinal, int index})>[];
+  final List<({Float32List samples, double offset, bool isFinal, int index})>
+  calls = <({Float32List samples, double offset, bool isFinal, int index})>[];
 
   @override
   Segment decodeSamples(
@@ -266,8 +296,15 @@ class _FakeDecoder implements SegmentDecoder {
     bool isFinal = true,
     int index = -1,
   }) {
-    final String text = calls.length < texts.length ? texts[calls.length] : '第${calls.length}段';
-    calls.add((samples: samples, offset: offset, isFinal: isFinal, index: index));
+    final String text = calls.length < texts.length
+        ? texts[calls.length]
+        : '第${calls.length}段';
+    calls.add((
+      samples: samples,
+      offset: offset,
+      isFinal: isFinal,
+      index: index,
+    ));
     onDecode?.call();
     return Segment(
       text: text,

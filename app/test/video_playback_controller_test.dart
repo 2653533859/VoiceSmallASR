@@ -7,6 +7,75 @@ import 'package:vsasr_app/src/video/video_timeline.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 
 void main() {
+  test('连按累加目标，串行合并跳转且忽略滞后位置', () async {
+    final backend = _FakeVideoBackend()..pendingSeek = Completer<void>();
+    final controller = VideoPlaybackController(backend: backend);
+    addTearDown(controller.dispose);
+    await controller.open('/tmp/movie.mp4');
+    backend.emitDuration(const Duration(seconds: 100));
+    backend.emitPosition(const Duration(seconds: 20));
+    final first = controller.seek(
+      controller.position + const Duration(seconds: 10),
+    );
+    backend.emitPosition(const Duration(seconds: 21));
+    expect(controller.position, const Duration(seconds: 30));
+    final second = controller.seek(
+      controller.position + const Duration(seconds: 10),
+    );
+    final third = controller.seek(
+      controller.position + const Duration(seconds: 10),
+    );
+    final fourth = controller.seek(
+      controller.position - const Duration(seconds: 10),
+    );
+    expect(controller.position, const Duration(seconds: 40));
+    expect(backend.seeks, [const Duration(seconds: 30)]);
+    backend.pendingSeek!.complete();
+    await Future.wait([first, second, third, fourth]);
+    expect(backend.seeks, [
+      const Duration(seconds: 30),
+      const Duration(seconds: 40),
+    ]);
+    backend.emitPosition(const Duration(seconds: 30));
+    expect(controller.position, const Duration(seconds: 40));
+    backend.emitPosition(const Duration(seconds: 40));
+    backend.emitPosition(const Duration(seconds: 41));
+    expect(controller.position, const Duration(seconds: 41));
+  });
+
+  testWidgets('后端未确认目标时超时恢复真实位置', (tester) async {
+    final backend = _FakeVideoBackend();
+    final controller = VideoPlaybackController(backend: backend);
+    await controller.open('/tmp/movie.mp4');
+    backend.emitPosition(const Duration(seconds: 20));
+    await controller.seek(const Duration(seconds: 40));
+    backend.emitPosition(const Duration(seconds: 21));
+    expect(controller.position, const Duration(seconds: 40));
+    await tester.pump(const Duration(seconds: 1));
+    expect(controller.position, const Duration(seconds: 21));
+    controller.dispose();
+  });
+
+  test('失败或切换视频后不会留下旧跳转目标', () async {
+    final backend = _FakeVideoBackend()..failSeek = true;
+    final controller = VideoPlaybackController(backend: backend);
+    addTearDown(controller.dispose);
+    await controller.open('/tmp/first.mp4');
+    backend.emitPosition(const Duration(seconds: 20));
+    await controller.seek(const Duration(seconds: 40));
+    expect(controller.position, const Duration(seconds: 20));
+    expect(controller.errorText, contains('跳转失败'));
+    backend.failSeek = false;
+    backend.pendingSeek = Completer<void>();
+    final seeking = controller.seek(const Duration(seconds: 40));
+    unawaited(controller.seek(const Duration(seconds: 50)));
+    await controller.open('/tmp/second.mp4');
+    backend.pendingSeek!.complete();
+    await seeking;
+    expect(backend.seeks.last, const Duration(seconds: 40));
+    expect(controller.position, Duration.zero);
+  });
+
   test('播放控制器同步状态、播放暂停和带边界的跳转', () async {
     final _FakeVideoBackend backend = _FakeVideoBackend();
     final VideoPlaybackController controller = VideoPlaybackController(
@@ -94,6 +163,9 @@ class _FakeVideoBackend implements VideoPlayerBackend {
   int playOrPauseCalls = 0;
   double? lastRate;
   Completer<void>? pendingOpen;
+  Completer<void>? pendingSeek;
+  final List<Duration> seeks = [];
+  bool failSeek = false;
 
   @override
   Widget buildVideo({VideoOverlayBuilder? overlayBuilder}) => Stack(
@@ -124,7 +196,12 @@ class _FakeVideoBackend implements VideoPlayerBackend {
   Future<void> playOrPause() async => playOrPauseCalls++;
 
   @override
-  Future<void> seek(Duration position) async => lastSeek = position;
+  Future<void> seek(Duration position) async {
+    lastSeek = position;
+    seeks.add(position);
+    if (pendingSeek != null) await pendingSeek!.future;
+    if (failSeek) throw StateError('seek failed');
+  }
 
   @override
   Future<void> setRate(double rate) async => lastRate = rate;
