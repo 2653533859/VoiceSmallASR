@@ -21,11 +21,13 @@ class RangeRetranscriptionDialog extends StatefulWidget {
     required this.initial,
     required this.position,
     this.mediaDuration,
+    this.initialEnd,
   });
   final TranscribeController controller;
   final TranscriptionResult initial;
   final double position;
   final double? mediaDuration;
+  final double? initialEnd;
 
   @override
   State<RangeRetranscriptionDialog> createState() =>
@@ -52,7 +54,7 @@ class _RangeRetranscriptionDialogState
     );
     _start = TextEditingController(text: start.toStringAsFixed(3));
     _end = TextEditingController(
-      text: (start + 10)
+      text: (widget.initialEnd ?? start + 10)
           .clamp(0, (widget.mediaDuration ?? widget.initial.duration))
           .toStringAsFixed(3),
     );

@@ -11,6 +11,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart' as video;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/audio/waveform.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_editor_controller.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
@@ -103,6 +104,23 @@ void main() {
     );
     await tester.pumpWidget(const SizedBox.shrink());
     player.dispose();
+  });
+
+  test('原始素材：波形窗口解码', () async {
+    expect(path, isNotNull);
+    final watch = Stopwatch()..start();
+    final data = await loadWaveform(path: path!, start: 24, duration: 21);
+    expect(data.peaks.length, 600);
+    expect(data.decodedSeconds, closeTo(21, .01));
+    expect(data.peaks.any((value) => value > .001), isTrue);
+    expect(
+      data.peaks.every((value) => value.isFinite && value >= 0 && value <= 1),
+      isTrue,
+    );
+    // ignore: avoid_print
+    print(
+      'WAVEFORM_METRICS ${jsonEncode({'bins': data.peaks.length, 'decoded_seconds': data.decodedSeconds, 'elapsed_ms': watch.elapsedMilliseconds})}',
+    );
   });
 
   test('原始素材：选区语言与增益对比、预览保护及撤销', () async {

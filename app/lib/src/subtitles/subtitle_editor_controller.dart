@@ -125,6 +125,7 @@ class SubtitleEditorController extends ChangeNotifier {
     double? end,
     String? speaker,
     bool clearSpeaker = false,
+    double? mediaDuration,
   }) {
     final Segment current = _segmentAt(index);
     final String nextText = text?.trim() ?? current.text;
@@ -160,7 +161,7 @@ class SubtitleEditorController extends ChangeNotifier {
     );
     final List<Segment> segments = List<Segment>.of(_result.segments);
     segments[index] = next;
-    _commit(segments);
+    _commit(segments, duration: mediaDuration);
   }
 
   /// 合并第 [index] 条与下一条字幕。

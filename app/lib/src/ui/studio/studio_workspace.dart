@@ -11,6 +11,7 @@ import 'package:vsasr_app/src/subtitles/subtitle_editor_controller.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/ui/studio/studio_header_bar.dart';
+import 'package:vsasr_app/src/ui/studio/waveform_timeline_dialog.dart';
 import 'package:vsasr_app/src/ui/studio/range_retranscription_dialog.dart';
 import 'package:vsasr_app/src/ui/studio/studio_subtitle_panel.dart';
 import 'package:vsasr_app/src/ui/studio/studio_video_monitor.dart';
@@ -68,6 +69,7 @@ class StudioWorkspace extends StatefulWidget {
 
 class _StudioWorkspaceState extends State<StudioWorkspace> {
   SubtitleEditorController? _editor;
+  bool _timelineOpen = false;
   VideoSubtitleDisplayMode _displayMode = VideoSubtitleDisplayMode.bilingual;
   final Set<_StudioSegmentIdentity> _retryingTranslation =
       <_StudioSegmentIdentity>{};
@@ -151,7 +153,68 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
     _commitEditorChange();
   }
 
-  Future<void> _retranscribeRange() async {
+  Future<void> _openWaveform() async {
+    final editor = _editor;
+    final controller = widget.controller;
+    final player = widget.videoController;
+    final path = controller.filePath;
+    if (editor == null || path == null || controller.busy || widget.batchBusy) {
+      return;
+    }
+    if (player.filePath != path ||
+        player.duration <= Duration.zero ||
+        player.busy) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请等待当前媒体加载完成后打开时间轴')));
+      return;
+    }
+    final duration = player.duration.inMicroseconds / 1000000;
+    setState(() {
+      _timelineOpen = true;
+    });
+    WaveformSelection? selection;
+    try {
+      selection = await showDialog<WaveformSelection>(
+        context: context,
+        builder: (_) => WaveformTimelineDialog(
+          player: player,
+          path: path,
+          duration: duration,
+          result: () => editor.result,
+          onTimingChanged: (index, start, end) {
+            if (!mounted ||
+                controller.busy ||
+                !identical(editor, _editor) ||
+                controller.filePath != path) {
+              throw const SubtitleEditException('媒体或字幕已变化，请重新打开时间轴');
+            }
+            editor.updateSegment(
+              index,
+              start: start,
+              end: end,
+              mediaDuration: duration,
+            );
+            _commitEditorChange();
+          },
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _timelineOpen = false;
+        });
+      }
+    }
+    if (!mounted ||
+        selection == null ||
+        !identical(editor, _editor) ||
+        controller.filePath != path) {
+      return;
+    }
+    await _retranscribeRange(start: selection.start, end: selection.end);
+  }
+
+  Future<void> _retranscribeRange({double? start, double? end}) async {
     final editor = _editor;
     final controller = widget.controller;
     if (editor == null || controller.busy || controller.filePath == null) {
@@ -171,7 +234,9 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
         controller: controller,
         initial: source,
         mediaDuration: mediaDuration,
-        position: widget.videoController.position.inMicroseconds / 1000000,
+        position:
+            start ?? widget.videoController.position.inMicroseconds / 1000000,
+        initialEnd: end,
       ),
     );
     if (!mounted || replacement == null) return;
@@ -477,46 +542,57 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
         if (_editor != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Wrap(
-              spacing: 8,
-              children: <Widget>[
-                TextButton.icon(
-                  key: const Key('studioUndo'),
-                  onPressed: !c.busy && _editor!.canUndo
-                      ? () => _historyEdit(undo: true)
-                      : null,
-                  icon: const Icon(Icons.undo),
-                  label: const Text('撤销'),
-                ),
-                TextButton.icon(
-                  key: const Key('studioRedo'),
-                  onPressed: !c.busy && _editor!.canRedo
-                      ? () => _historyEdit(undo: false)
-                      : null,
-                  icon: const Icon(Icons.redo),
-                  label: const Text('重做'),
-                ),
-                TextButton.icon(
-                  key: const Key('studioRetranscribeRange'),
-                  onPressed: c.busy || widget.batchBusy || c.filePath == null
-                      ? null
-                      : _retranscribeRange,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('选区重新识别'),
-                ),
-                TextButton.icon(
-                  key: const Key('studioReplace'),
-                  onPressed: c.busy ? null : _replaceText,
-                  icon: const Icon(Icons.find_replace),
-                  label: const Text('搜索替换'),
-                ),
-                TextButton.icon(
-                  key: const Key('studioReadingSpeed'),
-                  onPressed: c.busy ? null : _showReadingIssues,
-                  icon: const Icon(Icons.speed),
-                  label: const Text('阅读速度检查'),
-                ),
-              ],
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Wrap(
+                spacing: 8,
+                children: <Widget>[
+                  TextButton.icon(
+                    key: const Key('studioUndo'),
+                    onPressed: !c.busy && _editor!.canUndo
+                        ? () => _historyEdit(undo: true)
+                        : null,
+                    icon: const Icon(Icons.undo),
+                    label: const Text('撤销'),
+                  ),
+                  TextButton.icon(
+                    key: const Key('studioRedo'),
+                    onPressed: !c.busy && _editor!.canRedo
+                        ? () => _historyEdit(undo: false)
+                        : null,
+                    icon: const Icon(Icons.redo),
+                    label: const Text('重做'),
+                  ),
+                  TextButton.icon(
+                    key: const Key('studioWaveform'),
+                    onPressed: c.busy || widget.batchBusy || c.filePath == null
+                        ? null
+                        : _openWaveform,
+                    icon: const Icon(Icons.graphic_eq),
+                    label: const Text('波形时间轴'),
+                  ),
+                  TextButton.icon(
+                    key: const Key('studioRetranscribeRange'),
+                    onPressed: c.busy || widget.batchBusy || c.filePath == null
+                        ? null
+                        : _retranscribeRange,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('选区重新识别'),
+                  ),
+                  TextButton.icon(
+                    key: const Key('studioReplace'),
+                    onPressed: c.busy ? null : _replaceText,
+                    icon: const Icon(Icons.find_replace),
+                    label: const Text('搜索替换'),
+                  ),
+                  TextButton.icon(
+                    key: const Key('studioReadingSpeed'),
+                    onPressed: c.busy ? null : _showReadingIssues,
+                    icon: const Icon(Icons.speed),
+                    label: const Text('阅读速度检查'),
+                  ),
+                ],
+              ),
             ),
           ),
         // 错误提示条
@@ -552,6 +628,7 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
               final Widget monitor = StudioVideoMonitor(
                 controller: widget.videoController,
                 segments: segments,
+                suspendLoop: _timelineOpen,
                 displayMode: _displayMode,
                 onDisplayModeChanged: (VideoSubtitleDisplayMode mode) {
                   setState(() => _displayMode = mode);

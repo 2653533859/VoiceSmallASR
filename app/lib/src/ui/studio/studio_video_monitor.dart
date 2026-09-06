@@ -34,6 +34,7 @@ class StudioVideoMonitor extends StatefulWidget {
     this.onSegmentSelected,
     this.currentLoopSegment,
     this.onToggleLoop,
+    this.suspendLoop = false,
   });
 
   final VideoPlaybackController controller;
@@ -45,6 +46,7 @@ class StudioVideoMonitor extends StatefulWidget {
   final ValueChanged<Segment>? onSegmentSelected;
   final Segment? currentLoopSegment;
   final ValueChanged<bool>? onToggleLoop;
+  final bool suspendLoop;
 
   @override
   State<StudioVideoMonitor> createState() => _StudioVideoMonitorState();
@@ -80,7 +82,7 @@ class _StudioVideoMonitorState extends State<StudioVideoMonitor> {
 
   void _onPlaybackUpdate() {
     if (!mounted) return;
-    if (_looping && _lastLoopSegment != null) {
+    if (!widget.suspendLoop && _looping && _lastLoopSegment != null) {
       final double currentSec =
           widget.controller.position.inMicroseconds /
           Duration.microsecondsPerSecond;
