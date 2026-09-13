@@ -35,8 +35,24 @@ abstract interface class VideoPlayerBackend {
   Future<void> dispose();
 }
 
+class VideoSubtitleTrackInfo {
+  const VideoSubtitleTrackInfo({required this.id, this.title, this.language});
+
+  final String id;
+  final String? title;
+  final String? language;
+}
+
+/// 原生播放器可选实现，用于枚举和选择视频内嵌字幕轨。
+abstract interface class EmbeddedSubtitleTrackBackend {
+  Stream<List<VideoSubtitleTrackInfo>> get embeddedSubtitleTracks;
+
+  Future<void> selectEmbeddedSubtitleTrack(String? id);
+}
+
 /// 基于 media_kit 的 Android / macOS / Windows 播放器后端。
-class MediaKitVideoPlayerBackend implements VideoPlayerBackend {
+class MediaKitVideoPlayerBackend
+    implements VideoPlayerBackend, EmbeddedSubtitleTrackBackend {
   MediaKitVideoPlayerBackend() {
     _videoController = media_kit_video.VideoController(_player);
   }
@@ -64,8 +80,38 @@ class MediaKitVideoPlayerBackend implements VideoPlayerBackend {
   Stream<bool> get playing => _player.stream.playing;
 
   @override
-  Future<void> open(String path) =>
-      _player.open(Media(Uri.file(path).toString()), play: false);
+  Stream<List<VideoSubtitleTrackInfo>> get embeddedSubtitleTracks =>
+      _player.stream.tracks.map(
+        (tracks) => tracks.subtitle
+            .where((track) => track.id != 'auto' && track.id != 'no')
+            .map(
+              (track) => VideoSubtitleTrackInfo(
+                id: track.id,
+                title: track.title,
+                language: track.language,
+              ),
+            )
+            .toList(growable: false),
+      );
+
+  @override
+  Future<void> open(String path) async {
+    await _player.open(Media(Uri.file(path).toString()), play: false);
+    await _player.setSubtitleTrack(SubtitleTrack.no());
+  }
+
+  @override
+  Future<void> selectEmbeddedSubtitleTrack(String? id) async {
+    if (id == null) {
+      await _player.setSubtitleTrack(SubtitleTrack.no());
+      return;
+    }
+    final track = _player.state.tracks.subtitle
+        .where((candidate) => candidate.id == id)
+        .firstOrNull;
+    if (track == null) throw StateError('内嵌字幕轨已不可用');
+    await _player.setSubtitleTrack(track);
+  }
 
   @override
   Future<void> playOrPause() => _player.playOrPause();
@@ -89,6 +135,12 @@ class VideoPlaybackController extends ChangeNotifier {
       _backend.duration.listen(_onDuration),
       _backend.playing.listen(_onPlaying),
     ];
+    if (_backend is EmbeddedSubtitleTrackBackend) {
+      final trackBackend = _backend as EmbeddedSubtitleTrackBackend;
+      _subscriptions.add(
+        trackBackend.embeddedSubtitleTracks.listen(_onEmbeddedSubtitleTracks),
+      );
+    }
   }
 
   final VideoPlayerBackend _backend;
@@ -102,6 +154,8 @@ class VideoPlaybackController extends ChangeNotifier {
   bool _busy = false;
   String? _errorText;
   bool _disposed = false;
+  List<VideoSubtitleTrackInfo> _embeddedSubtitleTracks = const [];
+  String? _selectedEmbeddedSubtitleTrackId;
   Duration _lastPublishedPosition = Duration.zero;
   Duration _backendPosition = Duration.zero;
   Duration? _queuedSeek;
@@ -134,6 +188,12 @@ class VideoPlaybackController extends ChangeNotifier {
 
   String? get errorText => _errorText;
 
+  List<VideoSubtitleTrackInfo> get embeddedSubtitleTracks =>
+      List.unmodifiable(_embeddedSubtitleTracks);
+
+  String? get selectedEmbeddedSubtitleTrackId =>
+      _selectedEmbeddedSubtitleTrackId;
+
   Widget buildVideo({VideoOverlayBuilder? overlayBuilder}) =>
       _backend.buildVideo(overlayBuilder: overlayBuilder);
 
@@ -151,6 +211,8 @@ class VideoPlaybackController extends ChangeNotifier {
     _lastPublishedPosition = Duration.zero;
     _duration = Duration.zero;
     _playing = false;
+    _embeddedSubtitleTracks = const [];
+    _selectedEmbeddedSubtitleTrackId = null;
     notifyListeners();
     try {
       await _backend.open(path);
@@ -171,6 +233,18 @@ class VideoPlaybackController extends ChangeNotifier {
     } on Object catch (error) {
       if (_disposed) return;
       _errorText = '播放失败：$error';
+      notifyListeners();
+    }
+  }
+
+  /// 仅在正在播放时暂停，供页面切换和启动重任务前释放播放器资源。
+  Future<void> pause() async {
+    if (_disposed || _filePath == null || _busy || !_playing) return;
+    try {
+      await _backend.playOrPause();
+    } on Object catch (error) {
+      if (_disposed) return;
+      _errorText = '暂停失败：$error';
       notifyListeners();
     }
   }
@@ -246,6 +320,33 @@ class VideoPlaybackController extends ChangeNotifier {
       _errorText = '调整倍速失败：$error';
       notifyListeners();
     }
+  }
+
+  Future<void> selectEmbeddedSubtitleTrack(String? id) async {
+    if (_disposed || _filePath == null || _busy) return;
+    if (_backend is! EmbeddedSubtitleTrackBackend) return;
+    final trackBackend = _backend as EmbeddedSubtitleTrackBackend;
+    try {
+      await trackBackend.selectEmbeddedSubtitleTrack(id);
+      if (_disposed) return;
+      _selectedEmbeddedSubtitleTrackId = id;
+      _errorText = null;
+      notifyListeners();
+    } on Object catch (error) {
+      if (_disposed) return;
+      _errorText = '选择内嵌字幕失败：$error';
+      notifyListeners();
+    }
+  }
+
+  void _onEmbeddedSubtitleTracks(List<VideoSubtitleTrackInfo> tracks) {
+    if (_disposed) return;
+    _embeddedSubtitleTracks = List.unmodifiable(tracks);
+    if (_selectedEmbeddedSubtitleTrackId != null &&
+        !tracks.any((track) => track.id == _selectedEmbeddedSubtitleTrackId)) {
+      _selectedEmbeddedSubtitleTrackId = null;
+    }
+    notifyListeners();
   }
 
   Duration _clampPosition(Duration target) {

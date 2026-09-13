@@ -8,6 +8,38 @@ import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 
 void main() {
+  testWidgets('外部识别任务运行时设置页保持可打开但禁用配置修改', (tester) async {
+    final AppSettingsRepository repository = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: _FakeSecretStore()),
+    );
+    final TranscribeController controller = TranscribeController();
+    final ValueNotifier<bool> externalBusy = ValueNotifier<bool>(true);
+    addTearDown(controller.shutdown);
+    addTearDown(externalBusy.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsPage(
+          controller: controller,
+          repository: repository,
+          externalTaskState: externalBusy,
+          externalAsrBusy: () => externalBusy.value,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    DropdownButtonFormField<String> language = tester.widget(
+      find.byKey(const Key('settingsLanguage')),
+    );
+    expect(language.onChanged, isNull);
+
+    externalBusy.value = false;
+    await tester.pump();
+    language = tester.widget(find.byKey(const Key('settingsLanguage')));
+    expect(language.onChanged, isNotNull);
+  });
+
   testWidgets('小声预设保存原音频语言与增益且不改变翻译语言，可恢复标准参数', (tester) async {
     final AppSettingsRepository repository = AppSettingsRepository(
       preferences: _FakePreferenceStore(),

@@ -10,6 +10,13 @@ import 'package:vsasr_app/src/asr/segment.dart';
 /// 翻译进度回调：已完成的文本数 / 总文本数。
 typedef TranslationProgress = void Function(int done, int total);
 
+/// 每完成一个翻译批次，就把当前可用的部分译文交给界面显示。
+typedef TranslationResultProgress = void Function(
+  TranscriptionResult result,
+  int done,
+  int total,
+);
+
 /// 翻译请求是否已由调用方取消。
 typedef TranslationCancellation = bool Function();
 
@@ -167,10 +174,15 @@ Future<TranscriptionResult> translateResult(
   TranslationProvider provider, {
   required String to,
   int batchSize = 20,
+  int? initialBatchSize,
+  int maxConcurrentBatches = 1,
+  int? prioritySegmentIndex,
+  bool skipTranslated = false,
   int maxRetries = 2,
   Duration retryDelay = const Duration(milliseconds: 250),
   Duration requestTimeout = const Duration(seconds: 30),
   TranslationProgress? onProgress,
+  TranslationResultProgress? onPartialResult,
   TranslationCancellation? isCancelled,
 }) async {
   final String target = to.trim();
@@ -180,6 +192,16 @@ Future<TranscriptionResult> translateResult(
   if (batchSize < 1) {
     throw ArgumentError.value(batchSize, 'batchSize', '必须 >= 1');
   }
+  if (initialBatchSize != null && initialBatchSize < 1) {
+    throw ArgumentError.value(initialBatchSize, 'initialBatchSize', '必须 >= 1');
+  }
+  if (maxConcurrentBatches < 1) {
+    throw ArgumentError.value(
+      maxConcurrentBatches,
+      'maxConcurrentBatches',
+      '必须 >= 1',
+    );
+  }
   final TranslationRequestPolicy policy = TranslationRequestPolicy(
     maxRetries: maxRetries,
     requestTimeout: requestTimeout,
@@ -187,14 +209,29 @@ Future<TranscriptionResult> translateResult(
   );
   policy.validate();
 
-  final List<int> positions = <int>[];
-  final List<String> texts = <String>[];
+  final List<int> availablePositions = <int>[];
   for (int index = 0; index < result.segments.length; index++) {
-    final String text = result.segments[index].text.trim();
+    final Segment segment = result.segments[index];
+    final String text = segment.text.trim();
     if (text.isEmpty) continue;
-    positions.add(index);
-    texts.add(text);
+    if (skipTranslated && (segment.translation ?? '').trim().isNotEmpty) {
+      continue;
+    }
+    availablePositions.add(index);
   }
+  final int priority = (prioritySegmentIndex ?? 0).clamp(
+    0,
+    result.segments.isEmpty ? 0 : result.segments.length - 1,
+  );
+  final List<int> positions = prioritySegmentIndex == null
+      ? availablePositions
+      : <int>[
+          ...availablePositions.where((int index) => index >= priority),
+          ...availablePositions.where((int index) => index < priority),
+        ];
+  final List<String> texts = positions
+      .map((int index) => result.segments[index].text.trim())
+      .toList(growable: false);
   if (texts.isEmpty) {
     onProgress?.call(0, 0);
     return result;
@@ -202,29 +239,67 @@ Future<TranscriptionResult> translateResult(
 
   final String source = result.language.trim();
   final String? from = source.isEmpty || source == 'auto' ? null : source;
-  final List<String> translated = <String>[];
+  final List<Segment> segments = List<Segment>.of(result.segments);
+  int translatedCount = 0;
+  final List<({int start, int end})> batches = <({int start, int end})>[];
+  int cursor = 0;
+  if (texts.isNotEmpty) {
+    final int firstEnd = (initialBatchSize ?? batchSize).clamp(1, texts.length);
+    batches.add((start: 0, end: firstEnd));
+    cursor = firstEnd;
+  }
+  while (cursor < texts.length) {
+    final int end = (cursor + batchSize).clamp(0, texts.length);
+    batches.add((start: cursor, end: end));
+    cursor = end;
+  }
+  int nextBatch = 0;
+  Object? firstError;
+  StackTrace? firstStack;
   onProgress?.call(0, texts.length);
-  for (int start = 0; start < texts.length; start += batchSize) {
-    final int end = (start + batchSize).clamp(0, texts.length);
-    final List<String> batch = texts.sublist(start, end);
-    final List<String> translatedBatch = await translateTexts(
-      provider,
-      batch,
-      from: from,
-      to: target,
-      policy: policy,
-      isCancelled: isCancelled,
-    );
-    translated.addAll(translatedBatch);
-    onProgress?.call(translated.length, texts.length);
+  Future<void> translateNextBatches() async {
+    while (firstError == null && nextBatch < batches.length) {
+      final ({int start, int end}) range = batches[nextBatch++];
+      final int start = range.start;
+      final int end = range.end;
+      final List<String> batch = texts.sublist(start, end);
+      late final List<String> translatedBatch;
+      try {
+        translatedBatch = await translateTexts(
+          provider,
+          batch,
+          from: from,
+          to: target,
+          policy: policy,
+          isCancelled: isCancelled,
+        );
+      } on Object catch (error, stack) {
+        firstError ??= error;
+        firstStack ??= stack;
+        return;
+      }
+      if (firstError != null) return;
+      for (int offset = 0; offset < translatedBatch.length; offset++) {
+        final int position = positions[start + offset];
+        segments[position] = segments[position].copyWith(
+          translation: translatedBatch[offset].trim(),
+        );
+      }
+      translatedCount += translatedBatch.length;
+      final TranscriptionResult partial = result.copyWith(
+        segments: List<Segment>.of(segments),
+      );
+      onPartialResult?.call(partial, translatedCount, texts.length);
+      onProgress?.call(translatedCount, texts.length);
+    }
   }
 
-  final List<Segment> segments = List<Segment>.of(result.segments);
-  for (int index = 0; index < positions.length; index++) {
-    final int position = positions[index];
-    segments[position] = segments[position].copyWith(
-      translation: translated[index].trim(),
-    );
+  final int workerCount = maxConcurrentBatches.clamp(1, batches.length);
+  await Future.wait<void>(
+    List<Future<void>>.generate(workerCount, (_) => translateNextBatches()),
+  );
+  if (firstError != null) {
+    Error.throwWithStackTrace(firstError!, firstStack!);
   }
   return result.copyWith(segments: segments);
 }

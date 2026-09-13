@@ -7,10 +7,15 @@ APP_DIR="$REPO_ROOT/app"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist/macos}"
 FLUTTER_BIN="${FLUTTER_BIN:-$(command -v flutter || true)}"
 BUILD_NAME="${BUILD_NAME:-$(sed -n 's/^version: \([0-9][0-9.]*\).*/\1/p' "$APP_DIR/pubspec.yaml" | head -n 1)}"
-BUILD_NUMBER="${BUILD_NUMBER:-2}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(sed -n 's/^version: [0-9][0-9.]*+\([0-9][0-9]*\).*/\1/p' "$APP_DIR/pubspec.yaml" | head -n 1)}"
 
 if [[ -z "$FLUTTER_BIN" || ! -x "$FLUTTER_BIN" ]]; then
   echo "找不到 Flutter。请设置 FLUTTER_BIN=/path/to/flutter/bin/flutter" >&2
+  exit 1
+fi
+
+if [[ -z "$BUILD_NAME" || -z "$BUILD_NUMBER" ]]; then
+  echo "无法从 app/pubspec.yaml 读取应用版本" >&2
   exit 1
 fi
 

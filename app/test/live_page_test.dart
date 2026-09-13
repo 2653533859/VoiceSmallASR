@@ -164,7 +164,10 @@ void main() {
     await pumpUi(tester);
     expect(find.text('今日天气几好。'), findsOneWidget);
     expect(find.textContaining(' …'), findsNothing);
-    expect(find.text('1'), findsOneWidget); // 序号从 1 显示
+    expect(
+      find.descendant(of: find.byType(ListTile), matching: find.text('1')),
+      findsOneWidget,
+    ); // 序号从 1 显示
     expect(find.text('00:00:00.000 → 00:00:01.800'), findsOneWidget);
   });
 
@@ -299,9 +302,8 @@ class _MemoryPerformanceLogStore extends PerformanceLogStore {
   final List<PerformanceLogEntry> entries = <PerformanceLogEntry>[];
 
   @override
-  Future<List<PerformanceLogEntry>> load() async => List<PerformanceLogEntry>.of(
-    entries,
-  );
+  Future<List<PerformanceLogEntry>> load() async =>
+      List<PerformanceLogEntry>.of(entries);
 
   @override
   Future<void> append(PerformanceLogEntry entry) async {

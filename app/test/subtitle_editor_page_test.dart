@@ -122,6 +122,36 @@ void main() {
     );
   });
 
+  testWidgets('编辑器支持按锚点整体校时', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SubtitleEditorPage(initialResult: result, onSave: (_) {}),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('subtitleAnchorAlign')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('subtitleAnchorTime')), '0.5');
+    await tester.tap(find.byKey(const Key('subtitleAnchorConfirm')));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('subtitleStart_0')))
+          .controller
+          ?.text,
+      '0.500',
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('subtitleStart_1')))
+          .controller
+          ?.text,
+      '1.500',
+    );
+    expect(find.byKey(const Key('subtitleUndo')), findsOneWidget);
+  });
+
   testWidgets('编辑器支持搜索替换字幕文本', (WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(

@@ -16,6 +16,7 @@ class BatchPage extends StatefulWidget {
     this.onTranslate,
     this.onExport,
     this.onDiagnostics,
+    this.onOpenFolder,
   });
 
   final BatchTranscriptionController controller;
@@ -23,6 +24,7 @@ class BatchPage extends StatefulWidget {
   final Future<void> Function()? onTranslate;
   final Future<void> Function(String format)? onExport;
   final Future<void> Function()? onDiagnostics;
+  final Future<void> Function()? onOpenFolder;
 
   @override
   State<BatchPage> createState() => _BatchPageState();
@@ -106,6 +108,12 @@ class _BatchPageState extends State<BatchPage> {
                       onPressed: batch.running ? null : _pickFiles,
                       icon: const Icon(Icons.playlist_add),
                       label: const Text('选择多个文件'),
+                    ),
+                    FilledButton.icon(
+                      key: const Key('batchFolder'),
+                      onPressed: batch.running ? null : widget.onOpenFolder,
+                      icon: const Icon(Icons.folder_open),
+                      label: const Text('文件夹自动处理'),
                     ),
                     FilledButton.icon(
                       key: const Key('batchStart'),

@@ -8,18 +8,162 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/model_manager.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
+import 'package:vsasr_app/src/ui/background_task_center.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/ui/video_page.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/video/video_playback_controller.dart';
+import 'package:vsasr_app/src/video/video_playlist_view.dart';
 import 'package:vsasr_app/src/video/hard_subtitle_encoder.dart';
 import 'package:vsasr_app/src/video/video_subtitle_cache.dart';
 
 import 'support/fake_asr.dart';
 
 void main() {
+  testWidgets('文件夹按自然顺序加入视频，忽略子目录并去重，取消保留队列', (tester) async {
+    final workspace = Directory.systemTemp.createTempSync('video_folder_test');
+    for (final name in [
+      '10.mp4',
+      '2.MP4',
+      '1.mp4',
+      'note.srt',
+      'audio.wav',
+      'README',
+    ]) {
+      File('${workspace.path}/$name').writeAsStringSync('');
+    }
+    Directory('${workspace.path}/nested').createSync();
+    File('${workspace.path}/nested/0.mp4').createSync();
+    writeFakeModel(workspace.path);
+    final transcription = TranscribeController(
+      decoder: FakeDecoder(samples: kSampleRate),
+      models: ModelManager(root: workspace.path),
+      launch: ({
+        required AsrConfig config,
+        required bool allowDownload,
+        required ModelProgress onModelProgress,
+      }) async => FakeTranscriber(language: config.language),
+    );
+    final backend = _FakeVideoBackend();
+    final video = VideoPlaybackController(backend: backend);
+    String? selected = workspace.path;
+    await tester.binding.setSurfaceSize(const Size(1200, 1200));
+    addTearDown(() async {
+      await tester.binding.setSurfaceSize(null);
+      video.dispose();
+      await transcription.shutdown();
+      workspace.deleteSync(recursive: true);
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VideoPage(
+            controller: video,
+            transcription: transcription,
+            pickDirectory: () async => selected,
+            subtitleCache: VideoSubtitleCache(rootDirectory: workspace),
+          ),
+        ),
+      ),
+    );
+    Future<void> select() async {
+      await tester.tap(find.byKey(const Key('videoAddMenu')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        final button = tester.widget<MenuItemButton>(
+          find.byKey(const Key('videoAddDirectory')),
+        );
+        await (button.onPressed! as Future<void> Function())();
+      });
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+    }
+
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('videoSubtitleLoadMode')),
+        matching: find.text('字幕：关闭'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.byKey(const Key('videoAutoTranslate')))
+          .selected,
+      isFalse,
+    );
+    await select();
+    expect(transcription.result, isNull);
+    expect(transcription.busy, isFalse);
+    expect(
+      tester.widget<VideoPlaylistView>(find.byType(VideoPlaylistView)).paths,
+      [
+        '${workspace.path}/1.mp4',
+        '${workspace.path}/2.MP4',
+        '${workspace.path}/10.mp4',
+      ],
+    );
+    expect(backend.openedPath, '${workspace.path}/1.mp4');
+    await tester.tap(find.byKey(const Key('videoSubtitleLoadMode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleModeExisting')));
+    for (int attempt = 0; attempt < 100; attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+      if (find.text('未找到已有字幕').evaluate().length == 3) break;
+    }
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('videoSubtitleLoadMode')),
+        matching: find.text('字幕：仅加载已有'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('未找到已有字幕'), findsNWidgets(3));
+    expect(transcription.result, isNull);
+    await tester.tap(find.byKey(const Key('videoSubtitleLoadMode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleModeOff')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('videoSubtitleLoadMode')),
+        matching: find.text('字幕：关闭'),
+      ),
+      findsOneWidget,
+    );
+    await select();
+    expect(
+      tester
+          .widget<VideoPlaylistView>(find.byType(VideoPlaylistView))
+          .paths
+          .length,
+      3,
+    );
+    selected = null;
+    await select();
+    expect(
+      tester
+          .widget<VideoPlaylistView>(find.byType(VideoPlaylistView))
+          .paths
+          .length,
+      3,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.binding.setSurfaceSize(const Size(800, 600));
+    await tester.pumpAndSettle();
+    expect(find.byType(VideoPlaylistView), findsNothing);
+    await tester.tap(find.byKey(const Key('videoShowPlaylist')));
+    await tester.pumpAndSettle();
+    expect(find.byType(VideoPlaylistView), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('载入已转写视频、显示当前字幕并可点击跳转', (WidgetTester tester) async {
     final SemanticsHandle semantics = tester.ensureSemantics();
     final Directory workspace = Directory.systemTemp.createTempSync(
@@ -43,14 +187,22 @@ void main() {
     final VideoPlaybackController video = VideoPlaybackController(
       backend: backend,
     );
+    final BackgroundTaskRegistry backgroundTasks = BackgroundTaskRegistry();
     final _FakeTranslationProvider translation = _FakeTranslationProvider();
     String? savedFileName;
     String? savedContent;
     String? hardSubtitleFileName;
+    bool sawHardSubtitleTask = false;
     final _FakeHardSubtitleEncoder hardSubtitleEncoder =
-        _FakeHardSubtitleEncoder();
+        _FakeHardSubtitleEncoder(
+          onEncode: () => sawHardSubtitleTask = backgroundTasks.tasks.any(
+            (RegisteredBackgroundTask task) =>
+                task.id == 'videoHardSubtitleEncoding',
+          ),
+        );
     addTearDown(() async {
       video.dispose();
+      backgroundTasks.dispose();
       await transcription.shutdown();
       workspace.deleteSync(recursive: true);
     });
@@ -82,6 +234,7 @@ void main() {
               return '${workspace.path}/hard-subtitles.mp4';
             },
             hardSubtitleEncoder: hardSubtitleEncoder,
+            backgroundTasks: backgroundTasks,
             translationProviderResolver: () async => translation,
             subtitleCache: VideoSubtitleCache(rootDirectory: workspace),
           ),
@@ -89,6 +242,10 @@ void main() {
       ),
     );
 
+    await tester.tap(find.byKey(const Key('videoSubtitleLoadMode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleModeExisting')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('打开视频'));
     await tester.pump();
     backend.emitDuration(const Duration(seconds: 30));
@@ -99,6 +256,31 @@ void main() {
     expect(find.bySemanticsLabel('播放倍速：1.0x'), findsOneWidget);
     expect(find.bySemanticsLabel('播放进度'), findsOneWidget);
     expect(find.bySemanticsLabel('当前播放位置'), findsOneWidget);
+    expect(
+      tester
+          .widget<RotatedBox>(find.byKey(const Key('videoRotation')))
+          .quarterTurns,
+      0,
+    );
+
+    await _tapMenuItem(
+      tester,
+      menuKey: const Key('videoMoreOptions'),
+      itemKey: const Key('videoRotateClockwise'),
+    );
+    expect(
+      tester
+          .widget<RotatedBox>(find.byKey(const Key('videoRotation')))
+          .quarterTurns,
+      1,
+    );
+    expect(
+      tester
+          .widget<RotatedBox>(find.byKey(const Key('videoOverlayRotation')))
+          .quarterTurns,
+      3,
+    );
+    expect(find.bySemanticsLabel('播放进度'), findsOneWidget);
 
     tester.semantics.increase(find.semantics.byLabel('播放进度'));
     expect(backend.lastSeek, const Duration(milliseconds: 10500));
@@ -122,17 +304,26 @@ void main() {
       menuKey: const Key('videoSubtitleTools'),
       itemKey: const Key('videoTranslateSubtitle'),
     );
+    expect(backgroundTasks.tasks.single.id, 'videoSubtitleTranslation');
     expect(find.text('发送字幕到第三方服务？'), findsOneWidget);
     await tester.tap(find.text('继续翻译'));
     await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNWidgets(2));
     expect(translation.calls, 1);
+    expect(backgroundTasks.tasks, isEmpty);
 
     await tester.tap(find.byKey(const Key('videoSubtitleMode')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('videoSubtitleMode-original')));
     await tester.pumpAndSettle();
     expect(find.textContaining('译文：字幕第一条'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('videoSubtitleLoadMode')),
+        matching: find.text('字幕：仅加载已有'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('videoSubtitleMode')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('videoSubtitleMode-off')));
@@ -184,6 +375,14 @@ void main() {
     );
     expect(hardSubtitleFileName, 'movie_hard_subtitles.mp4');
     expect(hardSubtitleEncoder.calls, 1);
+    expect(sawHardSubtitleTask, isTrue);
+    expect(
+      backgroundTasks.tasks.where(
+        (RegisteredBackgroundTask task) =>
+            task.id == 'videoHardSubtitleEncoding',
+      ),
+      isEmpty,
+    );
 
     await tester.tap(find.byKey(const Key('videoPlaybackRate')));
     await tester.pumpAndSettle();
@@ -192,6 +391,8 @@ void main() {
     expect(backend.lastRate, 1.5);
     expect(find.bySemanticsLabel('播放倍速：1.5x'), findsOneWidget);
 
+    await tester.tap(find.byKey(const Key('videoAddMenu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('videoAddPlaylist')));
     await tester.pumpAndSettle();
     expect(find.text('next.mp4'), findsOneWidget);
@@ -264,6 +465,10 @@ void main() {
       ),
     );
 
+    await tester.tap(find.byKey(const Key('videoSubtitleLoadMode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('videoSubtitleModeRecognize')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('打开视频'));
     await tester.pumpAndSettle();
     await tester.runAsync(
@@ -274,10 +479,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('继续翻译'));
     await tester.pumpAndSettle();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pumpAndSettle();
+    for (int attempt = 0; attempt < 100; attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pumpAndSettle();
+      if (find.textContaining('未配置翻译 API Key').evaluate().isNotEmpty) break;
+    }
 
     expect(find.textContaining('未配置翻译 API Key'), findsOneWidget);
   });
@@ -327,6 +535,9 @@ class _FakeTranslationProvider implements TranslationProvider {
 }
 
 class _FakeHardSubtitleEncoder implements HardSubtitleEncoder {
+  _FakeHardSubtitleEncoder({this.onEncode});
+
+  final VoidCallback? onEncode;
   int calls = 0;
 
   @override
@@ -338,6 +549,7 @@ class _FakeHardSubtitleEncoder implements HardSubtitleEncoder {
     HardSubtitleProgress? onProgress,
   }) async {
     calls++;
+    onEncode?.call();
     onProgress?.call(0.5);
     onProgress?.call(1.0);
   }

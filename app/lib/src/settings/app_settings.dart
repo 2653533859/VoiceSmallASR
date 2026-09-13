@@ -40,10 +40,10 @@ enum VideoSubtitleDisplayMode { off, original, translation, bilingual }
 
 class VideoSubtitleSettings {
   const VideoSubtitleSettings({
-    this.subtitlesEnabled = true,
+    this.subtitlesEnabled = false,
     this.translationEnabled = false,
     this.cacheEnabled = true,
-    this.displayMode = VideoSubtitleDisplayMode.original,
+    this.displayMode = VideoSubtitleDisplayMode.off,
   });
 
   final bool subtitlesEnabled;

@@ -95,6 +95,11 @@ void main() {
 
     await controller.playOrPause();
     expect(backend.playOrPauseCalls, 1);
+    await controller.pause();
+    expect(backend.playOrPauseCalls, 2);
+    backend.emitPlaying(false);
+    await controller.pause();
+    expect(backend.playOrPauseCalls, 2);
     await controller.seek(const Duration(seconds: 99));
     expect(backend.lastSeek, const Duration(seconds: 10));
     await controller.setRate(1.5);
@@ -147,6 +152,47 @@ void main() {
     expect(notifications, beforeEndWindow + 1);
     expect(controller.position, const Duration(milliseconds: 9890));
   });
+
+  test('可枚举、选择并关闭视频内嵌字幕轨', () async {
+    final backend = _TrackVideoBackend();
+    final controller = VideoPlaybackController(backend: backend);
+    addTearDown(controller.dispose);
+    await controller.open('/tmp/movie.mkv');
+    backend.emitTracks(const <VideoSubtitleTrackInfo>[
+      VideoSubtitleTrackInfo(id: '2', title: '日本語', language: 'ja'),
+    ]);
+    expect(controller.embeddedSubtitleTracks.single.language, 'ja');
+    await controller.selectEmbeddedSubtitleTrack('2');
+    expect(backend.selectedId, '2');
+    expect(controller.selectedEmbeddedSubtitleTrackId, '2');
+    await controller.selectEmbeddedSubtitleTrack(null);
+    expect(backend.selectedId, isNull);
+  });
+}
+
+class _TrackVideoBackend extends _FakeVideoBackend
+    implements EmbeddedSubtitleTrackBackend {
+  final _tracks = StreamController<List<VideoSubtitleTrackInfo>>.broadcast(
+    sync: true,
+  );
+  String? selectedId;
+
+  @override
+  Stream<List<VideoSubtitleTrackInfo>> get embeddedSubtitleTracks =>
+      _tracks.stream;
+
+  @override
+  Future<void> selectEmbeddedSubtitleTrack(String? id) async {
+    selectedId = id;
+  }
+
+  void emitTracks(List<VideoSubtitleTrackInfo> tracks) => _tracks.add(tracks);
+
+  @override
+  Future<void> dispose() async {
+    await _tracks.close();
+    await super.dispose();
+  }
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {

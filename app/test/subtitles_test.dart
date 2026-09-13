@@ -145,6 +145,35 @@ void main() {
     expect(result.duration, 4.0);
   });
 
+  test('可以导入 ASS/SSA 的 Events 字幕并保留文本中的逗号', () {
+    const content = '''[Script Info]
+Title: test
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.20,0:00:02.50,Default,,0,0,0,,{\\i1}第一行\\N第二行,带逗号
+''';
+    final result = parseSubtitleText(content, format: '.ass');
+    expect(result.segments, hasLength(1));
+    expect(result.segments.single.start, closeTo(1.2, 0.001));
+    expect(result.segments.single.end, closeTo(2.5, 0.001));
+    expect(result.segments.single.text, '第一行\n第二行,带逗号');
+  });
+
+  test('ASS/SSA 的乱序重叠事件会合并为单轨字幕', () {
+    const content = '''[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:02.00,0:00:04.00,Default,,0,0,0,,对话
+Dialogue: 1,0:00:01.00,0:00:03.00,Sign,,0,0,0,,标牌
+''';
+
+    final result = parseSubtitleText(content, format: 'ass');
+
+    expect(result.segments, hasLength(1));
+    expect(result.segments.single.start, 1);
+    expect(result.segments.single.end, 4);
+    expect(result.segments.single.text, '标牌\n对话');
+  });
+
   test('可以导入 VTT cue 设置并清理标签', () {
     const String content =
         'WEBVTT\n\n'

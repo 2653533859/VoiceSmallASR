@@ -57,13 +57,15 @@ class StudioHeaderBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TranscriptionResult? result = controller.result;
-    final bool disabled = controller.busy || batchBusy;
+    final bool taskConflict = controller.busy || batchBusy;
     final bool hasResult = result != null && !result.isEmpty;
 
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(bottom: BorderSide(color: StudioColors.border, width: 1)),
+        border: Border(
+          bottom: BorderSide(color: StudioColors.border, width: 1),
+        ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
@@ -78,7 +80,7 @@ class StudioHeaderBar extends StatelessWidget {
             children: <Widget>[
               // 主要输入操作
               FilledButton.icon(
-                onPressed: disabled ? null : onOpen,
+                onPressed: taskConflict ? null : onOpen,
                 icon: const Icon(Icons.folder_open, size: 14),
                 label: const Text('选择音频/视频'),
                 style: FilledButton.styleFrom(
@@ -97,7 +99,7 @@ class StudioHeaderBar extends StatelessWidget {
               ),
               OutlinedButton.icon(
                 key: const Key('openBatchProcessing'),
-                onPressed: disabled ? null : onBatch,
+                onPressed: taskConflict ? null : onBatch,
                 icon: const Icon(Icons.playlist_play, size: 15),
                 label: const Text('批量处理'),
                 style: OutlinedButton.styleFrom(
@@ -112,7 +114,7 @@ class StudioHeaderBar extends StatelessWidget {
               _buildDivider(),
               // 项目管理组
               OutlinedButton.icon(
-                onPressed: disabled ? null : onOpenProject,
+                onPressed: taskConflict ? null : onOpenProject,
                 icon: const Icon(Icons.folder_zip_outlined, size: 14),
                 label: const Text('打开项目'),
                 style: OutlinedButton.styleFrom(
@@ -125,7 +127,7 @@ class StudioHeaderBar extends StatelessWidget {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: !hasResult || disabled ? null : onSaveProject,
+                onPressed: !hasResult ? null : onSaveProject,
                 icon: const Icon(Icons.save_outlined, size: 14),
                 label: const Text('保存项目'),
                 style: OutlinedButton.styleFrom(
@@ -140,7 +142,7 @@ class StudioHeaderBar extends StatelessWidget {
               PopupMenuButton<String>(
                 key: const Key('recentProjects'),
                 tooltip: '最近项目',
-                onSelected: disabled ? null : onOpenRecentProject,
+                onSelected: taskConflict ? null : onOpenRecentProject,
                 itemBuilder: (BuildContext context) {
                   if (recentProjects.isEmpty) {
                     return <PopupMenuEntry<String>>[
@@ -169,7 +171,7 @@ class StudioHeaderBar extends StatelessWidget {
               // 字幕导入与导出
               OutlinedButton.icon(
                 key: const Key('importSubtitle'),
-                onPressed: disabled ? null : onImport,
+                onPressed: taskConflict ? null : onImport,
                 icon: const Icon(Icons.file_download_outlined, size: 14),
                 label: const Text('导入字幕'),
                 style: OutlinedButton.styleFrom(
@@ -182,7 +184,7 @@ class StudioHeaderBar extends StatelessWidget {
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: !hasResult || disabled ? null : onExport,
+                onPressed: !hasResult ? null : onExport,
                 icon: const Icon(Icons.save_alt, size: 14),
                 label: const Text('导出字幕'),
                 style: OutlinedButton.styleFrom(
@@ -197,7 +199,7 @@ class StudioHeaderBar extends StatelessWidget {
               if (controller.performanceReport != null)
                 OutlinedButton.icon(
                   key: const Key('performanceDiagnostics'),
-                  onPressed: disabled ? null : onDiagnostics,
+                  onPressed: onDiagnostics,
                   icon: const Icon(Icons.speed_outlined, size: 14),
                   label: const Text('性能诊断'),
                   style: OutlinedButton.styleFrom(
@@ -212,7 +214,7 @@ class StudioHeaderBar extends StatelessWidget {
               if (historyAvailable)
                 OutlinedButton.icon(
                   key: const Key('performanceHistory'),
-                  onPressed: disabled ? null : onHistory,
+                  onPressed: onHistory,
                   icon: const Icon(Icons.history_toggle_off, size: 14),
                   label: const Text('性能历史'),
                   style: OutlinedButton.styleFrom(
@@ -228,7 +230,7 @@ class StudioHeaderBar extends StatelessWidget {
               // AI 增强与校对组
               OutlinedButton.icon(
                 key: const Key('translateSubtitle'),
-                onPressed: !hasResult || disabled ? null : onTranslate,
+                onPressed: !hasResult || taskConflict ? null : onTranslate,
                 icon: const Icon(Icons.translate, size: 14),
                 label: const Text('翻译为中文'),
                 style: OutlinedButton.styleFrom(
@@ -242,11 +244,8 @@ class StudioHeaderBar extends StatelessWidget {
               ),
               OutlinedButton.icon(
                 key: const Key('autoSpeakerDiarization'),
-                onPressed: !hasResult || disabled ? null : onDiarize,
-                icon: const Icon(
-                  Icons.record_voice_over_outlined,
-                  size: 14,
-                ),
+                onPressed: !hasResult || taskConflict ? null : onDiarize,
+                icon: const Icon(Icons.record_voice_over_outlined, size: 14),
                 label: const Text('自动标注说话人'),
                 style: OutlinedButton.styleFrom(
                   visualDensity: VisualDensity.compact,
@@ -259,7 +258,7 @@ class StudioHeaderBar extends StatelessWidget {
               ),
               OutlinedButton.icon(
                 key: const Key('openSubtitleEditor'),
-                onPressed: !hasResult || disabled ? null : onEdit,
+                onPressed: !hasResult || taskConflict ? null : onEdit,
                 icon: const Icon(Icons.edit_note, size: 15),
                 label: const Text('校对字幕'),
                 style: OutlinedButton.styleFrom(

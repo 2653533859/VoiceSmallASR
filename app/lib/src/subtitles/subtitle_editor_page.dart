@@ -162,6 +162,26 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
     _runEdit(() => _editor.shiftTimeOffset(seconds));
   }
 
+  Future<void> _alignToAnchor() async {
+    final List<Segment> segments = _editor.result.segments;
+    if (segments.isEmpty) return;
+    final _AnchorRequest? request = await showDialog<_AnchorRequest>(
+      context: context,
+      builder: (BuildContext context) => _AnchorDialog(segments: segments),
+    );
+    if (!mounted || request == null) return;
+    final Duration? duration = widget.player?.duration;
+    _runEdit(
+      () => _editor.alignToAnchor(
+        request.index,
+        request.time,
+        mediaDuration: duration == null || duration <= Duration.zero
+            ? null
+            : duration.inMicroseconds / Duration.microsecondsPerSecond,
+      ),
+    );
+  }
+
   Future<void> _replaceText() async {
     String query = '';
     String replacement = '';
@@ -339,6 +359,7 @@ class _SubtitleEditorPageState extends State<SubtitleEditorPage> {
                 onUndo: _editor.undo,
                 onRedo: _editor.redo,
                 onOffset: () => unawaited(_shiftTime()),
+                onAlign: () => unawaited(_alignToAnchor()),
                 onReplace: () => unawaited(_replaceText()),
                 onReadingSpeed: () => unawaited(_checkReadingSpeed()),
                 onSave: _save,
@@ -396,6 +417,7 @@ class _EditorToolbar extends StatelessWidget {
     required this.onUndo,
     required this.onRedo,
     required this.onOffset,
+    required this.onAlign,
     required this.onReplace,
     required this.onReadingSpeed,
     required this.onSave,
@@ -406,6 +428,7 @@ class _EditorToolbar extends StatelessWidget {
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback onOffset;
+  final VoidCallback onAlign;
   final VoidCallback onReplace;
   final VoidCallback onReadingSpeed;
   final VoidCallback onSave;
@@ -440,6 +463,12 @@ class _EditorToolbar extends StatelessWidget {
                       tooltip: '批量偏移时间',
                       onPressed: onOffset,
                       icon: const Icon(Icons.schedule),
+                    ),
+                    IconButton(
+                      key: const Key('subtitleAnchorAlign'),
+                      tooltip: '按锚点校时',
+                      onPressed: onAlign,
+                      icon: const Icon(Icons.vertical_align_center),
                     ),
                     IconButton(
                       key: const Key('subtitleReplace'),
@@ -647,10 +676,95 @@ class _EditableSegmentTileState extends State<_EditableSegmentTile> {
   }
 }
 
+class _AnchorDialog extends StatefulWidget {
+  const _AnchorDialog({required this.segments});
+
+  final List<Segment> segments;
+
+  @override
+  State<_AnchorDialog> createState() => _AnchorDialogState();
+}
+
+class _AnchorDialogState extends State<_AnchorDialog> {
+  int _selectedIndex = 0;
+  late final TextEditingController _time = TextEditingController(
+    text: widget.segments.first.start.toStringAsFixed(3),
+  );
+
+  @override
+  void dispose() {
+    _time.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('按锚点校时'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          DropdownButtonFormField<int>(
+            key: const Key('subtitleAnchorSegment'),
+            initialValue: _selectedIndex,
+            decoration: const InputDecoration(labelText: '锚点字幕'),
+            items: <DropdownMenuItem<int>>[
+              for (int index = 0; index < widget.segments.length; index++)
+                DropdownMenuItem<int>(
+                  value: index,
+                  child: Text(
+                    '第 ${index + 1} 条 · ${widget.segments[index].start.toStringAsFixed(3)} 秒',
+                  ),
+                ),
+            ],
+            onChanged: (int? value) {
+              if (value == null) return;
+              setState(() => _selectedIndex = value);
+              _time.text = widget.segments[value].start.toStringAsFixed(3);
+            },
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('subtitleAnchorTime'),
+            controller: _time,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: '实际开始时间（秒）',
+              helperText: '整份字幕会保持相对间隔并一起移动',
+            ),
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('subtitleAnchorConfirm'),
+          onPressed: () {
+            final double? anchorTime = double.tryParse(_time.text.trim());
+            if (anchorTime == null) return;
+            Navigator.pop(context, _AnchorRequest(_selectedIndex, anchorTime));
+          },
+          child: const Text('整体对齐'),
+        ),
+      ],
+    );
+  }
+}
+
 class _SplitRequest {
   const _SplitRequest(this.offset, this.time);
 
   final int offset;
+  final double time;
+}
+
+class _AnchorRequest {
+  const _AnchorRequest(this.index, this.time);
+
+  final int index;
   final double time;
 }
 

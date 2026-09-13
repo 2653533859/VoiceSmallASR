@@ -122,7 +122,7 @@ void main() {
     expect(await repository.loadSubtitleStyle(), const SubtitleStyle());
   });
 
-  test('视频字幕显示、翻译和自动缓存开关可以持久化', () async {
+  test('视频字幕默认关闭，显式配置和自动缓存开关可以持久化', () async {
     final AppSettingsRepository repository = AppSettingsRepository(
       preferences: _FakePreferenceStore(),
     );
@@ -133,7 +133,7 @@ void main() {
           .having(
             (VideoSubtitleSettings value) => value.subtitlesEnabled,
             'subtitlesEnabled',
-            isTrue,
+            isFalse,
           )
           .having(
             (VideoSubtitleSettings value) => value.translationEnabled,
@@ -144,6 +144,11 @@ void main() {
             (VideoSubtitleSettings value) => value.cacheEnabled,
             'cacheEnabled',
             isTrue,
+          )
+          .having(
+            (VideoSubtitleSettings value) => value.displayMode,
+            'displayMode',
+            VideoSubtitleDisplayMode.off,
           ),
     );
 

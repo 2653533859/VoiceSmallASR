@@ -28,6 +28,7 @@ class VideoSurface extends StatelessWidget {
     required this.style,
     required this.displayMode,
     required this.controls,
+    required this.quarterTurns,
   });
 
   final VideoPlaybackController controller;
@@ -35,6 +36,7 @@ class VideoSurface extends StatelessWidget {
   final SubtitleStyle style;
   final VideoSubtitleDisplayMode displayMode;
   final Widget? controls;
+  final int quarterTurns;
 
   @override
   Widget build(BuildContext context) {
@@ -99,41 +101,49 @@ class VideoSurface extends StatelessWidget {
           ? const Center(
               child: Text('打开视频开始播放', style: TextStyle(color: Colors.white70)),
             )
-          : controller.buildVideo(
-              overlayBuilder: (Future<void> Function() toggleFullscreen) =>
-                  Stack(
-                    fit: StackFit.expand,
-                    children: <Widget>[
-                      ?subtitle,
-                      if (controls != null)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: DecoratedBox(
-                            decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: <Color>[
-                                  Colors.transparent,
-                                  Color(0xD9000000),
-                                ],
+          : RotatedBox(
+              key: const Key('videoRotation'),
+              quarterTurns: quarterTurns,
+              child: controller.buildVideo(
+                overlayBuilder: (Future<void> Function() toggleFullscreen) =>
+                    RotatedBox(
+                      key: const Key('videoOverlayRotation'),
+                      quarterTurns: (4 - quarterTurns) % 4,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: <Widget>[
+                          ?subtitle,
+                          if (controls != null)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              child: DecoratedBox(
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: <Color>[
+                                      Colors.transparent,
+                                      Color(0xD9000000),
+                                    ],
+                                  ),
+                                ),
+                                child: Theme(
+                                  data: ThemeData.dark(useMaterial3: true),
+                                  child: VideoPlaybackControlsScope(
+                                    toggleFullscreen: toggleFullscreen,
+                                    child: controls!,
+                                  ),
+                                ),
                               ),
                             ),
-                            child: Theme(
-                              data: ThemeData.dark(useMaterial3: true),
-                              child: VideoPlaybackControlsScope(
-                                toggleFullscreen: toggleFullscreen,
-                                child: controls!,
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (controller.busy)
-                        const Center(child: CircularProgressIndicator()),
-                    ],
-                  ),
+                          if (controller.busy)
+                            const Center(child: CircularProgressIndicator()),
+                        ],
+                      ),
+                    ),
+              ),
             ),
     );
   }

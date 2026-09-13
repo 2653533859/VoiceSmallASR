@@ -13,7 +13,13 @@ import 'package:vsasr_app/src/asr/segment.dart';
 const List<String> kSubtitleFormats = <String>['srt', 'vtt', 'json', 'txt'];
 
 /// 可导入的外部字幕格式；TXT 没有时间轴，不能直接用于视频联动。
-const List<String> kSubtitleImportFormats = <String>['srt', 'vtt', 'json'];
+const List<String> kSubtitleImportFormats = <String>[
+  'srt',
+  'vtt',
+  'ass',
+  'ssa',
+  'json',
+];
 
 const String _projectSchema = 'voicesmallasr.project';
 
@@ -65,11 +71,146 @@ TranscriptionResult parseSubtitleText(
       return _parseTimedSubtitle(normalized, format: 'SRT');
     case 'vtt':
       return _parseTimedSubtitle(normalized, format: 'VTT');
+    case 'ass':
+    case 'ssa':
+      return _parseAssSubtitle(
+        normalized,
+        format: normalizedFormat.toUpperCase(),
+      );
     case 'json':
       return _parseSubtitleJson(normalized);
     default:
       throw FormatException('不支持导入的字幕格式：$format');
   }
+}
+
+TranscriptionResult _parseAssSubtitle(
+  String content, {
+  required String format,
+}) {
+  var inEvents = false;
+  var fields = <String>[
+    'layer',
+    'start',
+    'end',
+    'style',
+    'name',
+    'marginl',
+    'marginr',
+    'marginv',
+    'effect',
+    'text',
+  ];
+  final segments = <Segment>[];
+  for (final rawLine in content.split('\n')) {
+    final line = rawLine.trim();
+    if (line.startsWith('[')) {
+      inEvents = line.toLowerCase() == '[events]';
+      continue;
+    }
+    if (!inEvents) continue;
+    if (line.toLowerCase().startsWith('format:')) {
+      fields = line
+          .substring(line.indexOf(':') + 1)
+          .split(',')
+          .map((value) => value.trim().toLowerCase())
+          .toList(growable: false);
+      continue;
+    }
+    if (!line.toLowerCase().startsWith('dialogue:')) continue;
+    final values = _splitAssFields(
+      line.substring(line.indexOf(':') + 1).trimLeft(),
+      fields.length,
+    );
+    if (values.length < fields.length) continue;
+    final startIndex = fields.indexOf('start');
+    final endIndex = fields.indexOf('end');
+    final textIndex = fields.indexOf('text');
+    if (startIndex < 0 || endIndex < 0 || textIndex < 0) continue;
+    final start = _parseAssTimestamp(values[startIndex]);
+    final end = _parseAssTimestamp(values[endIndex]);
+    if (end <= start) continue;
+    final text = values[textIndex]
+        .replaceAll(RegExp(r'\{[^}]*\}'), '')
+        .replaceAll(r'\N', '\n')
+        .replaceAll(r'\n', '\n')
+        .replaceAll(r'\h', ' ')
+        .trim();
+    if (text.isEmpty) continue;
+    segments.add(
+      Segment(text: text, start: start, end: end, index: segments.length),
+    );
+  }
+  if (segments.isEmpty) {
+    throw FormatException('$format 中没有找到有效字幕条目');
+  }
+  return _buildImportedResult(_normalizeAssSegments(segments));
+}
+
+/// ASS/SSA 允许对话、标牌与特效字幕同时出现；应用时间轴是单轨结构，
+/// 因此把相交事件合并为一条，既保留全部文字，也满足单轨播放器的约束。
+List<Segment> _normalizeAssSegments(List<Segment> source) {
+  final List<Segment> sorted = List<Segment>.of(source)
+    ..sort((Segment left, Segment right) {
+      final int byStart = left.start.compareTo(right.start);
+      return byStart != 0 ? byStart : left.end.compareTo(right.end);
+    });
+  final List<Segment> normalized = <Segment>[];
+  for (final Segment segment in sorted) {
+    if (normalized.isEmpty || segment.start >= normalized.last.end) {
+      normalized.add(segment.copyWith(index: normalized.length));
+      continue;
+    }
+    final Segment previous = normalized.removeLast();
+    final List<String> lines = <String>[
+      ...previous.text.split('\n'),
+      ...segment.text.split('\n'),
+    ];
+    final String text = <String>{
+      for (final String line in lines)
+        if (line.trim().isNotEmpty) line,
+    }.join('\n');
+    normalized.add(
+      previous.copyWith(
+        text: text,
+        end: segment.end > previous.end ? segment.end : previous.end,
+        index: normalized.length,
+      ),
+    );
+  }
+  return normalized;
+}
+
+List<String> _splitAssFields(String value, int count) {
+  final fields = <String>[];
+  var start = 0;
+  for (var index = 1; index < count; index++) {
+    final comma = value.indexOf(',', start);
+    if (comma < 0) return fields;
+    fields.add(value.substring(start, comma));
+    start = comma + 1;
+  }
+  fields.add(value.substring(start));
+  return fields;
+}
+
+double _parseAssTimestamp(String value) {
+  final parts = value.trim().split(':');
+  if (parts.length != 3) throw FormatException('ASS/SSA 时间格式无效：$value');
+  final hours = int.tryParse(parts[0]);
+  final minutes = int.tryParse(parts[1]);
+  final seconds = double.tryParse(parts[2]);
+  if (hours == null ||
+      minutes == null ||
+      seconds == null ||
+      hours < 0 ||
+      minutes < 0 ||
+      minutes >= 60 ||
+      seconds < 0 ||
+      seconds >= 60) {
+    throw FormatException('ASS/SSA 时间格式无效：$value');
+  }
+  return hours * 3600 + minutes * 60 + seconds;
 }
 
 TranscriptionResult _parseTimedSubtitle(

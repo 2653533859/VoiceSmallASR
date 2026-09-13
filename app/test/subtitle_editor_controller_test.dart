@@ -142,6 +142,45 @@ void main() {
     expect(editor.canUndo, isFalse);
   });
 
+  test('锚点校时整体平移字幕并可撤销，越界时不改变结果', () {
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: sample(),
+    );
+
+    editor.alignToAnchor(1, 1.5);
+
+    expect(editor.result.segments.first.start, 0.5);
+    expect(editor.result.segments.first.words.single.start, 0.5);
+    expect(editor.result.segments.first.translation, '你好');
+    expect(editor.result.segments[1].start, 1.5);
+    editor.undo();
+    expect(editor.result.segments.first.start, 0.0);
+
+    expect(
+      () => editor.alignToAnchor(1, 0.5),
+      throwsA(isA<SubtitleEditException>()),
+    );
+    expect(editor.result.segments.first.start, 0.0);
+  });
+
+  test('导入字幕可按真实媒体时长向后执行锚点校时', () {
+    final SubtitleEditorController editor = SubtitleEditorController(
+      initial: const TranscriptionResult(
+        duration: 2.0,
+        segments: <Segment>[
+          Segment(text: '第一条', start: 0, end: 1),
+          Segment(text: '第二条', start: 1, end: 2),
+        ],
+      ),
+    );
+
+    editor.alignToAnchor(0, 3, mediaDuration: 10);
+
+    expect(editor.result.segments.first.start, 3);
+    expect(editor.result.segments.last.end, 5);
+    expect(editor.result.duration, 10);
+  });
+
   test('搜索替换会更新所有字幕并清除过期译文与 token', () {
     final SubtitleEditorController editor = SubtitleEditorController(
       initial: sample(),
@@ -212,6 +251,39 @@ void main() {
     expect(
       () => editor.checkReadingSpeed(maxCharactersPerSecond: 0),
       throwsA(isA<SubtitleEditException>()),
+    );
+  });
+
+  test('质量检查汇总阅读速度、长空白、重复文本和疑似语言错误', () {
+    final editor = SubtitleEditorController(
+      initial: const TranscriptionResult(
+        duration: 20,
+        language: 'zh',
+        segments: <Segment>[
+          Segment(text: '这是非常长而且显示时间很短的一条字幕', start: 0, end: 0.5),
+          Segment(text: 'かな', start: 10, end: 12),
+          Segment(text: 'かな', start: 12, end: 14),
+        ],
+      ),
+    );
+    final issues = editor.checkQuality(
+      maxCharactersPerSecond: 10,
+      longGapSeconds: 5,
+    );
+    expect(
+      issues.map((issue) => issue.kind),
+      containsAll(<SubtitleQualityIssueKind>[
+        SubtitleQualityIssueKind.readingSpeed,
+        SubtitleQualityIssueKind.longGap,
+        SubtitleQualityIssueKind.languageMismatch,
+        SubtitleQualityIssueKind.duplicateText,
+      ]),
+    );
+    expect(
+      issues
+          .firstWhere((issue) => issue.kind == SubtitleQualityIssueKind.longGap)
+          .start,
+      0.5,
     );
   });
 

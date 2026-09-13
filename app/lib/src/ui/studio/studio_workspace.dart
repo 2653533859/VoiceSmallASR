@@ -327,30 +327,40 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
   Future<void> _showReadingIssues() async {
     final SubtitleEditorController? editor = _editor;
     if (editor == null) return;
-    final List<SubtitleReadingSpeedIssue> issues = editor.checkReadingSpeed();
-    final int? index = await showDialog<int>(
+    final issues = editor.checkQuality();
+    final ({int index, bool retranscribe})?
+    action = await showDialog<({int index, bool retranscribe})>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text('阅读速度检查'),
+        title: const Text('字幕质量检查'),
         content: SizedBox(
-          width: 420,
+          width: 480,
           height: issues.isEmpty ? 60 : 300,
           child: issues.isEmpty
-              ? const Text('没有超过默认阅读速度阈值的字幕。')
+              ? const Text('没有发现需要人工确认的字幕问题。')
               : ListView.builder(
                   itemCount: issues.length,
                   itemBuilder: (BuildContext context, int i) {
-                    final SubtitleReadingSpeedIssue issue = issues[i];
+                    final SubtitleQualityIssue issue = issues[i];
                     return ListTile(
                       title: Text(
-                        '第 ${issue.index + 1} 条 · ${issue.charactersPerSecond.toStringAsFixed(1)} 字/秒',
+                        '第 ${issue.index + 1} 条 · ${_qualityIssueLabel(issue.kind)}',
                       ),
-                      subtitle: Text(
-                        editor.result.segments[issue.index].text,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                      subtitle: Text(issue.message),
+                      onTap: () => Navigator.pop(context, (
+                        index: i,
+                        retranscribe: false,
+                      )),
+                      trailing: IconButton(
+                        tooltip: '用此范围重新识别',
+                        onPressed: widget.controller.filePath == null
+                            ? null
+                            : () => Navigator.pop(context, (
+                                index: i,
+                                retranscribe: true,
+                              )),
+                        icon: const Icon(Icons.refresh),
                       ),
-                      onTap: () => Navigator.pop(context, issue.index),
                     );
                   },
                 ),
@@ -363,13 +373,25 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
         ],
       ),
     );
-    if (!mounted || index == null || !identical(editor, _editor)) return;
+    if (!mounted || action == null || !identical(editor, _editor)) return;
+    final issue = issues[action.index];
+    if (action.retranscribe) {
+      await _retranscribeRange(start: issue.start, end: issue.end);
+      return;
+    }
     await widget.videoController.seek(
-      Duration(
-        microseconds: (editor.result.segments[index].start * 1000000).round(),
-      ),
+      Duration(microseconds: (issue.start * 1000000).round()),
     );
   }
+
+  String _qualityIssueLabel(SubtitleQualityIssueKind kind) => switch (kind) {
+    SubtitleQualityIssueKind.overlap => '时间重叠',
+    SubtitleQualityIssueKind.readingSpeed => '阅读过快',
+    SubtitleQualityIssueKind.longGap => '长空白',
+    SubtitleQualityIssueKind.emptyText => '空文本',
+    SubtitleQualityIssueKind.duplicateText => '重复文本',
+    SubtitleQualityIssueKind.languageMismatch => '疑似语言错误',
+  };
 
   void _handleUpdateSegment(
     int index, {
@@ -587,9 +609,9 @@ class _StudioWorkspaceState extends State<StudioWorkspace> {
                   ),
                   TextButton.icon(
                     key: const Key('studioReadingSpeed'),
-                    onPressed: c.busy ? null : _showReadingIssues,
-                    icon: const Icon(Icons.speed),
-                    label: const Text('阅读速度检查'),
+                    onPressed: _showReadingIssues,
+                    icon: const Icon(Icons.fact_check_outlined),
+                    label: const Text('字幕质量检查'),
                   ),
                 ],
               ),

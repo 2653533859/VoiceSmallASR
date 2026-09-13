@@ -98,6 +98,46 @@ void main() {
     expect(transcription.projectSnapshot.result.segments.first.text, '修改后的原文');
   });
 
+  testWidgets('后台翻译期间仍可保存导出和检查字幕质量', (tester) async {
+    final transcription = _BusyTranscribeController();
+    transcription.applyImportedResult(
+      const TranscriptionResult(
+        segments: <Segment>[
+          Segment(text: 'one', start: 0, end: 1),
+          Segment(text: 'two', start: 1, end: 2),
+        ],
+      ),
+    );
+    transcription.pretendBusy = true;
+    final video = VideoPlaybackController(backend: const _FakeVideoBackend());
+    addTearDown(video.dispose);
+    addTearDown(transcription.shutdown);
+
+    await tester.pumpWidget(
+      _workspace(
+        transcription: transcription,
+        video: video,
+        resolver: () async => null,
+      ),
+    );
+
+    OutlinedButton button(String label) => tester.widget<OutlinedButton>(
+      find.ancestor(
+        of: find.text(label),
+        matching: find.byType(OutlinedButton),
+      ),
+    );
+    expect(transcription.busy, isTrue);
+    expect(button('保存项目').onPressed, isNotNull);
+    expect(button('导出字幕').onPressed, isNotNull);
+    expect(
+      tester
+          .widget<TextButton>(find.byKey(const Key('studioReadingSpeed')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
   testWidgets('搜索替换可撤销且阅读速度检查可在工作台打开', (tester) async {
     final TranscribeController transcription = TranscribeController()
       ..applyImportedResult(
@@ -295,6 +335,13 @@ class _RecordingProvider implements ClosableTranslationProvider {
           texts.map((String text) => '$to:$text').toList(growable: false),
         );
   }
+}
+
+class _BusyTranscribeController extends TranscribeController {
+  bool pretendBusy = false;
+
+  @override
+  bool get busy => pretendBusy || super.busy;
 }
 
 class _FakeVideoBackend implements VideoPlayerBackend {

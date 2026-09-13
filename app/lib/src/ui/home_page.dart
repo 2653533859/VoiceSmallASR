@@ -17,12 +17,16 @@ import 'package:vsasr_app/src/diagnostics/performance_report.dart';
 import 'package:vsasr_app/src/project/project_file.dart';
 import 'package:vsasr_app/src/project/batch_translation_cache.dart';
 import 'package:vsasr_app/src/ui/batch_queue_store.dart';
+import 'package:vsasr_app/src/ui/background_task_center.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/settings/settings_page.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/live_controller.dart';
 import 'package:vsasr_app/src/ui/batch_page.dart';
+import 'package:vsasr_app/src/ui/folder_batch_controller.dart';
+import 'package:vsasr_app/src/ui/folder_batch_page.dart';
+import 'package:vsasr_app/src/ui/folder_batch_store.dart';
 import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 import 'package:vsasr_app/src/ui/home_export_coordinator.dart';
 import 'package:vsasr_app/src/ui/home_workflow_coordinator.dart';
@@ -129,6 +133,10 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   late final HomeWorkflowCoordinator _workflow;
   final HomeExportCoordinator _exporter = HomeExportCoordinator();
+  final BackgroundTaskRegistry _backgroundTasks = BackgroundTaskRegistry();
+  TranscribeController? _folderWorker;
+  FolderBatchController? _folderBatch;
+  final Set<String> _recordedFolderFailures = <String>{};
   bool _translationDisclosureAccepted = false;
   bool _liveTranslationDisclosureAccepted = false;
   late final VideoPlaybackController _video =
@@ -266,17 +274,208 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openBatch() async {
+    await _video.pause();
+    if (!mounted) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => BatchPage(
           controller: _workflow.batch,
           pickFiles: _pickBatchFiles,
+          onOpenFolder: _openFolderBatch,
           onTranslate: _translateBatch,
           onExport: _exportBatch,
           onDiagnostics: _showBatchPerformanceReport,
         ),
       ),
     );
+  }
+
+  Future<void> _openBackgroundTaskCenter() => showDialog<void>(
+    context: context,
+    builder: (BuildContext context) => BackgroundTaskCenterDialog(
+      controller: widget.controller,
+      batch: _workflow.batch,
+      live: widget.live,
+      registry: _backgroundTasks,
+      onOpenBatch: _openBatch,
+    ),
+  );
+
+  Future<void> _openFolderBatch() async {
+    if (widget.controller.busy || _workflow.batch.running) return;
+    await _video.pause();
+    if (!mounted) return;
+    final FolderBatchController folder = await _ensureFolderBatch();
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => FolderBatchPage(
+          controller: folder,
+          pickDirectory: () =>
+              FilePicker.getDirectoryPath(dialogTitle: '选择要顺序处理的文件夹'),
+          pickOutputDirectory: () =>
+              FilePicker.getDirectoryPath(dialogTitle: '选择字幕输出文件夹'),
+        ),
+      ),
+    );
+    await folder.flush();
+  }
+
+  Future<FolderBatchController> _ensureFolderBatch() async {
+    final FolderBatchController? existing = _folderBatch;
+    if (existing != null) return existing;
+    final TranscribeController worker = TranscribeController(
+      config: widget.controller.config,
+      offlineMode: widget.controller.offlineMode,
+      scheduler: widget.controller.scheduler,
+      workerPool: widget.controller.workerPool,
+      launch: widget.controller.launch,
+    );
+    final FolderBatchController folder = FolderBatchController(
+      store: const FolderBatchStore(),
+      initialLanguage: widget.controller.config.language,
+      transcribeWithLanguage: (path, language) async {
+        worker.setOfflineMode(widget.controller.offlineMode);
+        await worker.applyConfig(
+          widget.controller.config.copyWith(language: language),
+          markProjectChange: false,
+        );
+        final output = await worker.transcribeFile(path);
+        if (output == null) throw StateError(worker.errorText ?? '未得到识别结果');
+        return output.result;
+      },
+      cancelCurrent: worker.cancelCurrentTask,
+      prepareTranslation: () async {
+        final settings = await _settingsRepository.loadTranslationApiSettings();
+        if (!mounted) return null;
+        if (!_translationDisclosureAccepted) {
+          final accepted = await confirmThirdPartyTranslation(context);
+          if (!accepted || !mounted) return null;
+          _translationDisclosureAccepted = true;
+        }
+        final provider = await _createBatchTranslationProvider(settings);
+        return (provider: provider, targetLanguage: settings.targetLanguage);
+      },
+    );
+    _folderWorker = worker;
+    _folderBatch = folder;
+    folder.addListener(_syncFolderTask);
+    try {
+      await folder.restore();
+      if (mounted) _syncFolderTask();
+      return folder;
+    } on Object {
+      folder.removeListener(_syncFolderTask);
+      folder.dispose();
+      await worker.shutdown();
+      worker.dispose();
+      _folderBatch = null;
+      _folderWorker = null;
+      rethrow;
+    }
+  }
+
+  void _syncFolderTask() {
+    final FolderBatchController? folder = _folderBatch;
+    if (folder == null) return;
+    final List<FolderItem> items = folder.items;
+    final FolderItem? current = items
+        .where(
+          (FolderItem item) =>
+              item.status == FolderItemStatus.transcribing ||
+              item.status == FolderItemStatus.translating,
+        )
+        .firstOrNull;
+    final int completed = items
+        .where(
+          (FolderItem item) =>
+              item.status == FolderItemStatus.completed ||
+              item.status == FolderItemStatus.skipped,
+        )
+        .length;
+    final int failed = items
+        .where((FolderItem item) => item.status == FolderItemStatus.failed)
+        .length;
+    final Iterable<FolderItem> failedItems = items.where(
+      (FolderItem item) => item.status == FolderItemStatus.failed,
+    );
+    final Set<String> failedPaths = failedItems
+        .map((FolderItem item) => item.path)
+        .toSet();
+    _recordedFolderFailures.retainAll(failedPaths);
+    for (final FolderItem item in failedItems) {
+      if (_recordedFolderFailures.add(item.path)) {
+        _backgroundTasks.recordFailure(
+          title: '文件夹自动处理',
+          message: '文件处理失败',
+          filePath: item.path,
+        );
+      }
+    }
+    final bool visible =
+        folder.loading || folder.running || folder.paused || folder.hasPending;
+    if (!visible) {
+      _backgroundTasks.remove('folderBatch');
+      return;
+    }
+    final String state = folder.loading
+        ? '正在扫描'
+        : current?.status == FolderItemStatus.translating
+        ? '正在翻译'
+        : folder.running
+        ? '正在识别'
+        : folder.paused
+        ? '已暂停'
+        : '等待开始';
+    _backgroundTasks.upsert(
+      RegisteredBackgroundTask(
+        id: 'folderBatch',
+        title: '文件夹自动处理',
+        detail: <String>[
+          '$state · 已处理 $completed/${items.length}',
+          if (current != null) p.basename(current.path),
+          if (failed > 0) '$failed 个失败条目',
+        ].join('\n'),
+        icon: current?.status == FolderItemStatus.translating
+            ? Icons.translate
+            : Icons.folder_copy_outlined,
+        indeterminate: folder.loading || folder.running,
+        actions: <BackgroundTaskAction>[
+          if (folder.running)
+            BackgroundTaskAction(
+              label: '完成当前项后暂停',
+              icon: Icons.pause,
+              onPressed: () async => folder.stopAfterCurrent(),
+            ),
+          if (folder.running)
+            BackgroundTaskAction(
+              label: '立即暂停',
+              icon: Icons.stop_circle_outlined,
+              onPressed: folder.cancelNow,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<TranslationProvider> _createBatchTranslationProvider(
+    TranslationApiSettings settings,
+  ) async {
+    final resolver = widget.translationProviderResolver;
+    if (resolver != null) {
+      final provider = await resolver();
+      if (provider == null) throw StateError('请先在设置中配置可用的第三方翻译服务');
+      return provider;
+    }
+    final key = await _settingsRepository.translationSecrets.readApiKey();
+    if (key == null) throw StateError('请先在设置中保存第三方翻译 API Key');
+    return widget.translationProviderFactory?.call(key) ??
+        ApiTranslationProvider(
+          apiKey: key,
+          endpoint: settings.endpoint,
+          model: settings.model,
+          glossary: settings.glossary,
+        );
   }
 
   Future<String?> _saveFile(
@@ -469,7 +668,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _saveProject() async {
-    if (widget.controller.result == null || widget.controller.busy) return;
+    if (widget.controller.result == null) return;
     try {
       final VsasrProject project = widget.controller.projectSnapshot;
       final String content = const JsonEncoder.withIndent('  ')
@@ -769,11 +968,23 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openSettings() async {
+    await _video.pause();
+    if (!mounted) return;
+    final List<Listenable> externalTaskStates = <Listenable>[
+      ?widget.live,
+      ?_folderBatch,
+    ];
+    final Listenable? externalTaskState = externalTaskStates.isEmpty
+        ? null
+        : Listenable.merge(externalTaskStates);
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => SettingsPage(
           controller: widget.controller,
           repository: widget.settings ?? AppSettingsRepository(),
+          externalTaskState: externalTaskState,
+          externalAsrBusy: () =>
+              (widget.live?.busy ?? false) || (_folderBatch?.running ?? false),
         ),
       ),
     );
@@ -956,28 +1167,7 @@ class _HomePageState extends State<HomePage> {
       _translationDisclosureAccepted = true;
     }
 
-    final TranslationProvider? provider;
-    final Future<TranslationProvider?> Function()? resolver =
-        widget.translationProviderResolver;
-    if (resolver != null) {
-      provider = await resolver();
-    } else {
-      final String? apiKey = await repository.translationSecrets.readApiKey();
-      if (apiKey == null) {
-        throw StateError('请先在设置中保存第三方翻译 API Key');
-      }
-      provider =
-          widget.translationProviderFactory?.call(apiKey) ??
-          ApiTranslationProvider(
-            apiKey: apiKey,
-            endpoint: settings.endpoint,
-            model: settings.model,
-            glossary: settings.glossary,
-          );
-    }
-    if (provider == null) {
-      throw StateError('请先在设置中配置可用的第三方翻译服务');
-    }
+    final provider = await _createBatchTranslationProvider(settings);
     try {
       await _workflow.batch.translateAll(
         provider,
@@ -1076,7 +1266,6 @@ class _HomePageState extends State<HomePage> {
         widget.controller,
         _workflow,
         ?live,
-        _video,
       ]),
       builder: (BuildContext context, Widget? _) {
         final TranscribeController c = widget.controller;
@@ -1131,6 +1320,7 @@ class _HomePageState extends State<HomePage> {
                     settings: widget.settings,
                     translationProviderResolver:
                         widget.translationProviderResolver,
+                    backgroundTasks: _backgroundTasks,
                   ),
           );
         }
@@ -1174,11 +1364,16 @@ class _HomePageState extends State<HomePage> {
             actions: <Widget>[
               _LanguagePicker(controller: c, enabled: !(live?.busy ?? false)),
               const SizedBox(width: 8),
+              BackgroundTaskCenterButton(
+                controller: c,
+                batch: _workflow.batch,
+                live: live,
+                registry: _backgroundTasks,
+                onPressed: () => unawaited(_openBackgroundTaskCenter()),
+              ),
               IconButton(
                 tooltip: '设置',
-                onPressed: c.busy || (live?.busy ?? false)
-                    ? null
-                    : _openSettings,
+                onPressed: _openSettings,
                 icon: const Icon(Icons.settings_outlined, size: 18),
                 style: IconButton.styleFrom(
                   foregroundColor: StudioColors.textSecondary,
@@ -1198,6 +1393,14 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     if (_ownsVideo) _video.dispose();
     _workflow.dispose();
+    final FolderBatchController? folder = _folderBatch;
+    folder?.removeListener(_syncFolderTask);
+    folder?.dispose();
+    final TranscribeController? worker = _folderWorker;
+    if (worker != null) {
+      unawaited(worker.shutdown().whenComplete(worker.dispose));
+    }
+    _backgroundTasks.dispose();
     super.dispose();
   }
 }
@@ -1277,7 +1480,13 @@ class _Tabs extends StatelessWidget {
                           children: <Widget>[
                             Icon(Icons.audio_file_outlined, size: 15),
                             SizedBox(width: 6),
-                            Text('文件转写', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            Text(
+                              '文件转写',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -1289,7 +1498,13 @@ class _Tabs extends StatelessWidget {
                             children: <Widget>[
                               Icon(Icons.mic_none, size: 15),
                               SizedBox(width: 6),
-                              Text('实时字幕', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                              Text(
+                                '实时字幕',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -1301,7 +1516,13 @@ class _Tabs extends StatelessWidget {
                             children: <Widget>[
                               Icon(Icons.video_library_outlined, size: 15),
                               SizedBox(width: 6),
-                              Text('视频播放', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                              Text(
+                                '视频播放',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -1434,9 +1655,6 @@ class _ModelSetupView extends StatelessWidget {
   }
 }
 
-
-
-
 /// 实时字幕页：录音按钮 + 定稿列表 + 末尾一行临时结果。
 class _LiveView extends StatelessWidget {
   const _LiveView({
@@ -1482,9 +1700,7 @@ class _LiveView extends StatelessWidget {
                     : null,
               ),
               OutlinedButton.icon(
-                onPressed: controller.hasResult && !controller.busy
-                    ? onExport
-                    : null,
+                onPressed: controller.hasResult ? onExport : null,
                 icon: const Icon(Icons.save_alt),
                 label: const Text('导出字幕'),
               ),
@@ -1498,14 +1714,14 @@ class _LiveView extends StatelessWidget {
               if (controller.performanceReport != null)
                 OutlinedButton.icon(
                   key: const Key('livePerformanceDiagnostics'),
-                  onPressed: controller.busy ? null : onDiagnostics,
+                  onPressed: onDiagnostics,
                   icon: const Icon(Icons.speed_outlined),
                   label: const Text('性能诊断'),
                 ),
               if (historyAvailable)
                 OutlinedButton.icon(
                   key: const Key('livePerformanceHistory'),
-                  onPressed: controller.busy ? null : onHistory,
+                  onPressed: onHistory,
                   icon: const Icon(Icons.history_toggle_off),
                   label: const Text('性能历史'),
                 ),
@@ -1632,9 +1848,6 @@ class _LiveList extends StatelessWidget {
     );
   }
 }
-
-
-
 
 class _ErrorBox extends StatelessWidget {
   const _ErrorBox({required this.message});

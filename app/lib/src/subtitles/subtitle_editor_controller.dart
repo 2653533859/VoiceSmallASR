@@ -34,6 +34,31 @@ class SubtitleReadingSpeedIssue {
   final double charactersPerSecond;
 }
 
+enum SubtitleQualityIssueKind {
+  overlap,
+  readingSpeed,
+  longGap,
+  emptyText,
+  duplicateText,
+  languageMismatch,
+}
+
+class SubtitleQualityIssue {
+  const SubtitleQualityIssue({
+    required this.kind,
+    required this.index,
+    required this.message,
+    required this.start,
+    required this.end,
+  });
+
+  final SubtitleQualityIssueKind kind;
+  final int index;
+  final String message;
+  final double start;
+  final double end;
+}
+
 /// 默认最大阅读速度，单位为 Unicode 字符/秒。
 const double kDefaultMaxCharactersPerSecond = 17.0;
 
@@ -262,7 +287,9 @@ class SubtitleEditorController extends ChangeNotifier {
   }
 
   /// 将整份字幕和 token 时间戳一起平移 [seconds] 秒。
-  void shiftTimeOffset(double seconds) {
+  void shiftTimeOffset(double seconds) => _shiftTimeOffset(seconds);
+
+  void _shiftTimeOffset(double seconds, {double? duration}) {
     if (!seconds.isFinite) {
       throw const SubtitleEditException('时间偏移必须是有限数字');
     }
@@ -285,7 +312,32 @@ class SubtitleEditorController extends ChangeNotifier {
           );
         })
         .toList(growable: false);
-    _commit(segments);
+    _commit(segments, duration: duration);
+  }
+
+  /// 将第 [index] 条字幕的开始时间对齐到 [anchorTime]，并整体平移字幕。
+  ///
+  /// 复用整体偏移可以保留每条字幕的相对间隔、时长、译文与 token 时间戳，
+  /// 同时仍作为一次编辑进入撤销记录。
+  void alignToAnchor(int index, double anchorTime, {double? mediaDuration}) {
+    if (!anchorTime.isFinite || anchorTime < 0) {
+      throw const SubtitleEditException('锚点时间必须是非负有限数字');
+    }
+    final Segment anchor = _segmentAt(index);
+    final double offset = anchorTime - anchor.start;
+    final double shiftedEnd = _result.segments.fold<double>(
+      0,
+      (double maximum, Segment segment) =>
+          segment.end + offset > maximum ? segment.end + offset : maximum,
+    );
+    final double? expandedDuration =
+        mediaDuration != null &&
+            mediaDuration.isFinite &&
+            mediaDuration >= shiftedEnd &&
+            mediaDuration > _result.duration
+        ? mediaDuration
+        : null;
+    _shiftTimeOffset(offset, duration: expandedDuration);
   }
 
   /// 在所有字幕文本中替换 [query]，返回实际替换次数。
@@ -361,6 +413,140 @@ class SubtitleEditorController extends ChangeNotifier {
       }
     }
     return List<SubtitleReadingSpeedIssue>.unmodifiable(issues);
+  }
+
+  /// 汇总需要人工确认的时间轴、文本与语言问题，不修改编辑结果。
+  List<SubtitleQualityIssue> checkQuality({
+    double maxCharactersPerSecond = kDefaultMaxCharactersPerSecond,
+    double longGapSeconds = 8.0,
+  }) {
+    if (!maxCharactersPerSecond.isFinite ||
+        maxCharactersPerSecond <= 0 ||
+        !longGapSeconds.isFinite ||
+        longGapSeconds <= 0) {
+      throw const SubtitleEditException('质量检查阈值必须是正数');
+    }
+    final issues = <SubtitleQualityIssue>[];
+    final segments = _result.segments;
+    for (int index = 0; index < segments.length; index++) {
+      final segment = segments[index];
+      final text = segment.text.trim();
+      if (text.isEmpty) {
+        issues.add(
+          SubtitleQualityIssue(
+            kind: SubtitleQualityIssueKind.emptyText,
+            index: index,
+            message: '字幕文本为空',
+            start: segment.start,
+            end: segment.end,
+          ),
+        );
+      }
+      if (segment.duration > 0) {
+        final translatedLength = segment.translation?.trim().runes.length ?? 0;
+        final characters = text.runes.length > translatedLength
+            ? text.runes.length
+            : translatedLength;
+        final speed = characters / segment.duration;
+        if (characters > 0 && speed > maxCharactersPerSecond) {
+          issues.add(
+            SubtitleQualityIssue(
+              kind: SubtitleQualityIssueKind.readingSpeed,
+              index: index,
+              message:
+                  '${speed.toStringAsFixed(1)} 字/秒，超过 ${maxCharactersPerSecond.toStringAsFixed(1)}',
+              start: segment.start,
+              end: segment.end,
+            ),
+          );
+        }
+      }
+      if (_suspectedLanguageMismatch(segment, _result.language)) {
+        final declared = segment.language.trim().isEmpty
+            ? _result.language
+            : segment.language;
+        issues.add(
+          SubtitleQualityIssue(
+            kind: SubtitleQualityIssueKind.languageMismatch,
+            index: index,
+            message: '文本字符与语言标签 $declared 疑似不一致',
+            start: segment.start,
+            end: segment.end,
+          ),
+        );
+      }
+      if (index == 0) continue;
+      final previous = segments[index - 1];
+      if (segment.start < previous.end - 0.000001) {
+        issues.add(
+          SubtitleQualityIssue(
+            kind: SubtitleQualityIssueKind.overlap,
+            index: index,
+            message: '与上一条字幕重叠',
+            start: segment.start,
+            end: previous.end > segment.end ? previous.end : segment.end,
+          ),
+        );
+      } else if (segment.start - previous.end >= longGapSeconds) {
+        issues.add(
+          SubtitleQualityIssue(
+            kind: SubtitleQualityIssueKind.longGap,
+            index: index,
+            message:
+                '与上一条之间空白 ${(segment.start - previous.end).toStringAsFixed(1)} 秒',
+            start: previous.end,
+            end: segment.start,
+          ),
+        );
+      }
+      if (text.isNotEmpty && text == previous.text.trim()) {
+        issues.add(
+          SubtitleQualityIssue(
+            kind: SubtitleQualityIssueKind.duplicateText,
+            index: index,
+            message: '与上一条字幕文本重复',
+            start: previous.start,
+            end: segment.end,
+          ),
+        );
+      }
+    }
+    return List<SubtitleQualityIssue>.unmodifiable(issues);
+  }
+
+  static bool _suspectedLanguageMismatch(
+    Segment segment,
+    String resultLanguage,
+  ) {
+    final language =
+        (segment.language.trim().isEmpty ? resultLanguage : segment.language)
+            .toLowerCase();
+    if (language == 'auto' || language.isEmpty) return false;
+    final runes = segment.text.trim().runes.toList(growable: false);
+    if (runes.length < 2) return false;
+    final kana = runes
+        .where(
+          (rune) =>
+              (rune >= 0x3040 && rune <= 0x30ff) ||
+              (rune >= 0x31f0 && rune <= 0x31ff),
+        )
+        .length;
+    final cjk = runes.where((rune) => rune >= 0x3400 && rune <= 0x9fff).length;
+    final latin = runes
+        .where(
+          (rune) =>
+              (rune >= 0x0041 && rune <= 0x005a) ||
+              (rune >= 0x0061 && rune <= 0x007a),
+        )
+        .length;
+    if ((language == 'zh' || language == 'yue') && kana > 0) return true;
+    if (language == 'en' && cjk + kana > latin) return true;
+    if ((language == 'zh' || language == 'ja' || language == 'ko') &&
+        latin >= 4 &&
+        latin / runes.length >= 0.7) {
+      return true;
+    }
+    return false;
   }
 
   void undo() {

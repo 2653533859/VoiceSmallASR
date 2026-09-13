@@ -70,18 +70,22 @@ class TranscribeController extends ChangeNotifier {
     SpeakerDiarizationModelManager? speakerModels,
     SpeakerDiarizationRunner? diarize,
     TranscriptionTaskScheduler? scheduler,
+    TranscriptionWorkerPool? workerPool,
   }) : _decoder = decoder ?? const PlatformAudioDecoder(),
        _models = models ?? ModelManager(),
        _speakerModels = speakerModels ?? SpeakerDiarizationModelManager(),
        _diarize = diarize ?? runOfflineSpeakerDiarization,
        _config = config ?? AsrConfig(),
        _scheduler = scheduler ?? TranscriptionTaskScheduler(),
+       _ownsPool = workerPool == null,
        _offlineMode = false {
     _offlineMode = offlineMode;
-    _pool = TranscriptionWorkerPool(
-      maxWorkers: _scheduler.capacity,
-      launch: launch,
-    );
+    _pool =
+        workerPool ??
+        TranscriptionWorkerPool(
+          maxWorkers: _scheduler.capacity,
+          launch: launch,
+        );
   }
 
   final AudioDecoder _decoder;
@@ -98,6 +102,7 @@ class TranscribeController extends ChangeNotifier {
 
   /// 识别 Isolate 池，支持并发。
   late final TranscriptionWorkerPool _pool;
+  final bool _ownsPool;
 
   /// 正在清空 worker 池时，新任务必须等待其结束，避免新旧模型同时驻留。
   Future<void>? _clearingWorkers;
@@ -231,6 +236,9 @@ class TranscribeController extends ChangeNotifier {
 
   /// 文件转写、实时字幕和视频预缓存共享的任务调度器。
   TranscriptionTaskScheduler get scheduler => _scheduler;
+
+  /// 供同一应用内的后台控制器复用已加载的模型，避免重复占用内存。
+  TranscriptionWorkerPool get workerPool => _pool;
 
   /// 识别语言（`auto`/`zh`/`en`/`ja`/`ko`/`yue`）。
   String get language => _config.language;
@@ -402,7 +410,7 @@ class TranscribeController extends ChangeNotifier {
     _performanceReport = null;
     if (markProjectChange && _result != null) _markProjectChanged();
     notifyListeners();
-    await _clearWorkers();
+    if (_ownsPool) await _clearWorkers();
   }
 
   /// 改识别语言。池模式下下一次识别将按需启动新语言的 worker。
@@ -1282,14 +1290,16 @@ class TranscribeController extends ChangeNotifier {
     }
   }
 
-  /// 翻译当前识别结果，并在所有批次成功后一次性写回译文。
+  /// 翻译当前识别结果，每个批次完成后立即写回并刷新界面。
   ///
   /// [provider] 由界面或调用方创建，API Key 的读取和 provider 生命周期不放进
-  /// 状态机。翻译失败时保留原结果，避免把半成品译文显示或导出出去。
+  /// 状态机。翻译失败时保留已经成功返回的译文，方便继续校对或重试。
   Future<void> translateCurrentResult(
     TranslationProvider provider, {
     String targetLanguage = 'ZH',
-    int batchSize = 20,
+    int batchSize = 8,
+    int initialBatchSize = 1,
+    int maxConcurrentBatches = 3,
     int maxRetries = 2,
     Duration retryDelay = const Duration(milliseconds: 250),
   }) async {
@@ -1308,8 +1318,18 @@ class TranscribeController extends ChangeNotifier {
         provider,
         to: targetLanguage,
         batchSize: batchSize,
+        initialBatchSize: initialBatchSize,
+        maxConcurrentBatches: maxConcurrentBatches,
+        skipTranslated: true,
         maxRetries: maxRetries,
         retryDelay: retryDelay,
+        isCancelled: () => _disposed || generation != _cancelGeneration,
+        onPartialResult: (TranscriptionResult partial, int done, int total) {
+          if (_disposed || generation != _cancelGeneration) return;
+          _result = partial;
+          _markProjectChanged();
+          notifyListeners();
+        },
         onProgress: (int done, int total) {
           _progress = total > 0 ? done / total : null;
           _statusText = total > 0
@@ -1322,7 +1342,6 @@ class TranscribeController extends ChangeNotifier {
       _result = translated;
       _progress = 1;
       _statusText = '翻译完成：${translated.length} 段';
-      _markProjectChanged();
     } on Object catch (error) {
       if (_disposed || generation != _cancelGeneration) return;
       _errorText = _humanize(error);
@@ -1374,7 +1393,7 @@ class TranscribeController extends ChangeNotifier {
   /// 关闭识别 isolate。`dispose()` 不能 await，测试与显式收尾用这个。
   Future<void> shutdown() async {
     _cancelGeneration++;
-    await _clearWorkers();
+    if (_ownsPool || busy) await _clearWorkers();
   }
 
   /// 取消当前准备、解码、识别、翻译或说话人标注操作，并阻止迟到的异步结果写回。

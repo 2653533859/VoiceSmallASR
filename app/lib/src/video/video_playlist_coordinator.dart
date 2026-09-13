@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/widgets.dart';
@@ -10,6 +11,7 @@ import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/asr_config.dart';
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
+import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/translation/api_provider.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
@@ -21,18 +23,25 @@ import 'package:vsasr_app/src/video/video_subtitle_cache.dart';
 typedef RequestTranslationDisclosure = Future<bool> Function();
 typedef TranslationPreferenceChanged = Future<void> Function(bool enabled);
 
+enum VideoSubtitleLoadMode { off, existingOnly, recognizeMissing }
+
+VideoSubtitleLoadMode _initialSubtitleLoadMode(VideoSubtitleLoadMode value) =>
+    value;
+
 class VideoPlaylistCoordinator extends ChangeNotifier
     with WidgetsBindingObserver {
   VideoPlaylistCoordinator({
     required this.controller,
     required this.transcription,
     this.settings,
+    VideoSubtitleLoadMode subtitleLoadMode = VideoSubtitleLoadMode.off,
     this.translationProviderResolver,
     VideoSubtitleCache? subtitleCache,
     VideoPlaylistStore? playlistStore,
     this.requestTranslationDisclosure,
     this.onTranslationPreferenceChanged,
-  }) : _subtitleCache = subtitleCache ?? const VideoSubtitleCache(),
+  }) : _subtitleLoadMode = _initialSubtitleLoadMode(subtitleLoadMode),
+       _subtitleCache = subtitleCache ?? const VideoSubtitleCache(),
        _playlistStore = playlistStore ?? VideoPlaylistStore();
 
   final VideoPlaybackController controller;
@@ -63,6 +72,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
   String? _processingPath;
   int _cacheEntryCount = 0;
   int _cacheBytes = 0;
+  VideoSubtitleLoadMode _subtitleLoadMode;
   bool _translationEnabled = false;
   bool _subtitleCacheEnabled = true;
   bool _translationDisclosureAccepted = false;
@@ -84,6 +94,42 @@ class VideoPlaylistCoordinator extends ChangeNotifier
   int get cacheEntryCount => _cacheEntryCount;
 
   int get cacheBytes => _cacheBytes;
+
+  VideoSubtitleLoadMode get subtitleLoadMode => _subtitleLoadMode;
+
+  bool get subtitlesEnabled => _subtitleLoadMode != VideoSubtitleLoadMode.off;
+
+  void setSubtitleLoadMode(VideoSubtitleLoadMode mode) {
+    if (_subtitleLoadMode == mode) return;
+    final bool stopCurrent =
+        mode == VideoSubtitleLoadMode.off ||
+        (mode == VideoSubtitleLoadMode.existingOnly && _processingPath != null);
+    final String? interruptedPath = stopCurrent ? _processingPath : null;
+    if (interruptedPath != null && transcription.busy) {
+      // generation 变更后旧任务不会再写检查点；先标记当前内存结果为未完成，
+      // 避免下次开启识别时把它当作完整字幕或写入正式缓存。
+      _partialPlaylistResults.add(interruptedPath);
+    }
+    _subtitleLoadMode = mode;
+    _playlistGeneration++;
+    if (mode == VideoSubtitleLoadMode.off) {
+      _translationEnabled = false;
+      for (final String path in _playlist) {
+        _playlistStatus[path] = '未加载字幕';
+      }
+    }
+    if (stopCurrent) unawaited(transcription.cancelCurrentTask());
+    _notifyListeners();
+    if (mode != VideoSubtitleLoadMode.off) requestPlaylistProcessing();
+  }
+
+  void setSubtitlesEnabled(bool enabled) {
+    setSubtitleLoadMode(
+      enabled
+          ? VideoSubtitleLoadMode.recognizeMissing
+          : VideoSubtitleLoadMode.off,
+    );
+  }
 
   bool get translationEnabled => _translationEnabled;
 
@@ -124,13 +170,13 @@ class VideoPlaylistCoordinator extends ChangeNotifier
     required bool translationEnabled,
     required bool cacheEnabled,
   }) {
-    _translationEnabled = translationEnabled;
+    _translationEnabled = translationEnabled && subtitlesEnabled;
     _subtitleCacheEnabled = cacheEnabled;
     _notifyListeners();
   }
 
   void setTranslationEnabled(bool enabled) {
-    _translationEnabled = enabled;
+    _translationEnabled = enabled && subtitlesEnabled;
     _notifyListeners();
     if (enabled) requestPlaylistProcessing();
   }
@@ -148,7 +194,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
       final String? currentPath = controller.filePath;
       _playlist.addAll(saved);
       for (final String path in saved) {
-        _playlistStatus[path] = '等待播放';
+        _playlistStatus[path] = subtitlesEnabled ? '等待字幕处理' : '未加载字幕';
       }
       _currentPlaylistIndex = currentPath == null
           ? -1
@@ -209,7 +255,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
     _playlistGeneration++;
     _playlist.addAll(additions);
     for (final String path in additions) {
-      _playlistStatus[path] = '等待播放';
+      _playlistStatus[path] = subtitlesEnabled ? '等待字幕处理' : '未加载字幕';
     }
     _cancelledPlaylistPaths.removeAll(additions);
     _notifyListeners();
@@ -361,7 +407,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
   }
 
   void requestPlaylistProcessing() {
-    if (_disposed) return;
+    if (_disposed || !subtitlesEnabled) return;
     _processingRequested = true;
     if (_lifecycleSuspended || _processingFuture != null) return;
     final Future<void> future = _drainPlaylistProcessing();
@@ -381,8 +427,49 @@ class VideoPlaylistCoordinator extends ChangeNotifier
     }
   }
 
+  Future<({File file, String label})?> _sidecarSubtitle(
+    String mediaPath,
+  ) async {
+    final directory = Directory(p.dirname(mediaPath));
+    if (!await directory.exists()) return null;
+    final stem = p.basenameWithoutExtension(mediaPath).toLowerCase();
+    final candidates = <File>[];
+    await for (final entry in directory.list()) {
+      if (entry is! File) continue;
+      final extension = p.extension(entry.path).toLowerCase();
+      if (!const {'.srt', '.vtt', '.ass', '.ssa'}.contains(extension)) continue;
+      final name = p.basenameWithoutExtension(entry.path).toLowerCase();
+      final suffix = name.startsWith('$stem.')
+          ? name.substring(stem.length + 1)
+          : '';
+      final languageSuffix =
+          RegExp(r'^[a-z]{2,3}([_-][a-z]{2,4})?$').hasMatch(suffix) ||
+          const {'translated', 'bilingual', '双语', '中文', '日文'}.contains(suffix);
+      if (name == stem || languageSuffix) candidates.add(entry);
+    }
+    if (candidates.isEmpty) return null;
+    const priority = <String>['.srt', '.vtt', '.ass', '.ssa'];
+    candidates.sort((left, right) {
+      final leftName = p.basenameWithoutExtension(left.path).toLowerCase();
+      final rightName = p.basenameWithoutExtension(right.path).toLowerCase();
+      final leftExact = leftName == stem ? 0 : 1;
+      final rightExact = rightName == stem ? 0 : 1;
+      if (leftExact != rightExact) return leftExact.compareTo(rightExact);
+      final extensionOrder = priority
+          .indexOf(p.extension(left.path).toLowerCase())
+          .compareTo(priority.indexOf(p.extension(right.path).toLowerCase()));
+      if (extensionOrder != 0) return extensionOrder;
+      return p.basename(left.path).compareTo(p.basename(right.path));
+    });
+    final file = candidates.first;
+    final extension = p.extension(file.path).substring(1).toUpperCase();
+    final exact = p.basenameWithoutExtension(file.path).toLowerCase() == stem;
+    return (file: file, label: exact ? '同名 $extension' : '语言后缀 $extension');
+  }
+
   Future<void> _processPlaylist(int generation) async {
     if (_disposed ||
+        !subtitlesEnabled ||
         _lifecycleSuspended ||
         _currentPlaylistIndex < 0 ||
         _currentPlaylistIndex >= _playlist.length) {
@@ -420,6 +507,34 @@ class VideoPlaylistCoordinator extends ChangeNotifier
         TranscriptionResult? result = _partialPlaylistResults.contains(path)
             ? null
             : _playlistResults[path];
+        String subtitleSource = result == null ? '字幕' : '当前会话';
+        // 保留当前会话中的编辑；首次处理优先读取媒体旁字幕，再查缓存。
+        if (result == null) {
+          var sidecarLabel = '配套字幕';
+          try {
+            final sidecar = await _sidecarSubtitle(path);
+            if (_disposed || generation != _playlistGeneration) return;
+            if (sidecar != null) {
+              sidecarLabel = sidecar.label;
+              result = parseSubtitleText(
+                await sidecar.file.readAsString(),
+                format: p.extension(sidecar.file.path),
+              );
+              if (_disposed || generation != _playlistGeneration) return;
+              _partialPlaylistResults.remove(path);
+              storePlaylistResult(path, result);
+              subtitleSource = sidecar.label;
+              _setPlaylistStatus(path, '已载入${sidecar.label}字幕');
+            }
+          } catch (error) {
+            if (_disposed || generation != _playlistGeneration) return;
+            _setPlaylistStatus(
+              path,
+              '$sidecarLabel 加载失败：${_playlistError(error)}',
+            );
+            continue;
+          }
+        }
         TranscriptionResult? resumeResult;
         Duration resumeAt = Duration.zero;
         Future<TranscriptionResult?>? cacheRead;
@@ -434,6 +549,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
           if (result != null) {
             _partialPlaylistResults.remove(path);
             storePlaylistResult(path, result);
+            subtitleSource = '字幕缓存';
             _setPlaylistStatus(path, '已载入字幕缓存');
           }
         }
@@ -449,8 +565,18 @@ class VideoPlaylistCoordinator extends ChangeNotifier
             );
             _partialPlaylistResults.add(path);
             storePlaylistResult(path, checkpoint.result);
+            subtitleSource = '字幕检查点';
             _setPlaylistStatus(path, '从字幕检查点继续');
           }
+        }
+        if (result == null &&
+            _subtitleLoadMode == VideoSubtitleLoadMode.existingOnly) {
+          // “仅加载已有”不展示内存中的未完成识别结果。磁盘检查点仍保留，
+          // 以后切回自动识别时可以重新读取并继续。
+          _playlistResults.remove(path);
+          _partialPlaylistResults.remove(path);
+          _setPlaylistStatus(path, '未找到已有字幕');
+          continue;
         }
         if (result == null) {
           if (transcription.busy) {
@@ -550,6 +676,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
             result = _mergeTranslations(result, _playlistResults[path]);
             _partialPlaylistResults.remove(path);
             storePlaylistResult(path, result);
+            subtitleSource = '自动识别';
           } on Object catch (error) {
             if (_disposed || generation != _playlistGeneration) return;
             await persistCheckpointNow();
@@ -605,7 +732,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
             );
             _cacheDirectory = p.dirname(saved);
             _partialPlaylistResults.remove(path);
-            _setPlaylistReadyStatus(path, '字幕已缓存');
+            _setPlaylistReadyStatus(path, '$subtitleSource · 已缓存');
             await _subtitleCache.trimToMaxBytes(
               kDefaultVideoSubtitleCacheMaxBytes,
               protectedMediaPaths: protectedCachePaths,
@@ -617,7 +744,7 @@ class VideoPlaylistCoordinator extends ChangeNotifier
             _cacheWritePaths.remove(path);
           }
         } else {
-          _setPlaylistReadyStatus(path, '字幕已就绪');
+          _setPlaylistReadyStatus(path, '$subtitleSource · 已就绪');
         }
         if (path == controller.filePath && !transcription.busy) {
           transcription.applyImportedResult(result, mediaPath: path);

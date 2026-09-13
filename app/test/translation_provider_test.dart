@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -66,6 +67,7 @@ void main() {
   test('按批次翻译并报告累计进度', () async {
     final _FakeProvider provider = _FakeProvider();
     final List<List<int>> progress = <List<int>>[];
+    final List<List<String?>> partialTranslations = <List<String?>>[];
     const TranscriptionResult source = TranscriptionResult(
       language: 'en',
       segments: <Segment>[
@@ -82,6 +84,13 @@ void main() {
       batchSize: 2,
       maxRetries: 0,
       onProgress: (int done, int total) => progress.add(<int>[done, total]),
+      onPartialResult: (TranscriptionResult partial, int done, int total) {
+        partialTranslations.add(
+          partial.segments
+              .map((Segment segment) => segment.translation)
+              .toList(),
+        );
+      },
     );
 
     expect(provider.batches, <List<String>>[
@@ -93,11 +102,84 @@ void main() {
       <int>[2, 3],
       <int>[3, 3],
     ]);
+    expect(partialTranslations, <List<String?>>[
+      <String?>['译文：one', '译文：two', null],
+      <String?>['译文：one', '译文：two', '译文：three'],
+    ]);
     expect(translated.segments.map((Segment s) => s.translation), <String?>[
       '译文：one',
       '译文：two',
       '译文：three',
     ]);
+  });
+
+  test('逐句翻译可并发请求并在每句完成后发布结果', () async {
+    final provider = _ConcurrentProvider();
+    final List<int> completed = <int>[];
+    const source = TranscriptionResult(
+      segments: <Segment>[
+        Segment(text: 'one', start: 0, end: 1),
+        Segment(text: 'two', start: 1, end: 2),
+        Segment(text: 'three', start: 2, end: 3),
+      ],
+    );
+
+    final future = translateResult(
+      source,
+      provider,
+      to: 'zh',
+      batchSize: 1,
+      maxConcurrentBatches: 3,
+      maxRetries: 0,
+      onPartialResult: (_, int done, int total) => completed.add(done),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(provider.pending, hasLength(3));
+    provider.complete('two');
+    await Future<void>.delayed(Duration.zero);
+    expect(completed, <int>[1]);
+    provider.complete('one');
+    provider.complete('three');
+
+    final result = await future;
+    expect(result.segments.map((segment) => segment.translation), <String?>[
+      '译文：one',
+      '译文：two',
+      '译文：three',
+    ]);
+  });
+
+  test('首批单句后使用大批次，并从优先位置开始且跳过已有译文', () async {
+    final provider = _FakeProvider();
+    final segments = List<Segment>.generate(
+      11,
+      (int index) => Segment(
+        text: 'line-$index',
+        start: index.toDouble(),
+        end: index + 1.0,
+        translation: index == 6 ? '已有译文' : null,
+      ),
+    );
+
+    final translated = await translateResult(
+      TranscriptionResult(segments: segments),
+      provider,
+      to: 'zh',
+      batchSize: 3,
+      initialBatchSize: 1,
+      prioritySegmentIndex: 5,
+      skipTranslated: true,
+      maxRetries: 0,
+    );
+
+    expect(provider.batches, <List<String>>[
+      <String>['line-5'],
+      <String>['line-7', 'line-8', 'line-9'],
+      <String>['line-10', 'line-0', 'line-1'],
+      <String>['line-2', 'line-3', 'line-4'],
+    ]);
+    expect(translated.segments[6].translation, '已有译文');
+    expect(translated.segments[5].translation, '译文：line-5');
   });
 
   test('临时服务商失败时按 maxRetries 重试，成功后才报告进度', () async {
@@ -262,5 +344,25 @@ class _SequencedProvider implements TranslationProvider {
     final Object response = responses.removeAt(0);
     if (response is List<String>) return response;
     throw response;
+  }
+}
+
+class _ConcurrentProvider implements TranslationProvider {
+  final Map<String, Completer<List<String>>> pending =
+      <String, Completer<List<String>>>{};
+
+  void complete(String text) {
+    pending[text]!.complete(<String>['译文：$text']);
+  }
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) {
+    final completer = Completer<List<String>>();
+    pending[texts.single] = completer;
+    return completer.future;
   }
 }

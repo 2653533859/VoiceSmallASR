@@ -3,6 +3,7 @@
 /// 全部依赖都用替身，不起 isolate、不加载原生库、不弹真实文件对话框。
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -24,6 +25,7 @@ import 'package:vsasr_app/src/ui/batch_transcription_controller.dart';
 import 'package:vsasr_app/src/ui/home_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
 import 'package:vsasr_app/src/translation/translation_provider.dart';
+import 'package:vsasr_app/src/video/video_playback_controller.dart';
 
 import 'support/fake_asr.dart';
 
@@ -72,6 +74,7 @@ void main() {
     PerformanceLogStore? performanceLogStore,
     AppSettingsRepository? settings,
     TranslationProviderFactory? translationProviderFactory,
+    VideoPlaybackController? video,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -89,11 +92,13 @@ void main() {
               batchTranslationCache ?? const _NoopBatchTranslationCache(),
           batchQueueStore: batchQueueStore ?? _FakeBatchQueueStore(),
           performanceLogStore:
-              performanceLogStore ?? PerformanceLogStore(rootDirectory: workspace),
+              performanceLogStore ??
+              PerformanceLogStore(rootDirectory: workspace),
           mediaFileExists:
               mediaFileExists ?? (String path) async => File(path).existsSync(),
           settings: settings,
           translationProviderFactory: translationProviderFactory,
+          video: video,
         ),
       ),
     );
@@ -169,6 +174,137 @@ void main() {
     expect(find.textContaining('RTF：'), findsOneWidget);
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('打开批处理前暂停正在播放的视频', (WidgetTester tester) async {
+    final controller = build();
+    final backend = _HomeVideoBackend();
+    final video = VideoPlaybackController(backend: backend);
+    addTearDown(controller.shutdown);
+    addTearDown(video.dispose);
+    await video.open('/tmp/movie.mp4');
+    backend.emitPlaying(true);
+    await show(tester, controller, video: video);
+
+    await tester.tap(find.byKey(const Key('openBatchProcessing')));
+    await tester.pumpAndSettle();
+
+    expect(backend.playOrPauseCalls, 1);
+    expect(find.text('批量处理'), findsOneWidget);
+  });
+
+  testWidgets('字幕生成期间仍可打开设置页', (WidgetTester tester) async {
+    final decoded = Completer<Float32List>();
+    final controller = build(decoder: _BlockingDecoder(decoded.future));
+    final settings = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: _FakeSecretStore()),
+    );
+    addTearDown(controller.shutdown);
+    await show(tester, controller, settings: settings);
+    final running = controller.transcribeFile('/tmp/movie.mp4');
+    await tester.pump();
+    expect(controller.busy, isTrue);
+
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('识别设置'), findsOneWidget);
+
+    decoded.complete(Float32List(16000));
+    await running;
+  });
+
+  testWidgets('任务中心显示后台识别状态并可取消', (WidgetTester tester) async {
+    final decoded = Completer<Float32List>();
+    final controller = build(decoder: _BlockingDecoder(decoded.future));
+    addTearDown(controller.shutdown);
+    await show(tester, controller);
+
+    await tester.tap(find.byKey(const Key('backgroundTaskCenter')));
+    await tester.pumpAndSettle();
+    expect(find.text('当前没有后台任务'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('closeBackgroundTaskCenter')));
+    await tester.pumpAndSettle();
+
+    final running = controller.transcribeFile('/tmp/background-movie.mp4');
+    await tester.pump();
+    expect(controller.busy, isTrue);
+    expect(find.byTooltip('任务中心（1）'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('backgroundTaskCenter')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const Key('taskCenterCurrentTask')), findsOneWidget);
+    expect(find.text('background-movie.mp4'), findsOneWidget);
+    expect(find.text('正在解码音频…'), findsOneWidget);
+    expect(find.byKey(const Key('taskCenterResourceStatus')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('taskCenterCancelCurrent')));
+    await tester.pump();
+    expect(controller.statusText, '处理已取消');
+
+    decoded.complete(Float32List(16000));
+    await running;
+    await tester.pumpAndSettle();
+    expect(find.text('当前没有后台任务'), findsOneWidget);
+  });
+
+  testWidgets('后台识别期间可依次使用设置、播放器和任务中心', (WidgetTester tester) async {
+    final Completer<Float32List> decoded = Completer<Float32List>();
+    final TranscribeController controller = build(
+      decoder: _BlockingDecoder(decoded.future),
+    );
+    final AppSettingsRepository settings = AppSettingsRepository(
+      preferences: _FakePreferenceStore(),
+      secrets: TranslationSecrets(store: _FakeSecretStore()),
+    );
+    final _HomeVideoBackend backend = _HomeVideoBackend();
+    final VideoPlaybackController video = VideoPlaybackController(
+      backend: backend,
+    );
+    addTearDown(controller.shutdown);
+    addTearDown(video.dispose);
+    await show(tester, controller, settings: settings, video: video);
+
+    final running = controller.transcribeFile(
+      '/tmp/background-navigation.mp4',
+    );
+    await tester.pump();
+    expect(controller.busy, isTrue);
+
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('识别设置'), findsOneWidget);
+    expect(controller.busy, isTrue);
+
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('视频播放'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      DefaultTabController.of(tester.element(find.byType(TabBar))).index,
+      1,
+    );
+    expect(find.byKey(const Key('videoSubtitleLoadMode')), findsOneWidget);
+    expect(controller.busy, isTrue);
+
+    await tester.tap(find.byKey(const Key('backgroundTaskCenter')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const Key('taskCenterCurrentTask')), findsOneWidget);
+    expect(find.textContaining('background-navigation.mp4'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('taskCenterCancelCurrent')));
+    await tester.pump();
+    expect(controller.statusText, '处理已取消');
+    decoded.complete(Float32List(16000));
+    await running;
   });
 
   testWidgets('批量翻译复用配置的 provider 并显示翻译完成状态', (WidgetTester tester) async {
@@ -923,9 +1059,8 @@ class _MemoryPerformanceLogStore extends PerformanceLogStore {
   final List<PerformanceLogEntry> entries = <PerformanceLogEntry>[];
 
   @override
-  Future<List<PerformanceLogEntry>> load() async => List<PerformanceLogEntry>.of(
-    entries,
-  );
+  Future<List<PerformanceLogEntry>> load() async =>
+      List<PerformanceLogEntry>.of(entries);
 
   @override
   Future<void> append(PerformanceLogEntry entry) async {
@@ -1067,4 +1202,56 @@ class _FakeSecretStore implements SecretStore {
 
   @override
   Future<void> delete(String key) async => values.remove(key);
+}
+
+class _HomeVideoBackend implements VideoPlayerBackend {
+  final _positions = StreamController<Duration>.broadcast(sync: true);
+  final _durations = StreamController<Duration>.broadcast(sync: true);
+  final _playing = StreamController<bool>.broadcast(sync: true);
+  int playOrPauseCalls = 0;
+
+  @override
+  Widget buildVideo({VideoOverlayBuilder? overlayBuilder}) =>
+      const SizedBox.expand();
+
+  @override
+  Stream<Duration> get position => _positions.stream;
+
+  @override
+  Stream<Duration> get duration => _durations.stream;
+
+  @override
+  Stream<bool> get playing => _playing.stream;
+
+  @override
+  Future<void> open(String path) async {}
+
+  @override
+  Future<void> playOrPause() async => playOrPauseCalls++;
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<void> setRate(double rate) async {}
+
+  @override
+  Future<void> dispose() async {
+    await Future.wait<void>(<Future<void>>[
+      _positions.close(),
+      _durations.close(),
+      _playing.close(),
+    ]);
+  }
+
+  void emitPlaying(bool value) => _playing.add(value);
+}
+
+class _BlockingDecoder implements AudioDecoder {
+  const _BlockingDecoder(this.result);
+
+  final Future<Float32List> result;
+
+  @override
+  Future<Float32List> decodeFile(String path) => result;
 }

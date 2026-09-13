@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:vsasr_app/src/asr/segment.dart';
 import 'package:vsasr_app/src/audio/audio_decoder.dart';
+import 'package:vsasr_app/src/audio/media_file_order.dart';
 import 'package:vsasr_app/src/settings/app_settings.dart';
 import 'package:vsasr_app/src/subtitles/subtitles.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_style.dart';
@@ -28,6 +29,7 @@ import 'package:vsasr_app/src/video/video_playlist_view.dart';
 import 'package:vsasr_app/src/video/video_cache_manager_dialog.dart';
 import 'package:vsasr_app/src/subtitles/subtitle_editor_page.dart';
 import 'package:vsasr_app/src/ui/transcribe_controller.dart';
+import 'package:vsasr_app/src/ui/background_task_center.dart';
 
 /// 选择视频文件，取消时返回 null。
 typedef PickVideoFile = Future<String?> Function();
@@ -51,6 +53,7 @@ class VideoPage extends StatefulWidget {
     required this.transcription,
     this.pickFile,
     this.pickFiles,
+    this.pickDirectory,
     this.pickSubtitleFile,
     this.saveSubtitleFile,
     this.saveHardSubtitleVideo,
@@ -59,12 +62,14 @@ class VideoPage extends StatefulWidget {
     this.translationProviderResolver,
     this.subtitleCache,
     this.playlistStore,
+    this.backgroundTasks,
   });
 
   final VideoPlaybackController controller;
   final TranscribeController transcription;
   final PickVideoFile? pickFile;
   final PickVideoFiles? pickFiles;
+  final Future<String?> Function()? pickDirectory;
   final PickSubtitleFile? pickSubtitleFile;
   final SaveVideoSubtitleFile? saveSubtitleFile;
   final SaveHardSubtitleVideo? saveHardSubtitleVideo;
@@ -73,6 +78,7 @@ class VideoPage extends StatefulWidget {
   final Future<TranslationProvider?> Function()? translationProviderResolver;
   final VideoSubtitleCache? subtitleCache;
   final VideoPlaylistStore? playlistStore;
+  final BackgroundTaskRegistry? backgroundTasks;
 
   @override
   State<VideoPage> createState() => _VideoPageState();
@@ -80,10 +86,14 @@ class VideoPage extends StatefulWidget {
 
 class _VideoPageState extends State<VideoPage> {
   SubtitleStyle _subtitleStyle = const SubtitleStyle();
-  VideoSubtitleDisplayMode _subtitleDisplayMode =
-      VideoSubtitleDisplayMode.original;
+  VideoSubtitleDisplayMode _subtitleDisplayMode = VideoSubtitleDisplayMode.off;
   bool _encodingHardSubtitles = false;
+  bool _addingDirectory = false;
   double? _hardSubtitleProgress;
+  bool _translatingSubtitles = false;
+  double? _translationProgress;
+  int _translationGeneration = 0;
+  int _videoQuarterTurns = 0;
 
   late final VideoPlaylistCoordinator _playlistCoordinator =
       VideoPlaylistCoordinator(
@@ -120,14 +130,14 @@ class _VideoPageState extends State<VideoPage> {
           ? const VideoSubtitleSettings()
           : await repository.loadVideoSubtitleSettings();
       _playlistCoordinator.setProcessingPreferences(
-        translationEnabled: settings.translationEnabled,
+        translationEnabled: false,
         cacheEnabled: settings.cacheEnabled,
       );
       await _playlistCoordinator.loadCacheDirectory();
       if (!mounted) return;
       setState(() {
         _subtitleStyle = style;
-        _subtitleDisplayMode = settings.displayMode;
+        _subtitleDisplayMode = VideoSubtitleDisplayMode.off;
       });
       unawaited(_playlistCoordinator.refreshCacheSummary());
     } on Object {
@@ -137,8 +147,58 @@ class _VideoPageState extends State<VideoPage> {
 
   @override
   void dispose() {
+    _translationGeneration++;
+    widget.backgroundTasks?.remove('videoSubtitleTranslation');
+    widget.backgroundTasks?.remove('videoHardSubtitleEncoding');
     _playlistCoordinator.dispose();
     super.dispose();
+  }
+
+  void _syncTranslationTask(String mediaPath) {
+    if (!mounted || !_translatingSubtitles) return;
+    widget.backgroundTasks?.upsert(
+      RegisteredBackgroundTask(
+        id: 'videoSubtitleTranslation',
+        title: '视频字幕翻译',
+        detail: p.basename(mediaPath),
+        icon: Icons.translate,
+        progress: _translationProgress,
+        indeterminate: _translationProgress == null,
+        actions: <BackgroundTaskAction>[
+          BackgroundTaskAction(
+            label: '取消',
+            icon: Icons.stop_circle_outlined,
+            onPressed: _cancelSubtitleTranslation,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _cancelSubtitleTranslation() async {
+    if (!_translatingSubtitles) return;
+    _translationGeneration++;
+    if (mounted) {
+      setState(() {
+        _translatingSubtitles = false;
+        _translationProgress = null;
+      });
+      widget.backgroundTasks?.remove('videoSubtitleTranslation');
+    }
+  }
+
+  void _syncHardSubtitleTask(String mediaPath) {
+    if (!mounted || !_encodingHardSubtitles) return;
+    widget.backgroundTasks?.upsert(
+      RegisteredBackgroundTask(
+        id: 'videoHardSubtitleEncoding',
+        title: '硬字幕视频编码',
+        detail: p.basename(mediaPath),
+        icon: Icons.movie_creation_outlined,
+        progress: _hardSubtitleProgress,
+        indeterminate: _hardSubtitleProgress == null,
+      ),
+    );
   }
 
   Future<String?> _pickFile() async {
@@ -209,6 +269,7 @@ class _VideoPageState extends State<VideoPage> {
         format: _subtitleFormat(selected),
       );
       _playlistCoordinator.storePlaylistResult(mediaPath, result);
+      _setSubtitleLoadMode(VideoSubtitleLoadMode.existingOnly);
       widget.transcription.applyImportedResult(result, mediaPath: mediaPath);
       if (_playlistCoordinator.subtitleCacheEnabled) {
         unawaited(_playlistCoordinator.writeSubtitleCache(mediaPath, result));
@@ -309,6 +370,7 @@ class _VideoPageState extends State<VideoPage> {
         _encodingHardSubtitles = true;
         _hardSubtitleProgress = 0;
       });
+      _syncHardSubtitleTask(inputPath);
       final HardSubtitleEncoder encoder =
           widget.hardSubtitleEncoder ??
           (Platform.isAndroid
@@ -322,6 +384,7 @@ class _VideoPageState extends State<VideoPage> {
         onProgress: (double? progress) {
           if (!mounted) return;
           setState(() => _hardSubtitleProgress = progress);
+          _syncHardSubtitleTask(inputPath);
         },
       );
       if (!mounted) return;
@@ -332,6 +395,11 @@ class _VideoPageState extends State<VideoPage> {
       final String message = error is HardSubtitleEncodeException
           ? error.message
           : '$error';
+      widget.backgroundTasks?.recordFailure(
+        title: '硬字幕视频编码',
+        message: message,
+        filePath: inputPath,
+      );
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('硬字幕编码失败：$message')));
     } finally {
@@ -340,6 +408,7 @@ class _VideoPageState extends State<VideoPage> {
           _encodingHardSubtitles = false;
           _hardSubtitleProgress = null;
         });
+        widget.backgroundTasks?.remove('videoHardSubtitleEncoding');
       }
     }
   }
@@ -384,6 +453,41 @@ class _VideoPageState extends State<VideoPage> {
     await _playlistCoordinator.addPaths(selected);
   }
 
+  Future<void> _addDirectoryToPlaylist() async {
+    if (_addingDirectory) return;
+    setState(() => _addingDirectory = true);
+    try {
+      final path =
+          await (widget.pickDirectory?.call() ??
+              FilePicker.getDirectoryPath(dialogTitle: '选择视频文件夹'));
+      if (path == null || !mounted) return;
+      final paths = <String>[];
+      await for (final entry in Directory(path).list(followLinks: false)) {
+        if (entry is File &&
+            kVideoExtensions.contains(
+              p.extension(entry.path).replaceFirst('.', '').toLowerCase(),
+            )) {
+          paths.add(entry.path);
+        }
+      }
+      if (!mounted) return;
+      paths.sort(compareMediaNames);
+      if (paths.isEmpty) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('所选文件夹当前层没有支持的视频文件')));
+        return;
+      }
+      await _playlistCoordinator.addPaths(paths);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('添加视频文件夹失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _addingDirectory = false);
+    }
+  }
+
   Future<void> _saveVideoSubtitleSettings() async {
     final AppSettingsRepository? repository = widget.settings;
     if (repository == null) return;
@@ -397,12 +501,31 @@ class _VideoPageState extends State<VideoPage> {
     );
   }
 
+  void _setSubtitleLoadMode(VideoSubtitleLoadMode mode) {
+    if (mode != VideoSubtitleLoadMode.off &&
+        widget.controller.selectedEmbeddedSubtitleTrackId != null) {
+      unawaited(widget.controller.selectEmbeddedSubtitleTrack(null));
+    }
+    _playlistCoordinator.setSubtitleLoadMode(mode);
+    setState(
+      () => _subtitleDisplayMode = mode == VideoSubtitleLoadMode.off
+          ? VideoSubtitleDisplayMode.off
+          : VideoSubtitleDisplayMode.original,
+    );
+  }
+
   void _setSubtitleDisplayMode(VideoSubtitleDisplayMode mode) {
+    if (mode != VideoSubtitleDisplayMode.off) {
+      if (widget.controller.selectedEmbeddedSubtitleTrackId != null) {
+        unawaited(widget.controller.selectEmbeddedSubtitleTrack(null));
+      }
+    }
     setState(() => _subtitleDisplayMode = mode);
     unawaited(_saveVideoSubtitleSettings());
   }
 
   Future<void> _setTranslationEnabled(bool enabled) async {
+    if (enabled && !_playlistCoordinator.subtitlesEnabled) return;
     if (enabled && !await _playlistCoordinator.ensureTranslationDisclosure()) {
       return;
     }
@@ -422,6 +545,7 @@ class _VideoPageState extends State<VideoPage> {
   }
 
   Future<void> _translate() async {
+    if (_translatingSubtitles) return;
     final String? mediaPath = widget.controller.filePath;
     final TranscriptionResult? result = mediaPath == null
         ? null
@@ -432,6 +556,12 @@ class _VideoPageState extends State<VideoPage> {
     if (result == null || mediaPath == null || widget.transcription.busy) {
       return;
     }
+    final int generation = ++_translationGeneration;
+    setState(() {
+      _translatingSubtitles = true;
+      _translationProgress = 0;
+    });
+    _syncTranslationTask(mediaPath);
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
       final Future<TranslationProvider?> Function()? resolver =
@@ -463,27 +593,71 @@ class _VideoPageState extends State<VideoPage> {
           result,
           provider,
           to: settings.targetLanguage,
+          batchSize: 8,
+          initialBatchSize: 1,
+          maxConcurrentBatches: 3,
+          prioritySegmentIndex: _translationPriorityIndex(result),
+          skipTranslated: true,
+          isCancelled: () => !mounted || generation != _translationGeneration,
+          onPartialResult: (TranscriptionResult partial, int done, int total) {
+            if (!mounted || generation != _translationGeneration) return;
+            _translationProgress = total > 0 ? done / total : null;
+            _syncTranslationTask(mediaPath);
+            _playlistCoordinator.storePlaylistResult(mediaPath, partial);
+            if (widget.controller.filePath == mediaPath &&
+                !widget.transcription.busy) {
+              widget.transcription.applyImportedResult(
+                partial,
+                mediaPath: mediaPath,
+              );
+              setState(() {
+                _subtitleDisplayMode = VideoSubtitleDisplayMode.bilingual;
+              });
+            }
+          },
         );
-        if (mounted) {
+        if (mounted &&
+            generation == _translationGeneration &&
+            widget.controller.filePath == mediaPath) {
           setState(() {
             _subtitleDisplayMode = VideoSubtitleDisplayMode.bilingual;
+            _translationProgress = 1;
           });
+          _syncTranslationTask(mediaPath);
           unawaited(_saveVideoSubtitleSettings());
         }
         _playlistCoordinator.storePlaylistResult(mediaPath, translated);
-        widget.transcription.applyImportedResult(
-          translated,
-          mediaPath: mediaPath,
-        );
+        if (widget.controller.filePath == mediaPath &&
+            !widget.transcription.busy) {
+          widget.transcription.applyImportedResult(
+            translated,
+            mediaPath: mediaPath,
+          );
+        }
         if (_playlistCoordinator.subtitleCacheEnabled) {
-          await _playlistCoordinator.writeSubtitleCache(mediaPath, translated);
+          unawaited(
+            _playlistCoordinator.writeSubtitleCache(mediaPath, translated),
+          );
         }
       } finally {
         if (provider is ClosableTranslationProvider) provider.close();
       }
     } on Object catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _translationGeneration) return;
+      widget.backgroundTasks?.recordFailure(
+        title: '视频字幕翻译',
+        message: '翻译服务请求失败（${error.runtimeType}）',
+        filePath: mediaPath,
+      );
       messenger.showSnackBar(SnackBar(content: Text('翻译失败：$error')));
+    } finally {
+      if (mounted && generation == _translationGeneration) {
+        setState(() {
+          _translatingSubtitles = false;
+          _translationProgress = null;
+        });
+        widget.backgroundTasks?.remove('videoSubtitleTranslation');
+      }
     }
   }
 
@@ -499,6 +673,16 @@ class _VideoPageState extends State<VideoPage> {
       model: settings.model,
       glossary: settings.glossary,
     );
+  }
+
+  int _translationPriorityIndex(TranscriptionResult result) {
+    final double seconds =
+        widget.controller.position.inMicroseconds /
+        Duration.microsecondsPerSecond;
+    final int index = result.segments.indexWhere(
+      (Segment segment) => segment.end >= seconds,
+    );
+    return index < 0 ? 0 : index;
   }
 
   Future<void> _openEditor(TranscriptionResult result) async {
@@ -521,6 +705,67 @@ class _VideoPageState extends State<VideoPage> {
     if (_playlistCoordinator.subtitleCacheEnabled) {
       unawaited(_playlistCoordinator.writeSubtitleCache(path, result));
     }
+  }
+
+  Future<void> _selectEmbeddedSubtitleTrack(
+    VideoPlaybackController video,
+  ) async {
+    const disabled = '__disabled__';
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('选择视频内嵌字幕'),
+        children: <Widget>[
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, disabled),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  video.selectedEmbeddedSubtitleTrackId == null
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                ),
+                const SizedBox(width: 8),
+                const Text('关闭内嵌字幕'),
+              ],
+            ),
+          ),
+          for (final track in video.embeddedSubtitleTracks)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, track.id),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    video.selectedEmbeddedSubtitleTrackId == track.id
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      [
+                        if ((track.title ?? '').trim().isNotEmpty) track.title!,
+                        if ((track.language ?? '').trim().isNotEmpty)
+                          track.language!,
+                        if ((track.title ?? '').trim().isEmpty &&
+                            (track.language ?? '').trim().isEmpty)
+                          '字幕轨 ${track.id}',
+                      ].join(' · '),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (selected == null || !mounted) return;
+    if (selected != disabled) {
+      _setSubtitleLoadMode(VideoSubtitleLoadMode.off);
+    }
+    await video.selectEmbeddedSubtitleTrack(
+      selected == disabled ? null : selected,
+    );
   }
 
   Future<void> _manageSubtitleCache() async {
@@ -582,6 +827,15 @@ class _VideoPageState extends State<VideoPage> {
             leadingIcon: const Icon(Icons.file_open_outlined),
             child: const Text('加载外部字幕'),
           ),
+        if (video.embeddedSubtitleTracks.isNotEmpty)
+          MenuItemButton(
+            key: const Key('videoEmbeddedSubtitleTrack'),
+            onPressed: video.busy
+                ? null
+                : () => _selectEmbeddedSubtitleTrack(video),
+            leadingIcon: const Icon(Icons.closed_caption_outlined),
+            child: const Text('选择内嵌字幕轨'),
+          ),
         if (hasLinkedResult && result != null) ...<Widget>[
           MenuItemButton(
             key: const Key('videoSubtitleEditor'),
@@ -591,7 +845,8 @@ class _VideoPageState extends State<VideoPage> {
           ),
           MenuItemButton(
             key: const Key('videoTranslateSubtitle'),
-            onPressed: video.busy || widget.transcription.busy
+            onPressed:
+                video.busy || widget.transcription.busy || _translatingSubtitles
                 ? null
                 : _translate,
             leadingIcon: const Icon(Icons.translate),
@@ -643,9 +898,130 @@ class _VideoPageState extends State<VideoPage> {
     );
   }
 
-  Widget _buildBackgroundMenu() {
+  Widget _buildPlaylist() => VideoPlaylistView(
+    paths: _playlistCoordinator.playlist,
+    currentIndex: _playlistCoordinator.currentPlaylistIndex,
+    statuses: _playlistCoordinator.playlistStatus,
+    processingPath: _playlistCoordinator.processingPath,
+    onOpen: (int index) =>
+        unawaited(_playlistCoordinator.openPlaylistVideo(index)),
+    onReorder: _playlistCoordinator.reorderPlaylist,
+    onCancel: _playlistCoordinator.cancelPlaylistItem,
+    onRetry: _playlistCoordinator.retryPlaylistItem,
+    onDelete: (int index) =>
+        unawaited(_playlistCoordinator.removePlaylistItem(index)),
+  );
+
+  Future<void> _showPlaylist() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        child: SizedBox(
+          width: 440,
+          height: 500,
+          child: ListenableBuilder(
+            listenable: _playlistCoordinator,
+            builder: (context, _) => _buildPlaylist(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _subtitleModeLabel(VideoSubtitleLoadMode mode) => switch (mode) {
+    VideoSubtitleLoadMode.off => '字幕：关闭',
+    VideoSubtitleLoadMode.existingOnly => '字幕：仅加载已有',
+    VideoSubtitleLoadMode.recognizeMissing => '字幕：缺失时识别',
+  };
+
+  Widget _buildAddMenu(VideoPlaybackController video) {
     return MenuAnchor(
       menuChildren: <Widget>[
+        MenuItemButton(
+          key: const Key('videoAddPlaylist'),
+          onPressed: video.busy ? null : _addToPlaylist,
+          leadingIcon: const Icon(Icons.playlist_add),
+          child: const Text('添加视频文件'),
+        ),
+        MenuItemButton(
+          key: const Key('videoAddDirectory'),
+          onPressed: video.busy || _addingDirectory
+              ? null
+              : _addDirectoryToPlaylist,
+          leadingIcon: const Icon(Icons.folder_open),
+          child: Text(_addingDirectory ? '正在添加…' : '选择文件夹'),
+        ),
+      ],
+      builder:
+          (BuildContext context, MenuController controller, Widget? child) =>
+              OutlinedButton.icon(
+                key: const Key('videoAddMenu'),
+                onPressed: controller.open,
+                icon: const Icon(Icons.add),
+                label: const Text('添加'),
+              ),
+    );
+  }
+
+  Widget _buildSubtitleModeMenu() {
+    return PopupMenuButton<VideoSubtitleLoadMode>(
+      key: const Key('videoSubtitleLoadMode'),
+      initialValue: _playlistCoordinator.subtitleLoadMode,
+      onSelected: _setSubtitleLoadMode,
+      itemBuilder: (context) => const [
+        PopupMenuItem(
+          key: Key('videoSubtitleModeOff'),
+          value: VideoSubtitleLoadMode.off,
+          child: Text('关闭字幕'),
+        ),
+        PopupMenuItem(
+          key: Key('videoSubtitleModeExisting'),
+          value: VideoSubtitleLoadMode.existingOnly,
+          child: Text('仅加载已有字幕'),
+        ),
+        PopupMenuItem(
+          key: Key('videoSubtitleModeRecognize'),
+          value: VideoSubtitleLoadMode.recognizeMissing,
+          child: Text('缺失时自动识别'),
+        ),
+      ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.closed_caption_outlined, size: 18),
+              const SizedBox(width: 8),
+              Text(_subtitleModeLabel(_playlistCoordinator.subtitleLoadMode)),
+              const SizedBox(width: 4),
+              const Icon(Icons.arrow_drop_down, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMoreMenu() {
+    return MenuAnchor(
+      menuChildren: <Widget>[
+        MenuItemButton(
+          key: const Key('videoRotateClockwise'),
+          onPressed: () => setState(() {
+            _videoQuarterTurns = (_videoQuarterTurns + 1) % 4;
+          }),
+          leadingIcon: const Icon(Icons.rotate_right),
+          child: Text(
+            _videoQuarterTurns == 0
+                ? '顺时针旋转 90°'
+                : '顺时针旋转 90°（当前 ${_videoQuarterTurns * 90}°）',
+          ),
+        ),
         MenuItemButton(
           key: const Key('videoCacheToggle'),
           onPressed: () => _setSubtitleCacheEnabled(
@@ -656,21 +1032,22 @@ class _VideoPageState extends State<VideoPage> {
                 ? Icons.check
                 : Icons.cached_outlined,
           ),
-          child: Tooltip(
-            message: _playlistCoordinator.cacheDirectory == null
-                ? '默认保存到应用数据目录/video_subtitles'
-                : '默认位置：${_playlistCoordinator.cacheDirectory}',
-            child: const Text('缓存后续字幕'),
-          ),
+          child: const Text('缓存后续字幕'),
+        ),
+        MenuItemButton(
+          key: const Key('videoSubtitleCacheManager'),
+          onPressed: _manageSubtitleCache,
+          leadingIcon: const Icon(Icons.storage_outlined),
+          child: const Text('管理字幕缓存'),
         ),
       ],
       builder:
           (BuildContext context, MenuController controller, Widget? child) =>
               OutlinedButton.icon(
-                key: const Key('videoBackgroundOptions'),
+                key: const Key('videoMoreOptions'),
                 onPressed: controller.open,
-                icon: const Icon(Icons.tune),
-                label: const Text('后台处理'),
+                icon: const Icon(Icons.more_horiz),
+                label: const Text('更多'),
               ),
     );
   }
@@ -692,7 +1069,10 @@ class _VideoPageState extends State<VideoPage> {
                   (widget.transcription.filePath == currentPath
                       ? widget.transcription.result
                       : null);
-        final bool hasLinkedResult = result != null && currentPath != null;
+        final bool hasLinkedResult =
+            _playlistCoordinator.subtitlesEnabled &&
+            result != null &&
+            currentPath != null;
         final Segment? current =
             hasLinkedResult &&
                 _subtitleDisplayMode != VideoSubtitleDisplayMode.off
@@ -721,11 +1101,16 @@ class _VideoPageState extends State<VideoPage> {
                     icon: const Icon(Icons.video_library_outlined),
                     label: const Text('打开视频'),
                   ),
-                  OutlinedButton.icon(
-                    key: const Key('videoAddPlaylist'),
-                    onPressed: video.busy ? null : _addToPlaylist,
-                    icon: const Icon(Icons.playlist_add),
-                    label: const Text('添加播放列表'),
+                  _buildAddMenu(video),
+                  _buildSubtitleModeMenu(),
+                  FilterChip(
+                    key: const Key('videoAutoTranslate'),
+                    label: const Text('自动翻译'),
+                    selected: _playlistCoordinator.translationEnabled,
+                    onSelected: _playlistCoordinator.subtitlesEnabled
+                        ? (enabled) =>
+                              unawaited(_setTranslationEnabled(enabled))
+                        : null,
                   ),
                   _buildSubtitleToolsMenu(
                     video: video,
@@ -733,15 +1118,15 @@ class _VideoPageState extends State<VideoPage> {
                     hasLinkedResult: hasLinkedResult,
                     result: result,
                   ),
-                  _buildBackgroundMenu(),
                   OutlinedButton.icon(
-                    key: const Key('videoSubtitleCacheManager'),
-                    onPressed: _manageSubtitleCache,
-                    icon: const Icon(Icons.storage_outlined),
+                    key: const Key('videoShowPlaylist'),
+                    onPressed: _showPlaylist,
+                    icon: const Icon(Icons.queue_play_next),
                     label: Text(
-                      '字幕缓存 ${_playlistCoordinator.cacheEntryCount == 0 ? '' : '(${formatVideoCacheBytes(_playlistCoordinator.cacheBytes)})'}',
+                      '播放列表 (${_playlistCoordinator.playlist.length})',
                     ),
                   ),
+                  _buildMoreMenu(),
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 240),
                     child: Text(
@@ -756,20 +1141,6 @@ class _VideoPageState extends State<VideoPage> {
                 ],
               ),
             ),
-            if (_playlistCoordinator.playlist.isNotEmpty)
-              VideoPlaylistView(
-                paths: _playlistCoordinator.playlist,
-                currentIndex: _playlistCoordinator.currentPlaylistIndex,
-                statuses: _playlistCoordinator.playlistStatus,
-                processingPath: _playlistCoordinator.processingPath,
-                onOpen: (int index) =>
-                    unawaited(_playlistCoordinator.openPlaylistVideo(index)),
-                onReorder: _playlistCoordinator.reorderPlaylist,
-                onCancel: _playlistCoordinator.cancelPlaylistItem,
-                onRetry: _playlistCoordinator.retryPlaylistItem,
-                onDelete: (int index) =>
-                    unawaited(_playlistCoordinator.removePlaylistItem(index)),
-              ),
             if (widget.transcription.stage == JobStage.translating ||
                 widget.transcription.stage == JobStage.decoding ||
                 widget.transcription.stage ==
@@ -797,6 +1168,20 @@ class _VideoPageState extends State<VideoPage> {
                 ),
               ),
             ],
+            if (_translatingSubtitles) ...<Widget>[
+              LinearProgressIndicator(value: _translationProgress),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                child: Text(
+                  _translationProgress == null
+                      ? '正在逐句翻译字幕…'
+                      : '正在逐句翻译字幕… ${(_translationProgress! * 100).round()}%',
+                ),
+              ),
+            ],
             Expanded(
               flex: hasLinkedResult ? 3 : 4,
               child: VideoSurface(
@@ -804,6 +1189,7 @@ class _VideoPageState extends State<VideoPage> {
                 current: current,
                 style: _subtitleStyle,
                 displayMode: _subtitleDisplayMode,
+                quarterTurns: _videoQuarterTurns,
                 controls: video.filePath == null
                     ? null
                     : VideoPlaybackControls(
@@ -870,7 +1256,20 @@ class _VideoPageState extends State<VideoPage> {
             const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
                 _handlePlaybackShortcut(const Duration(seconds: 10)),
           },
-          child: Focus(autofocus: true, child: content),
+          child: Focus(
+            autofocus: true,
+            child: LayoutBuilder(
+              builder: (context, constraints) => constraints.maxWidth >= 1000
+                  ? Row(
+                      children: [
+                        Expanded(child: content),
+                        const VerticalDivider(width: 1),
+                        SizedBox(width: 280, child: _buildPlaylist()),
+                      ],
+                    )
+                  : content,
+            ),
+          ),
         );
       },
     );

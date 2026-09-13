@@ -32,6 +32,41 @@ void main() {
 
   ModelManager models() => ModelManager(root: workspace.path);
 
+  test('后台控制器共享主控制器的 worker 且空闲关闭不会销毁模型', () async {
+    int launches = 0;
+    final TranscribeController owner = TranscribeController(
+      launch:
+          ({
+            required AsrConfig config,
+            required bool allowDownload,
+            required ModelProgress onModelProgress,
+          }) async {
+            launches++;
+            return FakeTranscriber();
+          },
+    );
+    final TranscribeController background = TranscribeController(
+      scheduler: owner.scheduler,
+      workerPool: owner.workerPool,
+      launch: owner.launch,
+    );
+
+    final Transcriber first = (await owner.acquireWorker())!;
+    owner.releaseWorker(first);
+    final Transcriber reused = (await background.acquireWorker())!;
+    background.releaseWorker(reused);
+    await background.shutdown();
+    final Transcriber afterBackgroundShutdown = (await owner.acquireWorker())!;
+    owner.releaseWorker(afterBackgroundShutdown);
+
+    expect(reused, same(first));
+    expect(afterBackgroundShutdown, same(first));
+    expect(launches, 1);
+    background.dispose();
+    await owner.shutdown();
+    owner.dispose();
+  });
+
   test('模型缺失时 refreshModel 报未就绪，造出文件后转为就绪', () async {
     final TranscribeController c = TranscribeController(models: models());
     await c.refreshModel();
@@ -358,7 +393,7 @@ void main() {
     await c.shutdown();
   });
 
-  test('翻译成功后一次性写回所有译文并报告状态', () async {
+  test('翻译成功后逐句写回译文并报告状态', () async {
     final TranscribeController c = TranscribeController(
       decoder: FakeDecoder(),
       models: models(),
@@ -378,6 +413,37 @@ void main() {
     expect(c.statusText, '翻译完成：1 段');
     expect(c.progress, 1);
     expect(c.errorText, isNull);
+    await c.shutdown();
+  });
+
+  test('翻译未全部结束时即可读取已完成的单句译文', () async {
+    final TranscribeController c = TranscribeController()
+      ..applyImportedResult(
+        const TranscriptionResult(
+          segments: <Segment>[
+            Segment(text: 'one', start: 0, end: 1),
+            Segment(text: 'two', start: 1, end: 2),
+          ],
+        ),
+      );
+    final provider = _ControlledTranslationProvider();
+    final future = c.translateCurrentResult(
+      provider,
+      maxConcurrentBatches: 2,
+      maxRetries: 0,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    provider.complete('one');
+    await Future<void>.delayed(Duration.zero);
+    expect(c.busy, isTrue);
+    expect(c.result!.segments.first.translation, '译文：one');
+    expect(c.result!.segments.last.translation, isNull);
+
+    provider.complete('two');
+    await future;
+    expect(c.result!.segments.last.translation, '译文：two');
+    expect(c.statusText, '翻译完成：2 段');
     await c.shutdown();
   });
 
@@ -748,6 +814,26 @@ class _FakeTranslationProvider implements TranslationProvider {
     final Object? error = failure;
     if (error != null) throw error;
     return texts.map((String text) => '译文：$text').toList();
+  }
+}
+
+class _ControlledTranslationProvider implements TranslationProvider {
+  final Map<String, Completer<List<String>>> _pending =
+      <String, Completer<List<String>>>{};
+
+  void complete(String text) {
+    _pending[text]!.complete(<String>['译文：$text']);
+  }
+
+  @override
+  Future<List<String>> translate(
+    List<String> texts, {
+    String? from,
+    required String to,
+  }) {
+    final completer = Completer<List<String>>();
+    _pending[texts.single] = completer;
+    return completer.future;
   }
 }
 

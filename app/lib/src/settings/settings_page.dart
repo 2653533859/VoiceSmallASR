@@ -13,10 +13,14 @@ class SettingsPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.repository,
+    this.externalTaskState,
+    this.externalAsrBusy,
   });
 
   final TranscribeController controller;
   final AppSettingsRepository repository;
+  final Listenable? externalTaskState;
+  final bool Function()? externalAsrBusy;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -33,11 +37,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late double _minSilenceDuration;
   late double _minSpeechDuration;
   late double _inputGainDb;
-  bool _videoSubtitlesEnabled = true;
-  bool _videoTranslationEnabled = false;
   bool _videoSubtitleCacheEnabled = true;
-  VideoSubtitleDisplayMode _videoSubtitleDisplayMode =
-      VideoSubtitleDisplayMode.original;
   late final TextEditingController _apiEndpoint;
   late final TextEditingController _apiModel;
   late final TextEditingController _apiGlossary;
@@ -74,6 +74,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _apiGlossary = TextEditingController();
     _apiKey = TextEditingController();
     widget.controller.addListener(_onControllerChanged);
+    widget.externalTaskState?.addListener(_onControllerChanged);
     _loadTranslationSettings();
   }
 
@@ -101,10 +102,7 @@ class _SettingsPageState extends State<SettingsPage> {
           : settings.targetLanguage.trim();
       setState(() {
         _translationPresets = presets;
-        _videoSubtitlesEnabled = videoSettings.subtitlesEnabled;
-        _videoTranslationEnabled = videoSettings.translationEnabled;
         _videoSubtitleCacheEnabled = videoSettings.cacheEnabled;
-        _videoSubtitleDisplayMode = videoSettings.displayMode;
         _selectedPresetId = null;
         _loading = false;
       });
@@ -120,6 +118,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
+    widget.externalTaskState?.removeListener(_onControllerChanged);
     _apiEndpoint.dispose();
     _apiModel.dispose();
     _apiGlossary.dispose();
@@ -128,7 +127,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _save() async {
-    if (_loading || _saving || _testingConnection || _loadingModels) return;
+    if (_loading ||
+        _saving ||
+        _testingConnection ||
+        _loadingModels ||
+        _asrBusy) {
+      return;
+    }
     setState(() {
       _saving = true;
       _errorText = null;
@@ -160,14 +165,10 @@ class _SettingsPageState extends State<SettingsPage> {
       );
       await widget.repository.saveVideoSubtitleSettings(
         VideoSubtitleSettings(
-          subtitlesEnabled: _videoSubtitlesEnabled,
-          translationEnabled: _videoTranslationEnabled,
+          subtitlesEnabled: false,
+          translationEnabled: false,
           cacheEnabled: _videoSubtitleCacheEnabled,
-          displayMode: !_videoSubtitlesEnabled
-              ? VideoSubtitleDisplayMode.off
-              : _videoSubtitleDisplayMode == VideoSubtitleDisplayMode.off
-              ? VideoSubtitleDisplayMode.original
-              : _videoSubtitleDisplayMode,
+          displayMode: VideoSubtitleDisplayMode.off,
         ),
       );
       final String key = _apiKey.text.trim();
@@ -459,7 +460,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _deleteModel() async {
-    if (_saving || widget.controller.busy || !widget.controller.modelReady) {
+    if (_saving || _asrBusy || !widget.controller.modelReady) {
       return;
     }
     final bool? confirmed = await showDialog<bool>(
@@ -487,11 +488,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final bool disabled =
-        _loading ||
-        _saving ||
-        _testingConnection ||
-        _loadingModels ||
-        widget.controller.busy;
+        _loading || _saving || _testingConnection || _loadingModels || _asrBusy;
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: _loading
@@ -789,34 +786,17 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
                 const Divider(height: 24),
                 Text('视频字幕', style: Theme.of(context).textTheme.titleMedium),
-                SwitchListTile.adaptive(
-                  key: const Key('videoSubtitlesEnabled'),
+                const ListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('默认显示字幕'),
-                  value: _videoSubtitlesEnabled,
-                  onChanged: disabled
-                      ? null
-                      : (bool value) =>
-                            setState(() => _videoSubtitlesEnabled = value),
-                ),
-                SwitchListTile.adaptive(
-                  key: const Key('videoTranslationEnabled'),
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('默认开启字幕翻译'),
-                  subtitle: const Text('中文内容会自动跳过翻译'),
-                  value: _videoTranslationEnabled,
-                  onChanged: disabled
-                      ? null
-                      : (bool value) =>
-                            setState(() => _videoTranslationEnabled = value),
+                  leading: Icon(Icons.closed_caption_off_outlined),
+                  title: Text('播放页默认不加载字幕和翻译'),
+                  subtitle: Text('打开视频后，可在播放页选择仅加载已有字幕或缺失时自动识别。'),
                 ),
                 SwitchListTile.adaptive(
                   key: const Key('videoSubtitleCacheEnabled'),
                   contentPadding: EdgeInsets.zero,
                   title: const Text('自动缓存视频字幕'),
-                  subtitle: const Text(
-                    '播放时预转写列表中的后续视频，默认保存到应用数据目录/video_subtitles',
-                  ),
+                  subtitle: const Text('选择“缺失时自动识别”后缓存字幕，并预处理列表中的后续视频'),
                   value: _videoSubtitleCacheEnabled,
                   onChanged: disabled
                       ? null
@@ -991,6 +971,9 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
     );
   }
+
+  bool get _asrBusy =>
+      widget.controller.busy || (widget.externalAsrBusy?.call() ?? false);
 }
 
 String _safeEndpoint(String value) {
